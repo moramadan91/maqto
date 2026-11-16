@@ -98,14 +98,15 @@
   </aside>
 
   <section class="glass panel" id="player">
-    <div id="stage"><canvas id="view"></canvas></div>
+    <div id="stage"><canvas id="view"></canvas><div id="safe" hidden></div></div>
     <div class="transport">
       <span class="tc"><b id="tc">00:00:00</b><i>/</i><span id="tdur">00:00:00</span></span>
-      <span class="flex"></span>
+      <span class="tmid">
       <button class="ib" id="bBack" data-i="skip-back"></button>
       <button class="ib big" id="bPlay" data-i="play" data-tt="k_play"></button>
       <button class="ib" id="bFwd" data-i="skip-forward"></button>
-      <span class="flex"></span>
+      <span class="safebtns" id="bSafe"><button class="ib" data-sz="tiktok"></button><button class="ib" data-sz="reels"></button><button class="ib" data-sz="snap"></button></span>
+      </span>
       <label class="ratio"><span data-t="ratio"></span>
         <select id="aspect"></select></label>
     </div>

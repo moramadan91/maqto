@@ -1463,6 +1463,48 @@ function fitView() {
 }
 new ResizeObserver(fitView).observe($('#stage'));
 
+/* ---------- safe zone: the app UI of each platform drawn over the preview (never exported) ---------- */
+// Margins kept free of app UI, in px of a 1080x1920 frame: [top, right, bottom, left].
+const SAFE = {
+  tiktok: { m: [130, 150, 480, 60], icons: ['circle-user', 'heart', 'message-circle', 'bookmark', 'share-2'], top: 'Following   For You', user: '@username', cap: 'caption text #hashtag', music: 'original sound' },
+  reels: { m: [220, 150, 420, 40], icons: ['heart', 'message-circle', 'send', 'ellipsis'], top: 'Reels', user: 'username · Follow', cap: 'caption text…', music: 'original audio' },
+  snap: { m: [180, 140, 380, 50], icons: ['heart', 'message-circle', 'send', 'ellipsis'], top: 'Spotlight', user: 'username', cap: 'caption text', music: 'original sound' },
+};
+// platform marks for the buttons (simple line drawings in the app's icon style)
+const SZ_MARK = {
+  tiktok: '<path d="M14 3v11.5a3.5 3.5 0 1 1-3.5-3.5"/><path d="M14 3c.5 2.6 2.4 4.4 5 4.6"/>',
+  reels: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8" fill="currentColor"/>',
+  snap: '<path d="M12 3c-3 0-5 2.2-5 5v2.5l-1.8-.6c-.6-.2-1 .6-.5 1l1.8 1.2c-.6 1.6-1.8 2.9-3.3 3.5.4.7 1.5.9 2.4 1 .2.6.3 1.1.8 1.2.7.1 1.5-.3 2.4 0 1.1.4 2 1.7 3.2 1.7s2.1-1.3 3.2-1.7c.9-.3 1.7.1 2.4 0 .5-.1.6-.6.8-1.2.9-.1 2-.3 2.4-1-1.5-.6-2.7-1.9-3.3-3.5l1.8-1.2c.5-.4.1-1.2-.5-1l-1.8.6V8c0-2.8-2-5-5-5z"/>',
+};
+let safeOn = lsGet('kadr.safe', '');
+if (!SAFE[safeOn]) safeOn = '';
+function renderSafe() {
+  const el = $('#safe'), z = SAFE[safeOn];
+  for (const b of $('#bSafe').children) {
+    const k = b.dataset.sz;
+    if (!b.firstChild) b.innerHTML = `<svg class="ic" viewBox="0 0 24 24">${SZ_MARK[k]}</svg>`;
+    b.classList.toggle('on', k === safeOn);
+    b.title = tr('safeZone') + ': ' + tr('sz_' + k);
+  }
+  el.hidden = !z;
+  if (!z) return;
+  const [t0, r0, b0, l0] = z.m, pct = (v, d) => (v / d * 100).toFixed(2) + '%';
+  el.innerHTML = `<div class="sz-box" style="top:${pct(t0, 1920)};right:${pct(r0, 1080)};bottom:${pct(b0, 1920)};left:${pct(l0, 1080)}"></div>` +
+    `<div class="sz-top">${esc(z.top)}</div><div class="sz-tag">${esc(tr('sz_' + safeOn))}</div>` +
+    `<div class="sz-icons">${z.icons.map(n => icon(n)).join('')}</div>` +
+    `<div class="sz-meta"><b>${esc(z.user)}</b><span>${esc(z.cap)}</span><span>${icon('music')} ${esc(z.music)}</span></div>`;
+  placeSafe();
+}
+function placeSafe() {
+  const el = $('#safe');
+  if (el.hidden) return;
+  const vr = view.getBoundingClientRect(), sr = $('#stage').getBoundingClientRect();
+  Object.assign(el.style, { left: vr.left - sr.left + 'px', top: vr.top - sr.top + 'px', width: vr.width + 'px', height: vr.height + 'px', fontSize: vr.width / 1080 * 34 + 'px' });
+}
+new ResizeObserver(placeSafe).observe(view);
+$('#bSafe').onclick = e => { const b = e.target.closest('[data-sz]'); if (!b) return; safeOn = safeOn === b.dataset.sz ? '' : b.dataset.sz; lsSet('kadr.safe', safeOn); renderSafe(); }; // a second click hides it
+renderSafe();
+
 /* ---------- resizable panels: drag the gaps between library / player / inspector / timeline ---------- */
 const PANES = {
   libW: { el: () => $('#lib'), min: 200, max: () => 560, def: 290 },
@@ -2290,7 +2332,7 @@ function inspector() {
       `<div class="inl">${fld.check('style.iconFillOn', 'fill', it)}${st.iconFillOn ? fld.color('style.iconFill', 'color', it) : ''}</div>` +
       fld.select('draw', 'drawLine', [['', tr('draw_none')], ['in', tr('draw_in')], ['loop', tr('draw_loop')]], it)));
     else {
-    h.push(`<div class="f"><textarea data-k="text" dir="auto">${esc(it.text)}</textarea></div>`, hideRow(it));
+    h.push(`<div class="f"><textarea data-k="text" dir="auto">${esc(it.text)}</textarea></div>`, it.track === 'c1' ? capAllRow() : '', hideRow(it));
     const pOpen = (() => { try { return localStorage.getItem('kadr.presetsOpen') === '1'; } catch { return false; } })();
     h.push(`<div class="grp"><div class="gh ghx"><span>${tr('presets')}</span><button class="ib pTog${pOpen ? ' open' : ''}" data-ptog title="${tr(pOpen ? 'showLess' : 'showMore')}">${icon('chevron-down')}</button></div>` +
       `<div class="tpresets${pOpen ? '' : ' collapsed'}">${TEXT_STYLES.map(x => `<button data-tpreset="${x.id}" title="${x.id}"></button>`).join('')}</div></div>`);
@@ -2321,7 +2363,6 @@ function inspector() {
     h.push(grp('transform', kfBar(it) + fld.range('x', 'horiz', 0, 1, 0.01, ai, 0.5) + fld.range('y', 'vert', 0, 1, 0.01, ai, 0.5) +
       fld.range('scale', 'scale', 0.1, 4, 0.01, ai, 1) + fld.range('rotate', 'rotation', -180, 180, 1, ai) + fld.range('opacity', 'opacity', 0, 1, 0.01, ai, 1)));
     h.push(trkBtns(it));
-    if (it.track === 'c1') h.push(`<button class="wide" id="capAll">${tr('applyAllCaps')}</button>`);
   } else if (inspTab === 'tTpl') {
     const fav = lsGet('kadr.tplFav', []), card = x => `<div class="tpl${it.tpl === x.id ? ' on' : ''}" data-tpl="${x.id}" title="${x.id}"><button class="star${fav.includes(x.id) ? ' on' : ''}" data-fav="${x.id}">${icon('star')}</button></div>`;
     if (it.track === 'c1') h.push(`<label class="tplall"><input type="checkbox" id="tplAll"${lsGet('kadr.tplAll', true) ? ' checked' : ''}>${tr('tplAll')}</label>`);
@@ -2471,12 +2512,6 @@ function inspector() {
   const tg = $('#trkGo'), tc = $('#trkClear');
   if (tg) tg.onclick = () => trackPick(it);
   if (tc) tc.onclick = () => { snapshot(); delete it.trk; refresh(); };
-  const ca = $('#capAll');
-  if (ca) ca.onclick = () => {
-    snapshot();
-    for (const c of P.items) if (c.track === 'c1' && isText(c)) { c.style = { ...it.style }; c.anim = it.anim; c.out = it.out; c.x = it.x; c.y = it.y; }
-    refresh();
-  };
   const cr = $('#colReset');
   if (cr) cr.onclick = () => { snapshot(); Object.assign(it, { preset: 'none', brightness: 1, contrast: 1, saturation: 1, temp: 0 }); delete it.color; refresh(); };
   const col = () => (it.color ??= {});
@@ -3002,6 +3037,7 @@ view.addEventListener('pointerdown', e => {
     it.x = gx ? c0 : nx; it.y = gy ? c0 : ny;
     guides(gx, gy);
     for (const k of ['x', 'y']) if (it.kf && it.kf[k]) kfSet(it, k, kfLt(it), it[k]);
+    capSync(); // with "apply to all" every caption moves along
     needsDraw = true;
   };
   window.addEventListener('pointermove', mv);
@@ -3441,6 +3477,24 @@ function extractAudio() {
   sel = a.id; msel.clear(); inspTab = null;
   dirty = true; refresh(); renderBin();
 }
+
+/* ---------- apply to all captions ---------- */
+// On: a look change on one auto caption (style, animation, place) is copied to every caption; off: each on its own.
+const capAllRow = () => `<label class="wide capall"><input type="checkbox" id="capAll"${lsGet('kadr.capAll', true) ? ' checked' : ''}><span>${tr('applyAll')}</span></label>`;
+const CAP_OWN = new Set(['id', 'type', 'track', 'start', 'dur', 'text', 'words', 'kf', 'hidden']);
+function capSync() {
+  const it = sel && item(sel);
+  if (!it || it.track !== 'c1' || !lsGet('kadr.capAll', true)) return;
+  for (const c of P.items) {
+    if (c === it || c.track !== 'c1') continue;
+    for (const k of Object.keys(c)) if (!CAP_OWN.has(k) && !(k in it)) delete c[k];
+    for (const [k, v] of Object.entries(it)) if (!CAP_OWN.has(k)) c[k] = structuredClone(v);
+  }
+  needsDraw = true; dirty = true;
+}
+$('#inspBody').addEventListener('change', e => { if (e.target.id === 'capAll') { lsSet('kadr.capAll', e.target.checked); if (e.target.checked) { snapshot(); capSync(); } } });
+for (const ev of ['input', 'click']) $('#inspBody').addEventListener(ev, e => { if (e.target.id !== 'capAll') capSync(); });
+$('#stage').addEventListener('pointerdown', () => window.addEventListener('pointerup', () => capSync(), { once: true })); // resize / rotate handles too
 
 /* ---------- hide / show layers ---------- */
 const hideRow = it => `<button class="wide hidebtn${it.hidden ? ' on' : ''}" id="hideBtn">${icon(it.hidden ? 'eye-off' : 'eye')}${tr(it.hidden ? 'showLayer' : 'hideLayer')}</button>`;
