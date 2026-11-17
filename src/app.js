@@ -1624,9 +1624,13 @@ function setPlaying(v) {
   b.innerHTML = icon(b.dataset.i);
   if (!playing) for (const el of els.values()) el.pause();
 }
-function seek(v) { animPreview = null; t = clamp(v, 0, Math.max(total(), 0) + 3600); needsDraw = true; for (const id of [...waLive.keys()]) waStop(id); } // free to run past the last clip
+function seek(v) { animPreview = null; t = clamp(v, 0, Math.max(total(), 0)); needsDraw = true; for (const id of [...waLive.keys()]) waStop(id); } // stops at the end of the last clip
 function updatePlayhead() {
+  const end = total();
+  if (t > end) t = end; // a clip removed or shortened under the playhead
   $('#ph').style.left = t * pps + 'px';
+  $('#endln').style.left = end * pps + 'px'; // the end of the last clip: the playhead stops here
+  $('#endln').classList.toggle('on', !!end && scrubbing && (end - t) * pps < 60); // only while dragging the playhead near the end
   $('#tc').textContent = fmt(t);
 }
 function follow() {
