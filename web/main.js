@@ -6,17 +6,19 @@ gsap.registerPlugin(ScrollTrigger);
 const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const rtl = () => document.documentElement.dir === 'rtl';
 const motionOK = matchMedia('(prefers-reduced-motion: no-preference)').matches;
+const pad = n => String(n).padStart(2, '0');
+const tcode = t => `00:${pad(Math.floor(t / 60))}:${pad(Math.floor(t % 60))}:${pad(Math.floor((t % 1) * 30))}`;
 
 /* ---------- language: Arabic comes from the page, English from here ---------- */
 const EN = {
-  skip: 'Skip to content', nDemos: 'What it does', nInside: 'Inside', nClaude: 'Assistant', nInstall: 'Install', nFaq: 'FAQ', nGet: 'Free download',
+  skip: 'Skip to content', nDemos: 'What it does', nClaude: 'Assistant', nInstall: 'Install', nFaq: 'FAQ', nGet: 'Free download',
   tag: 'Completely free · Mac & Windows · no watermark',
   h1: 'Pro video editing, fluent in Arabic.',
   lead: 'Auto captions timed word by word, silence cutting with the assistant, 567 motions and 495 transitions, color, and export up to 4K. Free, and all on your computer.',
   mac: 'Download for Mac', macSub: 'Apple Silicon · M1 and later', win: 'Download for Windows', winSub: 'Windows 10 and 11 · 64-bit', ver: 'Version {v}',
   showAlt: 'The real Maqto window', fl1: 'Auto Arabic captions', fl2: 'HEVC · 60fps', fl3: '“Cut the silences”',
   numsAria: 'Library', n1: 'clip motions', n2: 'transitions', n3: 'filters', n4: 'effects', n5: 'animated icons', n6: 'text animations', n7: 'Google fonts', n8: 'HEVC export',
-  dEye: 'See it working', dTitle: 'Six things, each one saves you an hour.', pause: 'Pause motion', prev: 'Previous', next: 'Next', play: 'Play motion',
+  dEye: 'See it working', dTitle: 'Creative features, free and open source.', pause: 'Pause motion', prev: 'Previous', next: 'Next', play: 'Play motion',
   d1: 'Auto captions, word by word.', d1p: 'One click turns speech into captions synced to the voice, and the spoken word lights up. It captions only the clips you pick, and one style applies to all of them.', d1c2: 'Every word timed', d1c3: 'On your computer',
   d2: '“Cut the silences.” Done.', d2p: 'Ask the assistant inside Maqto and it finds the pauses, cuts them and closes the gaps, so the video gets tighter. Every step undoes with Cmd/Ctrl+Z.', d2q: 'Cut the silences from the video', d2c1: 'With the assistant (Claude)', d2c2: 'Magnetic cuts', d2c3: 'One-key undo', d2r: '4 silences removed',
   d3: 'A timeline that thinks with you.', d3p: 'A magnetic main track with no gaps, S to split, video, audio and text lanes, draggable keyframes and smooth zoom. Playback sound is sample-exact.', d3c1: 'Magnetic', d3c2: 'Keyframes', d3c3: 'Speed curves', d3tx: 'Flame grilled',
@@ -63,7 +65,13 @@ const EN = {
   q5: 'Are my videos uploaded anywhere?', a5: 'No. Your files, audio and transcription all stay on your computer.',
   endT: 'Try Maqto today.', endS: 'Free, no account, no watermark.', foot: 'Maqto · free, no ads', all: 'All versions',
 };
-const AR = { prev: 'السابق', next: 'التالي', ver: 'نسخة {v}', pause: 'وقّف الحركة', play: 'شغّل الحركة', copied: 'تم النسخ', showAlt: 'شاشة ماكتو الحقيقية', numsAria: 'المكتبة'};
+Object.assign(EN, {
+  dockAria: 'Sections', k1: 'Intro', k2: 'Demos', k3: 'Inside', k4: 'Features', k5: 'Assistant', k6: 'Install', k7: 'FAQ', k8: 'Export',
+  htx: 'Pro editing', htx2: 'fluent in Arabic',
+  m13: 'Sound separation', m13p: 'Split any video\'s audio into 3 lanes: voice, music and sound effects, each on its own track. On your computer, no internet needed.',
+});
+const AR = { prev: 'السابق', next: 'التالي', ver: 'نسخة {v}', pause: 'وقّف الحركة', play: 'شغّل الحركة', copied: 'تم النسخ', numsAria: 'المكتبة', dockAria: 'الأقسام',
+  k1: 'البداية', k2: 'الديمو', k3: 'من جوه', k4: 'المميزات', k5: 'المساعد', k6: 'التثبيت', k7: 'أسئلة', k8: 'التحميل' };
 $$('[data-t]').forEach(el => (AR[el.dataset.t] ??= el.hasAttribute('data-html') ? el.innerHTML : el.textContent));
 const T = { ar: AR, en: EN };
 let lang = 'ar', version = '';
@@ -91,9 +99,10 @@ function applyLang() {
     if (el.classList.contains('split')) splitWords(el);
   });
   $$('[data-t-aria]').forEach(el => el.setAttribute('aria-label', d[el.dataset.tAria]));
-  $$('[data-t-alt]').forEach(el => (el.alt = d[el.dataset.tAlt]));
-  $('#lang span').textContent = lang === 'ar' ? 'English' : 'عربي';
+  $('.lang-t').textContent = lang === 'ar' ? 'English' : 'عربي';
+  $('#lang').setAttribute('aria-label', lang === 'ar' ? 'English' : 'عربي');
   $('#pz span').textContent = paused ? d.play : d.pause;
+  $$('.dk-clip span').forEach(s => (s.textContent = d[s.dataset.k]));
   document.title = lang === 'ar' ? 'ماكتو — محرر فيديو مجاني للماك والويندوز' : 'Maqto — free video editor for Mac and Windows';
   showVer();
 }
@@ -282,7 +291,10 @@ function buildLoops() {
     track: s => gsap.timeline({ repeat: -1 }).to($('.tb', s), { keyframes: { x: [0, 16, 10, 0], y: [0, 4, 12, 0] }, duration: 3, ease: 'sine.inOut' }),
     safe: s => gsap.timeline({ repeat: -1, yoyo: true, repeatDelay: 0.5 }).to($('.zone', s), { opacity: 0.15, duration: 0.5 }).to($('.ui', s), { x: -2, duration: 0.5 }, 0),
     exp: s => gsap.timeline({ repeat: -1, repeatDelay: 0.5 }).fromTo($('.bar', s), { scaleX: 0 }, { scaleX: 1, duration: 1.6, ease: 'power1.inOut' }),
-    font: s => { const t = $('.fa', s), f = ['Aa', 'عر', 'Bb', 'كـ']; const tl = gsap.timeline({ repeat: -1 }); f.forEach((x, i) => tl.call(() => (t.textContent = x), null, i * 0.9).fromTo(t, { scale: 0.6, opacity: 0, transformOrigin: '50% 60%' }, { scale: 1, opacity: 1, duration: 0.35, ease: 'back.out(3)' }, i * 0.9)); return tl.to({}, { duration: 0.1 }, 3.5); },
+    stems: s => gsap.timeline({ repeat: -1, repeatDelay: 1 })
+      .fromTo($$('.br', s), { strokeDasharray: 40, strokeDashoffset: 40, opacity: 1 }, { strokeDashoffset: 0, duration: 0.7, stagger: 0.2, ease: 'power2.out' })
+      .fromTo($$('.lab circle', s), { scale: 0, opacity: 1, transformOrigin: '50% 50%' }, { scale: 1, duration: 0.3, stagger: 0.2, ease: 'back.out(3)' }, '-=0.6')
+      .to($$('.br, .lab circle', s), { opacity: 0.2, duration: 0.4 }, '+=1.2'),
     upd: s => gsap.timeline({ repeat: -1, repeatDelay: 0.8 }).to($('.rot', s), { rotation: 360, svgOrigin: '24 24', duration: 1.2, ease: 'power3.inOut' }),
     save: s => gsap.timeline({ repeat: -1, repeatDelay: 1 }).fromTo($('.tick', s), { strokeDasharray: 24, strokeDashoffset: 24 }, { strokeDashoffset: 0, duration: 0.6, ease: 'power2.out' }),
     lock: s => gsap.timeline({ repeat: -1, repeatDelay: 1.4 }).to($('.shk', s), { y: -3, duration: 0.25, yoyo: true, repeat: 1, ease: 'power2.out' }),
@@ -295,83 +307,83 @@ function buildLoops() {
     const tl = gsap.timeline({ repeat: -1 }).fromTo('.mq-in', { xPercent: 0 }, { xPercent: rtl() ? 100 : -100, duration: 36, ease: 'none' });
     loop(el, tl);
   }
-  // closing card: light runs down the grid lines
-  loop($('.end'), gsap.timeline({ repeat: -1 }).fromTo('.end-bg i', { yPercent: -100 }, { yPercent: 100, duration: 3, ease: 'none', stagger: { each: 0.5, from: 'random', repeat: -1 } }));
   sync();
 }
 
-/* ---------- pause control for every loop and the hero clip ---------- */
+/* ---------- the hero clip ---------- */
 const live = $('#live');
+function playVids() {
+  paused ? live.pause() : live.play().catch(() => {});
+}
+
+// pause control for every loop and the hero clip
 $('#pz').onclick = () => {
   paused = !paused;
   $('#pz').setAttribute('aria-pressed', paused);
   $('#pz use').setAttribute('href', paused ? '#i-play' : '#i-pause');
   $('#pz span').textContent = paused ? T[lang].play : T[lang].pause;
-  paused ? live.pause() : live.play().catch(() => {});
+  playVids();
   sync();
 };
 
-$('#lang').onclick = () => {
-  lang = lang === 'ar' ? 'en' : 'ar';
-  try { localStorage.setItem('maqto.lang', lang); } catch (e) {}
-  applyLang();
-  buildLoops();
-  $('#reel').scrollLeft = 0;
-  ScrollTrigger.refresh();
-};
-
-$('.mq-in').after($('.mq-in').cloneNode(true));
-$$('.mq-in')[1].setAttribute('aria-hidden', 'true');
-applyLang();
-buildLoops();
-if (paused) { live.removeAttribute('autoplay'); live.pause(); $('#pz').setAttribute('aria-pressed', 'true'); $('#pz use').setAttribute('href', '#i-play'); $('#pz span').textContent = T[lang].play; }
-
-/* ---------- hero clip drives the playhead and the timecode, like the real app ---------- */
+// the hero timeline follows the clip, like the real editor
 {
-  const ph = $('#lph'), tc = $('.tc');
-  const pad = n => String(n).padStart(2, '0');
+  const hph = $('#hph'), vtc = $('.vtc'), sv = $('.sv');
   gsap.ticker.add(() => {
-    const t = 5 + (live.currentTime || 2.6); // the clip is seconds 5–16 of the exported project
-    ph.style.left = `${8.8 + t * 3.193}%`; // the screenshot's timeline shows 0–28 s
-    tc.textContent = `00:00:${pad(Math.floor(t))}:${pad(Math.floor((t % 1) * 30))}`;
+    const t = 5 + (live.currentTime || 0); // the clip is seconds 5–16 of the exported project
+    hph.style.left = `calc(16px + ${(t / 24).toFixed(4)} * (100% - 32px))`; // the ruler shows 0–24 s
+    vtc.textContent = tcode(t);
+    sv.textContent = `${Math.round(100 + 8 * Math.sin(t * 1.3))}%`;
   });
 }
 
-/* ---------- Lenis drives scroll, GSAP everything else, one loop ---------- */
-// demos reel: arrows, mouse drag, arrows disabled at the ends
-{
-  const reel = $('#reel'), prev = $('#prev'), next = $('#next');
-  const step = () => $('.panel').offsetWidth + 24;
-  // RTL scrollLeft runs 0 → negative, so "forward" is left there
-  const go = d => reel.scrollBy({ left: d * step() * (rtl() ? -1 : 1), behavior: 'smooth' });
-  prev.onclick = () => go(-1);
-  next.onclick = () => go(1);
+/* ---------- sideways reels: swipe, trackpad, mouse drag, arrows ---------- */
+const reels = $$('.reel').map(reel => {
+  const sec = reel.closest('section'), arrows = $$('.arr', sec), items = [...reel.querySelector('.track').children];
+  const pips = $('.pips', sec);
+  if (pips) pips.innerHTML = items.map((_, i) => `<button type="button" tabindex="-1" data-i="${i}"><i><b></b></i></button>`).join('');
+  const center = el => el.offsetLeft + el.offsetWidth / 2 - reel.clientWidth / 2;
+  const current = () => {
+    const mid = reel.scrollLeft + reel.clientWidth / 2;
+    let best = 0, bd = Infinity;
+    items.forEach((el, i) => { const d = Math.abs(el.offsetLeft + el.offsetWidth / 2 - mid); if (d < bd) { bd = d; best = i; } });
+    return best;
+  };
+  const to = i => reel.scrollTo({ left: center(items[Math.max(0, Math.min(items.length - 1, i))]), behavior: 'smooth' });
+  arrows.forEach(a => (a.onclick = () => to(current() + +a.dataset.dir)));
+  if (pips) pips.onclick = e => { const b = e.target.closest('button'); if (b) to(+b.dataset.i); };
   const ends = () => {
-    const x = Math.abs(reel.scrollLeft), max = reel.scrollWidth - reel.clientWidth;
-    prev.disabled = x < 8; next.disabled = x > max - 8;
+    const x = Math.abs(reel.scrollLeft), max = reel.scrollWidth - reel.clientWidth, c = current();
+    arrows.forEach(a => (a.disabled = +a.dataset.dir < 0 ? x < 8 : x > max - 8));
+    if (pips) $$('button', pips).forEach((b, i) => b.classList.toggle('on', i <= c));
   };
   reel.addEventListener('scroll', ends, { passive: true });
-  addEventListener('resize', ends); ends();
-  let sx = 0, sl = 0, moved = false;
+  addEventListener('resize', ends);
+  let sx = 0, sl = 0, si = 0, moved = false;
   reel.addEventListener('pointerdown', e => {
     if (e.pointerType !== 'mouse' || e.button) return;
-    sx = e.clientX; sl = reel.scrollLeft; moved = false;
-    reel.classList.add('drag'); reel.setPointerCapture(e.pointerId);
+    sx = e.clientX; sl = reel.scrollLeft; si = current(); moved = false;
   });
   reel.addEventListener('pointermove', e => {
-    if (!reel.classList.contains('drag')) return;
-    if (Math.abs(e.clientX - sx) > 4) moved = true;
-    reel.scrollLeft = sl - (e.clientX - sx);
+    if (!(e.buttons & 1) || e.pointerType !== 'mouse') return;
+    if (!moved && Math.abs(e.clientX - sx) > 6) { moved = true; reel.classList.add('drag'); reel.setPointerCapture(e.pointerId); }
+    if (moved) reel.scrollLeft = sl - (e.clientX - sx);
   });
   const up = () => {
     if (!reel.classList.contains('drag')) return;
-    reel.classList.remove('drag'); // snap returns and settles on the nearest panel
+    reel.classList.remove('drag'); // snap comes back and settles on the nearest item
+    // a short flick still moves one item, in the direction of the drag
+    const flick = reel.scrollLeft - sl;
+    if (Math.abs(flick) > 60) to(si + ((rtl() ? flick < 0 : flick > 0) ? 1 : -1));
   };
   reel.addEventListener('pointerup', up); reel.addEventListener('pointercancel', up);
-  reel.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); } }, true);
-}
+  reel.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; } }, true);
+  ends();
+  return { reset: () => { reel.scrollLeft = 0; ends(); } };
+});
 
-const lenis = new Lenis({ lerp: 0.1 });
+/* ---------- Lenis drives scroll, GSAP everything else, one loop ---------- */
+const lenis = new Lenis({ lerp: 0.09 });
 lenis.on('scroll', ScrollTrigger.update);
 gsap.ticker.add(t => lenis.raf(t * 1000));
 gsap.ticker.lagSmoothing(0);
@@ -380,9 +392,56 @@ document.addEventListener('click', e => {
   const el = id && id.length > 1 && document.querySelector(id);
   if (!el) return;
   e.preventDefault();
-  lenis.scrollTo(el, { offset: -80 });
+  lenis.scrollTo(el, { offset: id === '#top' ? 0 : -60 });
   history.replaceState(null, '', id);
 });
+
+// liquid glass sheen follows the pointer
+document.addEventListener('pointermove', e => {
+  const g = e.target.closest && e.target.closest('.lg, .card, .panel');
+  if (!g) return;
+  const r = g.getBoundingClientRect();
+  g.style.setProperty('--mx', `${e.clientX - r.left}px`);
+  g.style.setProperty('--my', `${e.clientY - r.top}px`);
+}, { passive: true });
+
+/* ---------- the dock: every section is a clip, your scroll is the playhead ---------- */
+const secs = $$('[data-clip]'), dock = $('#dock'), dtrack = $('.dk-track'), dph = $('.dk-ph'), dtc = $('.dk-tc');
+const RUNTIME = 96; // seconds the whole page "plays" for
+let spans = [];
+function buildDock() {
+  $$('.dk-clip, .dk-tr', dtrack).forEach(n => n.remove());
+  const total = Math.max(1, document.documentElement.scrollHeight - innerHeight);
+  const at = s => Math.min(1, Math.max(0, (s.getBoundingClientRect().top + scrollY - innerHeight * 0.45) / total));
+  spans = secs.map((s, i) => [i ? at(s) : 0, i < secs.length - 1 ? at(secs[i + 1]) : 1]);
+  spans.forEach(([a, b], i) => {
+    const s = secs[i], c = document.createElement('button');
+    c.type = 'button'; c.className = 'dk-clip';
+    c.style.cssText = `left:calc(${a * 100}% + 2px);width:calc(${(b - a) * 100}% - 4px);background-image:url(${s.dataset.thumb})`;
+    c.innerHTML = `<span data-k="${s.dataset.clip}">${T[lang][s.dataset.clip]}</span>`;
+    c.onclick = () => lenis.scrollTo(s, { offset: i ? -60 : 0 });
+    dtrack.append(c);
+    if (i) { const m = document.createElement('i'); m.className = 'dk-tr'; m.style.left = `${a * 100}%`; m.dataset.i = i; dtrack.append(m); }
+  });
+  moveDock();
+}
+function moveDock() {
+  const total = Math.max(1, document.documentElement.scrollHeight - innerHeight), p = Math.min(1, scrollY / total);
+  dph.style.left = `${p * 100}%`;
+  dtc.textContent = tcode(p * RUNTIME);
+  const on = spans.findIndex(([a, b]) => p >= a && p < b + (b === 1 ? 1 : 0));
+  $$('.dk-clip', dtrack).forEach((c, i) => c.classList.toggle('on', i === on));
+}
+lenis.on('scroll', moveDock);
+ScrollTrigger.addEventListener('refresh', buildDock);
+
+/* ---------- start ---------- */
+$('.mq-in').after($('.mq-in').cloneNode(true));
+$$('.mq-in')[1].setAttribute('aria-hidden', 'true');
+applyLang();
+buildLoops();
+if (paused) { live.removeAttribute('autoplay'); $('#pz').setAttribute('aria-pressed', 'true'); $('#pz use').setAttribute('href', '#i-play'); $('#pz span').textContent = T[lang].play; }
+playVids();
 
 // Counters run once when the numbers come into view.
 $$('.mq-in:first-child b[data-n]').forEach(b => {
@@ -390,46 +449,119 @@ $$('.mq-in:first-child b[data-n]').forEach(b => {
   ScrollTrigger.create({ trigger: '.nums', start: 'top 90%', once: true, onEnter: () => motionOK && gsap.fromTo(twin, { textContent: 0 }, { textContent: +b.dataset.n, duration: 1.6, ease: 'power2.out', snap: { textContent: 1 } }) });
 });
 
+/* ---------- language switch: a cut from one clip to the other ---------- */
+const headIn = els => gsap.from(els, { yPercent: 115, duration: 0.8, ease: 'power4.out', stagger: 0.05 });
+function swapLang() {
+  const y = scrollY;
+  lang = lang === 'ar' ? 'en' : 'ar';
+  try { localStorage.setItem('maqto.lang', lang); } catch (e) {}
+  applyLang();
+  buildLoops();
+  reels.forEach(r => r.reset());
+  ScrollTrigger.refresh();
+  lenis.scrollTo(y, { immediate: true, force: true });
+}
+let busy = false;
+$('#lang').onclick = () => {
+  if (busy) return;
+  if (!motionOK) return swapLang();
+  busy = true;
+  const W = innerWidth, fromRight = rtl(), lt = $('.lx'), cov = $('.lt-cover'), line = $('.lt-line'), ltc = $('.lt-tc');
+  $('.lt-a').textContent = lang === 'ar' ? 'عربي' : 'English';
+  $('.lt-b').textContent = lang === 'ar' ? 'English' : 'عربي';
+  const hideStart = fromRight ? 'inset(0 0 0 100%)' : 'inset(0 100% 0 0)';
+  const hideEnd = fromRight ? 'inset(0 100% 0 0)' : 'inset(0 0 0 100%)';
+  const tc = { t: 0 };
+  gsap.timeline({ onComplete: () => { gsap.set(lt, { visibility: 'hidden' }); busy = false; } })
+    .set(lt, { visibility: 'visible' })
+    .set(cov, { clipPath: hideStart })
+    .set(line, { x: fromRight ? W : 0 })
+    .set('.lt-ph', { left: 8 })
+    .set('.lt-a', { opacity: 1 }).set('.lt-b', { opacity: 0.35 })
+    .set('.lt-tl', { scale: 0.92, autoAlpha: 0 })
+    // cover sweeps in, the playhead line rides its edge
+    .to(cov, { clipPath: 'inset(0 0% 0 0%)', duration: 0.55, ease: 'power3.inOut' }, 0)
+    .to(line, { x: fromRight ? 0 : W, duration: 0.55, ease: 'power3.inOut' }, 0)
+    .to('.lt-tl', { scale: 1, autoAlpha: 1, duration: 0.4, ease: 'power3.out' }, 0.3)
+    // inside, the playhead crosses from one clip into the other
+    .to('.lt-ph', { left: () => $('.lt-lane').clientWidth - 10, duration: 0.7, ease: 'power2.inOut' }, 0.45)
+    .to(tc, { t: 2.4, duration: 0.7, ease: 'none', onUpdate: () => (ltc.textContent = tcode(tc.t)) }, 0.45)
+    .to('.lt-a', { opacity: 0.35, duration: 0.2 }, 0.75).to('.lt-b', { opacity: 1, duration: 0.2 }, 0.75)
+    .call(swapLang, null, 0.85)
+    // and sweeps out the same way, onto the other language
+    .set(line, { x: fromRight ? W : 0 }, 1.05)
+    .to('.lt-tl', { autoAlpha: 0, scale: 1.04, duration: 0.25 }, 1.05)
+    .to(cov, { clipPath: hideEnd, duration: 0.6, ease: 'power3.inOut' }, 1.1)
+    .to(line, { x: fromRight ? 0 : W, duration: 0.6, ease: 'power3.inOut' }, 1.1)
+    .call(() => headIn($$('h1 .wi, h2 .wi').filter(w => { const r = w.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; })), null, 1.2);
+};
+
+/* ---------- scroll-driven motion ---------- */
 const mm = gsap.matchMedia();
-mm.add({ motion: '(prefers-reduced-motion: no-preference)', wide: '(min-width: 1001px)' }, ctx => {
-  const { motion } = ctx.conditions;
-  if (!motion) return; // reduced motion: everything is visible and still
+mm.add('(prefers-reduced-motion: no-preference)', () => {
+  const dir = () => (rtl() ? -1 : 1);
 
-  // intro
-  gsap.timeline({ defaults: { ease: 'power4.out' } })
-    .from('.hero h1 .wi', { yPercent: 115, rotate: 4, duration: 1, stagger: 0.07 })
-    .from('.hero .tag, .hero .lead, .hero .dlc', { y: 20, autoAlpha: 0, duration: 0.7, stagger: 0.08 }, '-=0.6')
-    .from('.win', { y: 120, autoAlpha: 0, duration: 1.2 }, '-=0.7')
-    .from('.float', { scale: 0.6, autoAlpha: 0, duration: 0.6, stagger: 0.12, ease: 'back.out(2)' }, '-=0.5');
+  // intro: the clips snap onto the timeline, the viewer opens like a clip
+  gsap.timeline({ defaults: { ease: 'expo.out' } })
+    .from('.nav', { y: -30, autoAlpha: 0, duration: 0.8 })
+    .from('.hero .tag', { y: 16, autoAlpha: 0, duration: 0.6 }, 0.1)
+    .from('h1 .wi', { x: () => dir() * 90, autoAlpha: 0, filter: 'blur(12px)', duration: 1.1, stagger: 0.08 }, 0.15)
+    .from('.viewer', { scaleY: 0.02, autoAlpha: 0, duration: 1, ease: 'expo.inOut' }, 0.2)
+    .from('.hero .lead, .hero .dlc', { y: 22, autoAlpha: 0, duration: 0.7, stagger: 0.08 }, 0.6)
+    .from('.insp', { scale: 0.5, autoAlpha: 0, duration: 0.6, stagger: 0.12, ease: 'back.out(2)' }, 0.9)
+    .from('.htl', { y: 40, autoAlpha: 0, duration: 0.8 }, 0.5)
+    .from('.htl .hc', { scaleX: 0, transformOrigin: '0 50%', duration: 0.7, stagger: 0.06 }, 0.7)
+    .from('.htl .trm', { scale: 0, duration: 0.4, stagger: 0.1, ease: 'back.out(3)' }, 1.1)
+    .from('.htl .wave i', { scaleY: 0, duration: 0.5, stagger: { amount: 0.6 } }, 0.9);
 
-  // the app window lies back, then stands up as you scroll to it
-  gsap.to('.win', { rotateX: 0, scale: 1, ease: 'none', scrollTrigger: { trigger: '.show', start: 'top 85%', end: 'top 20%', scrub: true } });
-  gsap.to('.f1', { y: -70, ease: 'none', scrollTrigger: { trigger: '.show', start: 'top bottom', end: 'bottom top', scrub: true } });
-  gsap.to('.f2', { y: -140, ease: 'none', scrollTrigger: { trigger: '.show', start: 'top bottom', end: 'bottom top', scrub: true } });
-  gsap.to('.f3', { y: -40, ease: 'none', scrollTrigger: { trigger: '.show', start: 'top bottom', end: 'bottom top', scrub: true } });
+  // the inspector chips drift at different depths
+  gsap.to('.i1', { y: -60, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: true } });
+  gsap.to('.i2', { y: -120, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: true } });
+  gsap.to('.i3', { y: -30, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: true } });
+
+  // the hero timeline sinks into the dock
+  gsap.to('#htl', { y: 60, scale: 0.94, autoAlpha: 0.3, ease: 'none', scrollTrigger: { trigger: '#htl', start: 'top 22%', end: 'bottom top', scrub: true } });
+  const showDock = v => gsap.to(dock, { yPercent: v ? 0 : 150, y: 0, duration: 0.7, ease: v ? 'expo.out' : 'power2.in', overwrite: true });
+  gsap.set(dock, { yPercent: 150 });
+  ScrollTrigger.create({ trigger: '#htl', start: 'bottom 35%', onEnter: () => showDock(1), onLeaveBack: () => showDock(0) });
+
+  // each section enters with an editing transition, and its marker on the dock lights up
+  const TR = {
+    wipe: () => [rtl() ? 'inset(0% 0% 0% 100%)' : 'inset(0% 100% 0% 0%)', 'inset(0% 0% 0% 0%)'],
+    iris: () => ['circle(0% at 50% 0%)', 'circle(150% at 50% 0%)'],
+    split: () => ['inset(0% 50% 0% 50%)', 'inset(0% 0% 0% 0%)'],
+    push: () => ['inset(0% 0% 0% 0%)', 'inset(0% 0% 0% 0%)'],
+  };
+  secs.forEach((s, i) => {
+    const kind = s.dataset.tr;
+    if (!kind) return;
+    const st = { trigger: s, start: 'top 96%', end: 'top 35%', scrub: 0.4, invalidateOnRefresh: true,
+      onToggle: self => $(`.dk-tr[data-i="${i}"]`)?.classList.toggle('on', self.isActive) };
+    if (kind === 'push') gsap.fromTo(s, { x: () => -dir() * innerWidth * 0.25 }, { x: 0, ease: 'power2.out', scrollTrigger: st });
+    else gsap.fromTo(s, { clipPath: () => TR[kind]()[0] }, { clipPath: () => TR[kind]()[1], ease: 'power2.out', scrollTrigger: st });
+  });
 
   // headings: words rise on enter
-  $$('.sec h2.split, .demos h2.split').forEach(h => gsap.from(h.querySelectorAll('.wi'), { yPercent: 115, duration: 0.9, ease: 'power4.out', stagger: 0.06, scrollTrigger: { trigger: h, start: 'top 86%' } }));
+  $$('.sec h2.split').forEach(h => gsap.from(h.querySelectorAll('.wi'), { yPercent: 115, duration: 0.9, ease: 'power4.out', stagger: 0.06, scrollTrigger: { trigger: h, start: 'top 86%' } }));
 
-  // demos: panels rise in; the reel itself scrolls sideways by swipe, drag or arrows
-  gsap.from('.panel', { y: 60, autoAlpha: 0, duration: 0.9, ease: 'power3.out', stagger: 0.08, scrollTrigger: { trigger: '.pin', start: 'top 85%' } });
+  // reels: items slide in from the reading side
+  $$('.reel .track').forEach(t => gsap.from(t.children, { x: () => dir() * 160, autoAlpha: 0, duration: 1.1, ease: 'expo.out', stagger: 0.08, scrollTrigger: { trigger: t, start: 'top 82%' } }));
 
-  // inside: the three real panels fan out from one stack
-  gsap.from('.pan', { x: 0, y: 80, rotation: 0, ease: 'none', stagger: 0.05, scrollTrigger: { trigger: '.fan', start: 'top 85%', end: 'center 45%', scrub: true } });
   // cards in batches
-  gsap.set('.grid .card, .os-grid .card, .faq details, .asst, .brw', { y: 30, autoAlpha: 0 });
-  ScrollTrigger.batch('.grid .card, .os-grid .card, .faq details, .asst, .brw', {
-    start: 'top 92%',
-    onEnter: b => gsap.to(b, { y: 0, autoAlpha: 1, duration: 0.6, ease: 'power3.out', stagger: 0.07, overwrite: true }),
-  });
-  ScrollTrigger.addEventListener('scrollEnd', () => $$('.grid .card, .os-grid .card, .faq details, .asst, .brw').forEach(c => {
+  const cards = '.grid .card, .os-grid .card, .faq details, .asst, .brw';
+  gsap.set(cards, { y: 34, autoAlpha: 0 });
+  ScrollTrigger.batch(cards, { start: 'top 94%', onEnter: b => gsap.to(b, { y: 0, autoAlpha: 1, duration: 0.6, ease: 'power3.out', stagger: 0.06, overwrite: true }) });
+  ScrollTrigger.addEventListener('scrollEnd', () => $$(cards).forEach(c => {
     const r = c.getBoundingClientRect();
     if (r.top < innerHeight && r.bottom > 0 && +getComputedStyle(c).opacity < 0.05) gsap.to(c, { y: 0, autoAlpha: 1, duration: 0.5 });
   }));
 
-  // closing card: the mark spins in
-  gsap.from('.end-mark', { rotation: -180, scale: 0, duration: 1, ease: 'back.out(1.8)', scrollTrigger: { trigger: '.end', start: 'top 80%' } });
+  // the closing card renders the file as you arrive
+  const rp = $('.render .rp');
+  gsap.fromTo('.render b', { scaleX: 0 }, { scaleX: 1, ease: 'none', scrollTrigger: { trigger: '.end', start: 'top 85%', end: 'center 55%', scrub: true, onUpdate: s => (rp.textContent = `${Math.round(s.progress * 100)}%`) } });
+  gsap.from('.end-mark', { rotation: -120, scale: 0, duration: 1, ease: 'back.out(1.8)', scrollTrigger: { trigger: '.end', start: 'top 80%' } });
 });
+if (!motionOK) $('.render .rp').textContent = '100%';
 
 window.addEventListener('load', () => ScrollTrigger.refresh());
 document.fonts.ready.then(() => ScrollTrigger.refresh());
