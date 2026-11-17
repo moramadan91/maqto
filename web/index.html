@@ -109,9 +109,13 @@
         <p class="eyebrow" data-t="dEye">شوفه وهو شغال</p>
         <h2 id="demosT" class="split" data-t="dTitle">ستة حاجات، كل واحدة بتوفّر ساعة.</h2>
       </div>
-      <button class="chip pz" id="pz" type="button" aria-pressed="false"><svg aria-hidden="true"><use href="#i-pause"/></svg><span data-t="pause">وقّف الحركة</span></button>
+      <div class="d-ctl">
+        <button class="chip pz" id="pz" type="button" aria-pressed="false"><svg aria-hidden="true"><use href="#i-pause"/></svg><span data-t="pause">وقّف الحركة</span></button>
+        <button class="chip arr" id="prev" type="button" aria-label="السابق" data-t-aria="prev"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></button>
+        <button class="chip arr" id="next" type="button" aria-label="التالي" data-t-aria="next"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg></button>
+      </div>
     </div>
-    <div class="pin">
+    <div class="pin" id="reel">
       <div class="track" id="track">
 
         <!-- 1 captions -->

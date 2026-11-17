@@ -16,7 +16,7 @@ const EN = {
   mac: 'Download for Mac', macSub: 'Apple Silicon · M1 and later', win: 'Download for Windows', winSub: 'Windows 10 and 11 · 64-bit', ver: 'Version {v}',
   showAlt: 'The real Maqto window', fl1: 'Auto Arabic captions', fl2: 'HEVC · 60fps', fl3: '“Cut the silences”',
   numsAria: 'Library', n1: 'clip motions', n2: 'transitions', n3: 'filters', n4: 'effects', n5: 'animated icons', n6: 'text animations', n7: 'Google fonts', n8: 'HEVC export',
-  dEye: 'See it working', dTitle: 'Six things, each one saves you an hour.', pause: 'Pause motion', play: 'Play motion',
+  dEye: 'See it working', dTitle: 'Six things, each one saves you an hour.', pause: 'Pause motion', prev: 'Previous', next: 'Next', play: 'Play motion',
   d1: 'Auto captions, word by word.', d1p: 'One click turns speech into captions synced to the voice, and the spoken word lights up. It captions only the clips you pick, and one style applies to all of them.', d1c2: 'Every word timed', d1c3: 'On your computer',
   d2: '“Cut the silences.” Done.', d2p: 'Ask the assistant inside Maqto and it finds the pauses, cuts them and closes the gaps, so the video gets tighter. Every step undoes with Cmd/Ctrl+Z.', d2q: 'Cut the silences from the video', d2c1: 'With the assistant (Claude)', d2c2: 'Magnetic cuts', d2c3: 'One-key undo', d2r: '4 silences removed',
   d3: 'A timeline that thinks with you.', d3p: 'A magnetic main track with no gaps, S to split, video, audio and text lanes, draggable keyframes and smooth zoom. Playback sound is sample-exact.', d3c1: 'Magnetic', d3c2: 'Keyframes', d3c3: 'Speed curves', d3tx: 'Flame grilled',
@@ -63,7 +63,7 @@ const EN = {
   q5: 'Are my videos uploaded anywhere?', a5: 'No. Your files, audio and transcription all stay on your computer.',
   endT: 'Try Maqto today.', endS: 'Free, no account, no watermark.', foot: 'Maqto · free, no ads', all: 'All versions',
 };
-const AR = { ver: 'نسخة {v}', pause: 'وقّف الحركة', play: 'شغّل الحركة', copied: 'تم النسخ', showAlt: 'شاشة ماكتو الحقيقية', numsAria: 'المكتبة'};
+const AR = { prev: 'السابق', next: 'التالي', ver: 'نسخة {v}', pause: 'وقّف الحركة', play: 'شغّل الحركة', copied: 'تم النسخ', showAlt: 'شاشة ماكتو الحقيقية', numsAria: 'المكتبة'};
 $$('[data-t]').forEach(el => (AR[el.dataset.t] ??= el.hasAttribute('data-html') ? el.innerHTML : el.textContent));
 const T = { ar: AR, en: EN };
 let lang = 'ar', version = '';
@@ -316,6 +316,7 @@ $('#lang').onclick = () => {
   try { localStorage.setItem('maqto.lang', lang); } catch (e) {}
   applyLang();
   buildLoops();
+  $('#reel').scrollLeft = 0;
   ScrollTrigger.refresh();
 };
 
@@ -337,6 +338,39 @@ if (paused) { live.removeAttribute('autoplay'); live.pause(); $('#pz').setAttrib
 }
 
 /* ---------- Lenis drives scroll, GSAP everything else, one loop ---------- */
+// demos reel: arrows, mouse drag, arrows disabled at the ends
+{
+  const reel = $('#reel'), prev = $('#prev'), next = $('#next');
+  const step = () => $('.panel').offsetWidth + 24;
+  // RTL scrollLeft runs 0 → negative, so "forward" is left there
+  const go = d => reel.scrollBy({ left: d * step() * (rtl() ? -1 : 1), behavior: 'smooth' });
+  prev.onclick = () => go(-1);
+  next.onclick = () => go(1);
+  const ends = () => {
+    const x = Math.abs(reel.scrollLeft), max = reel.scrollWidth - reel.clientWidth;
+    prev.disabled = x < 8; next.disabled = x > max - 8;
+  };
+  reel.addEventListener('scroll', ends, { passive: true });
+  addEventListener('resize', ends); ends();
+  let sx = 0, sl = 0, moved = false;
+  reel.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' || e.button) return;
+    sx = e.clientX; sl = reel.scrollLeft; moved = false;
+    reel.classList.add('drag'); reel.setPointerCapture(e.pointerId);
+  });
+  reel.addEventListener('pointermove', e => {
+    if (!reel.classList.contains('drag')) return;
+    if (Math.abs(e.clientX - sx) > 4) moved = true;
+    reel.scrollLeft = sl - (e.clientX - sx);
+  });
+  const up = () => {
+    if (!reel.classList.contains('drag')) return;
+    reel.classList.remove('drag'); // snap returns and settles on the nearest panel
+  };
+  reel.addEventListener('pointerup', up); reel.addEventListener('pointercancel', up);
+  reel.addEventListener('click', e => { if (moved) { e.preventDefault(); e.stopPropagation(); } }, true);
+}
+
 const lenis = new Lenis({ lerp: 0.1 });
 lenis.on('scroll', ScrollTrigger.update);
 gsap.ticker.add(t => lenis.raf(t * 1000));
@@ -358,7 +392,7 @@ $$('.mq-in:first-child b[data-n]').forEach(b => {
 
 const mm = gsap.matchMedia();
 mm.add({ motion: '(prefers-reduced-motion: no-preference)', wide: '(min-width: 1001px)' }, ctx => {
-  const { motion, wide } = ctx.conditions;
+  const { motion } = ctx.conditions;
   if (!motion) return; // reduced motion: everything is visible and still
 
   // intro
@@ -377,15 +411,8 @@ mm.add({ motion: '(prefers-reduced-motion: no-preference)', wide: '(min-width: 1
   // headings: words rise on enter
   $$('.sec h2.split, .demos h2.split').forEach(h => gsap.from(h.querySelectorAll('.wi'), { yPercent: 115, duration: 0.9, ease: 'power4.out', stagger: 0.06, scrollTrigger: { trigger: h, start: 'top 86%' } }));
 
-  // demos: a horizontal reel pinned on wide screens, stacked panels elsewhere
-  if (wide) {
-    const track = $('#track');
-    const dist = () => track.scrollWidth - innerWidth;
-    gsap.to(track, { x: () => (rtl() ? 1 : -1) * dist(), ease: 'none', scrollTrigger: { trigger: '.pin', start: 'center center', end: () => `+=${dist()}`, pin: true, scrub: 0.6, invalidateOnRefresh: true } });
-    gsap.from('.panel', { y: 80, autoAlpha: 0, duration: 1, ease: 'power3.out', stagger: 0.08, scrollTrigger: { trigger: '.pin', start: 'top 85%' } });
-  } else {
-    $$('.panel').forEach(p => gsap.from(p, { y: 60, autoAlpha: 0, duration: 0.8, ease: 'power3.out', scrollTrigger: { trigger: p, start: 'top 88%' } }));
-  }
+  // demos: panels rise in; the reel itself scrolls sideways by swipe, drag or arrows
+  gsap.from('.panel', { y: 60, autoAlpha: 0, duration: 0.9, ease: 'power3.out', stagger: 0.08, scrollTrigger: { trigger: '.pin', start: 'top 85%' } });
 
   // inside: the three real panels fan out from one stack
   gsap.from('.pan', { x: 0, y: 80, rotation: 0, ease: 'none', stagger: 0.05, scrollTrigger: { trigger: '.fan', start: 'top 85%', end: 'center 45%', scrub: true } });
