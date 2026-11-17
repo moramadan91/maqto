@@ -520,7 +520,8 @@ mm.add('(prefers-reduced-motion: no-preference)', () => {
   gsap.to('.i3', { y: -30, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: true } });
 
   // the hero timeline sinks into the dock
-  gsap.to('#htl', { y: 60, scale: 0.94, autoAlpha: 0.3, ease: 'none', scrollTrigger: { trigger: '#htl', start: 'top 22%', end: 'bottom top', scrub: true } });
+  // explicit start values: the intro still has it hidden when this tween is created
+  gsap.fromTo('#htl', { y: 0, scale: 1, autoAlpha: 1 }, { y: 60, scale: 0.94, autoAlpha: 0.3, ease: 'none', immediateRender: false, scrollTrigger: { trigger: '#htl', start: 'top 22%', end: 'bottom top', scrub: true } });
   const showDock = v => gsap.to(dock, { yPercent: v ? 0 : 150, y: 0, duration: 0.7, ease: v ? 'expo.out' : 'power2.in', overwrite: true });
   gsap.set(dock, { yPercent: 150 });
   ScrollTrigger.create({ trigger: '#htl', start: 'bottom 35%', onEnter: () => showDock(1), onLeaveBack: () => showDock(0) });
