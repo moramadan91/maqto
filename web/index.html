@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ماكتو — محرر فيديو مجاني للماك والويندوز</title>
-<meta name="description" content="ماكتو محرر فيديو مجاني بالعربي والإنجليزي: تايملاين، كابشن عربي تلقائي، نصوص وموشن، ألوان، وتصدير لحد 4K. للماك والويندوز.">
+<meta name="description" content="ماكتو محرر فيديو مجاني بالعربي والإنجليزي: كابشن عربي تلقائي كلمة بكلمة، قص السكتات بالمساعد، 567 حركة، 495 ترانزيشن، ألوان، وتصدير لحد 4K. للماك والويندوز.">
 <meta name="theme-color" content="#141518">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="ماكتو">
@@ -23,198 +23,287 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@700;800;900&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="preload" as="image" href="/assets/shots/app-ar.jpg">
 <link rel="stylesheet" href="/style.css">
 <script>document.documentElement.classList.add('js')</script>
 </head>
 <body>
 <a class="skip" href="#main" data-t="skip">تخطَّ للمحتوى</a>
-<div class="amb" aria-hidden="true"><i></i><i></i></div>
+<div class="amb" aria-hidden="true"><i></i><i></i><i></i></div>
+
+<!-- icon sprite -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-mac" viewBox="0 0 24 24"><path d="M18 5a2 2 0 0 1 2 2v8.5a2 2 0 0 0 .2.9l1.1 2.1a1 1 0 0 1-.9 1.5H3.6a1 1 0 0 1-.9-1.5l1.1-2.1a2 2 0 0 0 .2-.9V7a2 2 0 0 1 2-2z"/><path d="M20 16H4"/></symbol>
+    <symbol id="i-win" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="i-lang" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></symbol>
+    <symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><path d="M8.1 8.1 12 12M20 4 8.1 15.9"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M9.9 15.5a2 2 0 0 0-1.4-1.4l-6.1-1.6a.5.5 0 0 1 0-1l6.1-1.6a2 2 0 0 0 1.4-1.4l1.6-6.1a.5.5 0 0 1 1 0l1.6 6.1a2 2 0 0 0 1.4 1.4l6.1 1.6a.5.5 0 0 1 0 1l-6.1 1.6a2 2 0 0 0-1.4 1.4l-1.6 6.1a.5.5 0 0 1-1 0z"/></symbol>
+    <symbol id="i-dl" viewBox="0 0 24 24"><path d="M12 15V3M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5"/></symbol>
+    <symbol id="i-cursor" viewBox="0 0 24 24"><path d="M4 3l7 18 2.5-7.5L21 11z" fill="#f4f5f6" stroke="#141518" stroke-width="1.5"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4v16l13-8z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  </defs>
+</svg>
 
 <header class="nav wrap">
   <a class="brand" href="#top" aria-label="Maqto"><img src="/assets/maqto-logo.svg" alt="Maqto" width="88" height="40"></a>
   <nav class="links" aria-label="main">
-    <a href="#features" data-t="nFeatures">المميزات</a>
-    <a href="#tour" data-t="nTour">جولة</a>
+    <a href="#demos" data-t="nDemos">بيعمل إيه</a>
+    <a href="#inside" data-t="nInside">من جوه</a>
+    <a href="#claude" data-t="nClaude">المساعد</a>
     <a href="#install" data-t="nInstall">التثبيت</a>
-    <a href="#claude" data-t="nClaude">Claude Code</a>
     <a href="#faq" data-t="nFaq">أسئلة</a>
   </nav>
-  <button class="chip" id="lang" type="button"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="m5 8 6 6" /> <path d="m4 14 6-6 2-3" /> <path d="M2 5h12" /> <path d="M7 2h1" /> <path d="m22 22-5-10-5 10" /> <path d="M14 18h6" /> </svg><span>English</span></button>
+  <button class="chip" id="lang" type="button"><svg aria-hidden="true"><use href="#i-lang"/></svg><span>English</span></button>
+  <a class="chip go" href="#get" data-t="nGet">حمّل مجاناً</a>
 </header>
 
 <main id="main">
   <!-- HERO -->
-  <section class="hero wrap" id="top">
-  <div class="hero-copy">
-    <p class="tag reveal"><b></b><span data-t="tag">مجاني بالكامل · ماك وويندوز</span></p>
-    <h1 class="split" data-t="h1">مونتاج بالعربي، مفتوح المصدر، من غير اشتراكات.</h1>
-    <div class="hero-row">
-      <p class="lead reveal" data-t="lead">قص وتايملاين، كابشن عربي تلقائي بتوقيت كل كلمة، نصوص وموشن، ألوان، وتصدير لحد 4K. كله على جهازك.</p>
-      <div class="dl reveal" id="download">
-        <div class="dlc"><a class="btn" id="mac" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z" /> <path d="M20.054 15.987H3.946" /> </svg><span><strong data-t="mac">حمّل للماك</strong><small data-t="macSub">Apple Silicon · M1 وأحدث</small></span></a><p class="ver" data-v></p></div>
-        <div class="dlc"><a class="btn" id="win" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <rect width="20" height="14" x="2" y="3" rx="2" /> <line x1="8" x2="16" y1="21" y2="21" /> <line x1="12" x2="12" y1="17" y2="21" /> </svg><span><strong data-t="win">حمّل للويندوز</strong><small data-t="winSub">Windows 10 و 11 · 64-bit</small></span></a><p class="ver" data-v></p></div>
+  <section class="hero" id="top">
+    <div class="wrap hero-top">
+      <p class="tag"><b class="dot"></b><span data-t="tag">مجاني بالكامل · ماك وويندوز · من غير علامة مائية</span><span class="tc" aria-hidden="true">00:00:00:00</span></p>
+      <h1 class="split" data-t="h1">مونتاج احترافي، بيتكلم عربي.</h1>
+      <div class="hero-row">
+        <p class="lead" data-t="lead">كابشن تلقائي كلمة بكلمة، قص السكتات بالمساعد، 567 حركة و495 ترانزيشن، ألوان، وتصدير لحد 4K. ببلاش، وكله على جهازك.</p>
+        <div class="dl" id="download">
+          <div class="dlc"><a class="btn" id="mac" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true"><use href="#i-mac"/></svg><span><strong data-t="mac">حمّل للماك</strong><small data-t="macSub">Apple Silicon · M1 وأحدث</small></span></a><p class="ver" data-v></p></div>
+          <div class="dlc"><a class="btn" id="win" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true"><use href="#i-win"/></svg><span><strong data-t="win">حمّل للويندوز</strong><small data-t="winSub">Windows 10 و 11 · 64-bit</small></span></a><p class="ver" data-v></p></div>
+        </div>
       </div>
     </div>
-  </div>
-  <div class="reel" id="reel" aria-hidden="true">
-    <div class="r-top"><i></i><i></i><i></i><b class="r-feat"><span data-t="r1">قص بضغطة</span><span data-t="r2">كابشن عربي تلقائي</span><span data-t="r3">ألوان وLUTs</span><span data-t="r4">صوت أنقى</span><span data-t="r5">حركة وكي فريم</span><span data-t="r6">تصدير لحد 4K</span></b></div>
-    <div class="r-view">
-      <div class="r-scene"><s></s><s></s><s></s><s></s></div>
-      <div class="r-grade"></div>
-      <img class="r-mark" src="/assets/maqto-symbol.svg" alt="">
-      <div class="r-cap"><span>كل</span><span>قطعة</span><span>ليها</span><span>معنى</span></div>
-      <div class="r-exp"><span>4K · 60fps</span><i><b></b></i></div>
+
+    <div class="show wrap" aria-label="شاشة ماكتو الحقيقية" data-t-aria="showAlt">
+      <div class="win" id="win3d">
+        <img class="shot-ar" src="/assets/shots/app-ar.jpg" width="2400" height="1492" alt="ماكتو مفتوح: مكتبة النصوص، المعاينة، والتايملاين" fetchpriority="high">
+        <img class="shot-en" src="/assets/shots/app-en.jpg" width="2400" height="1492" alt="Maqto open: text styles, preview and timeline" loading="lazy">
+        <video class="live" id="live" src="/assets/shots/reel.mp4" poster="/assets/shots/reel.jpg" muted loop playsinline autoplay preload="auto" aria-hidden="true"></video>
+        <i class="lph" id="lph" aria-hidden="true"></i>
+      </div>
+      <span class="float f1" aria-hidden="true"><svg><use href="#i-check"/></svg><b data-t="fl1">كابشن عربي تلقائي</b></span>
+      <span class="float f2" aria-hidden="true"><b>4K</b><i data-t="fl2">HEVC · 60fps</i></span>
+      <span class="float f3" aria-hidden="true"><svg><use href="#i-spark"/></svg><b data-t="fl3">«شيل السكتات»</b></span>
     </div>
-    <div class="r-tools">
-      <i class="t-cut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg></i>
-      <i class="t-cap"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="14" x="3" y="5" rx="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/></svg></i>
-      <i class="t-col"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3v18M3 12h18" opacity=".35"/><circle cx="15" cy="9" r="2" fill="currentColor"/></svg></i>
-      <i class="t-aud"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 10v4M7 6v12M11 3v18M15 8v8M19 5v14"/></svg></i>
-      <i class="t-key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="m12 3 9 9-9 9-9-9z"/></svg></i>
-      <i class="t-exp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5M5 21h14"/></svg></i>
-    </div>
-    <div class="r-tl">
-      <div class="r-trk v"><b class="c1"></b><b class="c2"></b><b class="c3"></b><em class="k k1"></em><em class="k k2"></em><em class="k k3"></em></div>
-      <div class="r-trk a"><span class="wave"></span></div>
-      <div class="r-ph"><i class="r-sc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/></svg></i></div>
-    </div>
-  </div>
   </section>
 
-  <div class="stage" aria-hidden="true">
-    <div class="stage-in" id="stage">
-      <video src="/assets/demo.mp4" poster="/assets/screen.jpg" width="1600" height="1140" autoplay muted loop playsinline preload="auto" aria-hidden="true"></video>
-    </div>
-  </div>
+  <!-- NUMBERS -->
+  <section class="nums" aria-label="المكتبة" data-t-aria="numsAria">
+    <div class="marq"><div class="mq-in">
+      <span><b data-n="567">567</b><i data-t="n1">حركة كليب</i></span>
+      <span><b data-n="495">495</b><i data-t="n2">ترانزيشن</i></span>
+      <span><b data-n="455">455</b><i data-t="n3">فلتر</i></span>
+      <span><b data-n="328">328</b><i data-t="n4">إفكت</i></span>
+      <span><b data-n="646">646</b><i data-t="n5">أيقونة متحركة</i></span>
+      <span><b data-n="70">70</b><i data-t="n6">حركة نص</i></span>
+      <span><b data-n="1950">1950</b><i data-t="n7">خط جوجل</i></span>
+      <span><b>4K</b><i data-t="n8">تصدير HEVC</i></span>
+    </div></div>
+  </section>
 
-  <!-- FEATURES -->
-  <section class="wrap sec" id="features">
-    <p class="eyebrow" data-t="fEye">المميزات</p>
-    <h2 class="split" data-t="fTitle">كل اللي محتاجه للريلز والفيديوهات.</h2>
-    <p class="sub" data-t="fSub">مصمم للمحتوى العربي من الأول، مش ترجمة.</p>
-    <div class="bento">
-      <article class="card c-cap c-cc"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></svg></div><h3 data-t="f9">اكتب البرومبت في Claude Code، والفيديو يتعمل قدامك</h3><p data-t="f9p">Claude بيشتغل على التايملاين بتاعك لايف: بيضيف النصوص والحركة والترانزيشن، ويشوف الفريم ويراجع شغله، ويصدّر.</p>
-        <div class="cc" aria-hidden="true">
-          <div class="cc-term"><div class="cc-bar"><i></i><i></i><i></i><b>Claude Code</b></div>
-            <div class="cc-line"><svg class="cc-spark" viewBox="0 0 24 24"><path d="M12 2c.6 4.6 2.4 7.4 10 10-7.6 2.6-9.4 5.4-10 10-.6-4.6-2.4-7.4-10-10 7.6-2.6 9.4-5.4 10-10z" /></svg><span class="cc-type" data-t="ccPrompt">اعمل موشن لمطعم برجر</span><i class="cc-caret"></i></div>
-            <div class="cc-log"><span data-t="ccL1">✓ خلفية متدرّجة</span><span data-t="ccL2">✓ 3 نصوص بكي فريمز</span><span data-t="ccL3">✓ ترانزيشن</span></div>
+  <!-- FEATURE DEMOS -->
+  <section class="demos" id="demos" aria-labelledby="demosT">
+    <div class="wrap demos-head">
+      <div>
+        <p class="eyebrow" data-t="dEye">شوفه وهو شغال</p>
+        <h2 id="demosT" class="split" data-t="dTitle">ستة حاجات، كل واحدة بتوفّر ساعة.</h2>
+      </div>
+      <button class="chip pz" id="pz" type="button" aria-pressed="false"><svg aria-hidden="true"><use href="#i-pause"/></svg><span data-t="pause">وقّف الحركة</span></button>
+    </div>
+    <div class="pin">
+      <div class="track" id="track">
+
+        <!-- 1 captions -->
+        <article class="panel" data-demo="cap">
+          <div class="p-txt">
+            <span class="num">01</span>
+            <h3 data-t="d1">كابشن عربي تلقائي، كلمة بكلمة.</h3>
+            <p data-t="d1p">دوسة واحدة والكلام يتحول لكابشن متزامن مع الصوت بالظبط، والكلمة اللي بتتقال بتنوّر. بيشتغل على الكليبات اللي تختارها بس، وستايل واحد تطبّقه على الكل.</p>
+            <ul class="chips"><li>Whisper large-v3-turbo</li><li data-t="d1c2">توقيت كل كلمة</li><li data-t="d1c3">على جهازك</li></ul>
           </div>
-          <div class="cc-app">
-            <div class="cc-view"><div class="cc-frame"><span class="t1" data-t="ccT1">برجر</span><span class="t2" data-t="ccT2">على الفحم</span><span class="t3" data-t="ccT3">اطلب دلوقتي</span></div></div>
-            <div class="cc-tl"><i class="cc-ph"></i>
-              <div class="lane"><b class="k1"></b><b class="k2"></b><b class="k3"></b></div>
-              <div class="lane"><b class="tx1"></b><b class="tx2"></b><b class="tx3"></b></div>
-              <div class="lane"><b class="bg"></b></div>
+          <div class="p-vis vis-cap" aria-hidden="true">
+            <div class="phone"><img src="/assets/shots/s4.jpg" alt="" width="540" height="960" loading="lazy">
+              <div class="capw"><span>الكابشن</span><span>بيتكتب</span><span>لوحده</span><span>بالعربي</span></div>
+              <i class="rec"></i>
+            </div>
+            <div class="wavebox"><div class="wave" data-bars="64"></div><i class="wph"></i><span class="wlab">00:04.2</span></div>
+          </div>
+        </article>
+
+        <!-- 2 silences -->
+        <article class="panel" data-demo="sil">
+          <div class="p-txt">
+            <span class="num">02</span>
+            <h3 data-t="d2">«شيل السكتات». وخلاص.</h3>
+            <p data-t="d2p">اكتب طلبك للمساعد جوه ماكتو، وهو يلاقي الوقفات ويقصّها ويقفل الفراغات، والفيديو يبقى أسرع وأشد. وكل خطوة ترجعها بـ Cmd/Ctrl+Z.</p>
+            <ul class="chips"><li data-t="d2c1">بالمساعد (Claude)</li><li data-t="d2c2">قص مغناطيسي</li><li data-t="d2c3">تراجع بضغطة</li></ul>
+          </div>
+          <div class="p-vis vis-sil" aria-hidden="true">
+            <div class="bub"><svg><use href="#i-spark"/></svg><span class="typed" data-t="d2q">شيل السكتات من الفيديو</span><i class="caret"></i></div>
+            <div class="strip" dir="ltr">
+              <b class="sp" style="--w:16"></b><b class="gap" style="--w:6"></b><b class="sp" style="--w:12"></b><b class="gap" style="--w:9"></b><b class="sp" style="--w:20"></b><b class="gap" style="--w:5"></b><b class="sp" style="--w:10"></b><b class="gap" style="--w:8"></b><b class="sp" style="--w:14"></b>
+            </div>
+            <div class="sil-res"><svg><use href="#i-check"/></svg><span data-t="d2r">اتشالت 4 سكتات</span><b dir="ltr">−9.4s</b></div>
+          </div>
+        </article>
+
+        <!-- 3 timeline -->
+        <article class="panel" data-demo="tl">
+          <div class="p-txt">
+            <span class="num">03</span>
+            <h3 data-t="d3">تايملاين بيفكّر معاك.</h3>
+            <p data-t="d3p">مسار أساسي مغناطيسي من غير فراغات، قص بحرف S، تراكات فيديو وصوت ونصوص، كي فريمز بتتسحب، وزوم ناعم. والتشغيل بالصوت sample-exact.</p>
+            <ul class="chips"><li data-t="d3c1">مغناطيسي</li><li data-t="d3c2">كي فريمز</li><li data-t="d3c3">منحنيات سرعة</li></ul>
+          </div>
+          <div class="p-vis vis-tl" aria-hidden="true">
+            <div class="mtl" dir="ltr">
+              <div class="ruler"><i>00:00</i><i>00:02</i><i>00:04</i><i>00:06</i><i>00:08</i></div>
+              <div class="lane lt"><b class="tx" data-t="d3tx">على الفحم</b></div>
+              <div class="lane lv">
+                <b class="cl c1" style="background-image:url(/assets/shots/s1.jpg)"></b>
+                <b class="cl c2a" style="background-image:url(/assets/shots/s2.jpg)"></b>
+                <b class="cl c2b" style="background-image:url(/assets/shots/s2.jpg)"></b>
+                <b class="cl c3" style="background-image:url(/assets/shots/s3.jpg)"></b>
+                <em class="kf k1"></em><em class="kf k2"></em><em class="kf k3"></em>
+              </div>
+              <div class="lane la"><div class="wave" data-bars="72"></div></div>
+              <i class="mph"><span class="sc"><svg><use href="#i-cut"/></svg></span></i>
+            </div>
+            <span class="keyhint" dir="ltr"><kbd>S</kbd></span>
+          </div>
+        </article>
+
+        <!-- 4 motion -->
+        <article class="panel" data-demo="mo">
+          <div class="p-txt">
+            <span class="num">04</span>
+            <h3 data-t="d4">موشن من غير After Effects.</h3>
+            <p data-t="d4p">567 حركة للكليبات (3D، جليتش، شاشات أجهزة، كوميكس) و70 حركة للنص، كي فريمز للمكان والحجم واللفة، ومنحنيات سرعة ناعمة مع سلو موشن بالذكاء الاصطناعي.</p>
+            <ul class="chips"><li data-t="d4c1">دخول · خروج · لوب</li><li data-t="d4c2">سلو موشن AI</li><li data-t="d4c3">تتبّع حركة</li></ul>
+          </div>
+          <div class="p-vis vis-mo" aria-hidden="true">
+            <div class="phone"><img src="/assets/shots/s2.jpg" alt="" width="540" height="960" loading="lazy">
+              <div class="mtext"><span data-t="d4w1">على</span> <span data-t="d4w2">الفحم</span></div>
+            </div>
+            <div class="mo-side">
+              <span class="aname" dir="ltr">wordPop</span>
+              <svg class="curve" viewBox="0 0 200 110"><path id="cv" d="M6 100 C 70 100, 70 10, 194 10" fill="none"/><circle class="cdot" r="6"/></svg>
+              <span class="clab" data-t="d4cv">منحنى سرعة</span>
             </div>
           </div>
-        </div>
-        <a class="btn cc-go" href="#claude" data-t="ccBtn">خطوات الربط مع Claude Code</a></article>
-      <article class="card"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <circle cx="6" cy="6" r="3" /> <path d="M8.12 8.12 12 12" /> <path d="M20 4 8.12 15.88" /> <circle cx="6" cy="18" r="3" /> <path d="M14.8 14.8 20 20" /> </svg></div><h3 data-t="f2">تايملاين وقص</h3><p data-t="f2p">مسار أساسي مغناطيسي، قص وتقسيم، علامات، وتراكات فيديو وصوت ونصوص.</p></article>
-      <article class="card"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M12 4v16" /> <path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2" /> <path d="M9 20h6" /> </svg></div><h3 data-t="f3">نصوص وموشن</h3><p data-t="f3p">ستايلات جاهزة وحركة دخول وخروج، والعربي متشكّل صح.</p></article>
-      <article class="card"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z" /> <circle cx="13.5" cy="6.5" r=".5" fill="currentColor" /> <circle cx="17.5" cy="10.5" r=".5" fill="currentColor" /> <circle cx="6.5" cy="12.5" r=".5" fill="currentColor" /> <circle cx="8.5" cy="7.5" r=".5" fill="currentColor" /> </svg></div><h3 data-t="f4">ألوان وفلاتر</h3><p data-t="f4p">فلاتر جاهزة وتحكم في الإضاءة والتشبع. المعاينة نفس التصدير بالظبط.</p></article>
-      <article class="card"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M2 10v3" /> <path d="M6 6v11" /> <path d="M10 3v18" /> <path d="M14 8v7" /> <path d="M18 5v13" /> <path d="M22 10v3" /> </svg></div><h3 data-t="f8">أوتو كابشن بيفهم العربي</h3><p data-t="f8p">دوسة واحدة والكلام كله يتحول لكابشن. بيدعم العربي والإنجليزي، وبيعرف لغة الفيديو لوحده.</p></article>
-      <article class="card c-4k"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <rect width="18" height="18" x="3" y="3" rx="2" /> <path d="M7 3v18" /> <path d="M3 7.5h4" /> <path d="M3 12h18" /> <path d="M3 16.5h4" /> <path d="M17 3v18" /> <path d="M17 7.5h4" /> <path d="M17 16.5h4" /> </svg></div><h3 data-t="f5">تصدير لحد 4K</h3><p data-t="f5p">H.264 وHEVC، مع تسريع الهاردوير على الماك.</p><div class="res" aria-hidden="true"><span>720p</span><span>1080p</span><span>2K</span><span class="on">4K</span></div></article>
-      <article class="card"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M12 19v3" /> <path d="M19 10v2a7 7 0 0 1-14 0v-2" /> <rect x="9" y="2" width="6" height="13" rx="3" /> </svg></div><h3 data-t="f6">تسجيل صوت</h3><p data-t="f6p">سجّل التعليق الصوتي جوه البرنامج ويتحط على التايملاين علطول.</p></article>
-      <article class="card"><div class="ic"><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /> <path d="M21 3v5h-5" /> <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /> <path d="M8 16H3v5" /> </svg></div><h3 data-t="f7">تحديثات تلقائية</h3><p data-t="f7p">كل نسخة جديدة بتوصلك لوحدها، متوقّعة ومتأكد منها.</p></article>
-    </div>
-  </section>
+        </article>
 
-  <!-- TOUR -->
-  <section class="tour" id="tour" aria-labelledby="tourT">
-    <div class="wrap tour-head">
-      <p class="eyebrow" data-t="tEye">جولة في البرنامج</p>
-      <h2 id="tourT" class="split" data-t="tTitle">كل حاجة في مكانها.</h2>
-    </div>
-    <div class="tour-pin wrap">
-      <div class="tour-shot" id="tourShot"><div class="zoom" id="zoom">
-        <video src="/assets/demo.mp4" poster="/assets/screen.jpg" width="1600" height="1140" autoplay muted loop playsinline preload="auto" aria-hidden="true" id="tourImg"></video>
-        <i class="spot" data-r="0.5,62.3,99,37"></i>
-        <i class="spot" data-r="71.7,6.5,27.5,54.6"></i>
-        <i class="spot" data-r="28.6,6.5,42.2,54.6"></i>
-        <i class="spot" data-r="0.5,6.5,27.3,54.6"></i>
-        <i class="spot" data-r="8.1,1.4,6.5,3.6"></i>
-      </div></div>
-      <ol class="steps">
-        <li class="step" tabindex="0"><span class="n">01</span><div><h3 data-t="s1">التايملاين</h3><p data-t="s1p">اسحب الفيديوهات والصور والصوت. المسار الأساسي مغناطيسي فمفيش فراغات، والقص بضغطة S.</p></div></li>
-        <li class="step" tabindex="0"><span class="n">02</span><div><h3 data-t="s2">المكتبة والكابشن</h3><p data-t="s2p">استورد ملفاتك، اختار ستايل نص، أو دوس "كابشن تلقائي" ويتفرّغ الكلام بالعربي.</p></div></li>
-        <li class="step" tabindex="0"><span class="n">03</span><div><h3 data-t="s3">المعاينة الحية</h3><p data-t="s3p">شوف الفلاتر والنصوص وانت شغال بسرعة الفيديو الحقيقية، وغيّر المقاس 9:16 أو 16:9 أو 1:1.</p></div></li>
-        <li class="step" tabindex="0"><span class="n">04</span><div><h3 data-t="s4">الخصائص</h3><p data-t="s4p">الحجم والمكان والشفافية وقص الكادر والسرعة والحركة والألوان لكل كليب.</p></div></li>
-        <li class="step" tabindex="0"><span class="n">05</span><div><h3 data-t="s5">التصدير</h3><p data-t="s5p">اختار الجودة لحد 4K والفريمات والكودك، والنتيجة نفس اللي شايفه.</p></div></li>
-      </ol>
-    </div>
-  </section>
+        <!-- 5 fx -->
+        <article class="panel" data-demo="fx">
+          <div class="p-txt">
+            <span class="num">05</span>
+            <h3 data-t="d5">495 ترانزيشن. 455 فلتر. 328 إفكت.</h3>
+            <p data-t="d5p">مكتبة كاملة بمعاينات حية: شيدر ترانزيشن، فلاتر سينمائية وLUTs، كروما كي، إزالة خلفية بالذكاء الاصطناعي، وتلوين بالـ WebGL. المعاينة نفس التصدير بالظبط.</p>
+            <ul class="chips"><li data-t="d5c1">LUTs</li><li data-t="d5c2">كروما كي</li><li data-t="d5c3">إزالة الخلفية AI</li></ul>
+          </div>
+          <div class="p-vis vis-fx" aria-hidden="true">
+            <div class="phone fxs">
+              <img src="/assets/shots/s1.jpg" alt="" width="540" height="960" loading="lazy">
+              <img src="/assets/shots/s3.jpg" alt="" width="540" height="960" loading="lazy">
+              <img src="/assets/shots/s5.jpg" alt="" width="540" height="960" loading="lazy">
+              <img src="/assets/shots/s6.jpg" alt="" width="540" height="960" loading="lazy">
+            </div>
+            <div class="fx-side">
+              <span class="tname" dir="ltr">Iris</span>
+              <div class="flt"><i data-f="0">None</i><i data-f="1">Teal &amp; orange</i><i data-f="2">Golden hour</i><i data-f="3">Noir</i></div>
+            </div>
+          </div>
+        </article>
 
-  <!-- INSTALL -->
-  <section class="wrap sec" id="install">
-    <p class="eyebrow" data-t="iEye">التثبيت</p>
-    <h2 class="split" data-t="iTitle">دقيقة وتبدأ.</h2>
-    <p class="sub" data-t="iSub">البرنامج مجاني ومش من متجر أبل أو مايكروسوفت، فالنظام هيسألك أول مرة بس.</p>
-    <div class="os-grid">
-      <div class="os card">
-        <h3><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M18 5a2 2 0 0 1 2 2v8.526a2 2 0 0 0 .212.897l1.068 2.127a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45l1.068-2.127A2 2 0 0 0 4 15.526V7a2 2 0 0 1 2-2z" /> <path d="M20.054 15.987H3.946" /> </svg><span data-t="iMac">ماك</span></h3>
-        <ol>
-          <li data-t="m1" data-html>افتح ملف <b><bdi>.dmg</bdi></b> واسحب ماكتو لـ <b><bdi>Applications</bdi></b>.</li>
-          <li data-t="m2" data-html>افتح ماكتو. لو ظهرت رسالة إنه مش من مطوّر معروف، دوس <b><bdi>Done</bdi></b>.</li>
-          <li data-t="m3" data-html>روح <b><bdi dir="ltr">System Settings → Privacy &amp; Security</bdi></b> وانزل لتحت ودوس <b><bdi>Open Anyway</bdi></b>.</li>
-        </ol>
-        <div class="mshots">
-          <figure><div class="shot"><img src="/assets/mac-privacy.png" width="436" height="66" alt="Privacy &amp; Security في System Settings" loading="lazy"></div>
-            <figcaption><b>A</b><span data-t="mA" data-html>من <bdi>System Settings</bdi> اختار <bdi>Privacy &amp; Security</bdi> من القايمة الجانبية.</span></figcaption></figure>
-          <figure><div class="shot"><img src="/assets/mac-open.png" width="952" height="374" alt="رسالة Maqto was blocked to protect your Mac وجنبها زرار Open Anyway" loading="lazy"><i class="hl" style="left:73.2%;top:48%;width:25%;height:17.5%"></i></div>
-            <figcaption><b>B</b><span data-t="mB" data-html>انزل لحد جزء <bdi>Security</bdi>، هتلاقي <bdi>“Maqto” was blocked</bdi>. دوس <bdi>Open Anyway</bdi> وأكّد بالباسورد أو البصمة. ده بيحصل أول مرة بس.</span></figcaption></figure>
-        </div>
-        <p class="note" data-t="mNote">ماك بمعالج Apple (M1 أو أحدث)، و macOS 12 أو أحدث.</p>
-      </div>
-      <div class="os card">
-        <h3><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <rect width="20" height="14" x="2" y="3" rx="2" /> <line x1="8" x2="16" y1="21" y2="21" /> <line x1="12" x2="12" y1="17" y2="21" /> </svg><span data-t="iWin">ويندوز</span></h3>
-        <ol>
-          <li data-t="w1" data-html>شغّل ملف <b><bdi>setup.exe</bdi></b>.</li>
-          <li data-t="w2" data-html>لو ظهرت شاشة <b><bdi>Windows protected your PC</bdi></b>، دوس <b><bdi>More info</bdi></b> وبعدين <b><bdi>Run anyway</bdi></b>.</li>
-          <li data-t="w3" data-html>اختار اللغة وكمّل التثبيت.</li>
-        </ol>
-        <p class="note" data-t="wNote">Windows 10 أو 11، 64-bit.</p>
-      </div>
-    </div>
-    <div class="brw card">
-      <h3><svg aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" > <path d="M12 15V3" /> <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /> <path d="m7 10 5 5 5-5" /> </svg><span data-t="bTitle">لو المتصفح وقّف التحميل</span></h3>
-      <p class="bsub" data-t="bSub">المتصفح ساعات بيوقف ملفات البرامج المجانية اللي مش من متجر أبل أو مايكروسوفت، وبالذات لو الحماية في المتصفح مقفولة. الملف نفسه نازل من صفحة ماكتو الرسمية على GitHub، وكمّل التحميل بخطوتين:</p>
-      <div class="shots">
-        <figure>
-          <div class="shot"><img src="/assets/dl-blocked.png" width="664" height="232" alt="قايمة التحميلات في Chrome وفيها Maqto مكتوب تحته Unverified download blocked" loading="lazy"><i class="hl" style="left:1%;top:42%;width:98%;height:49%"></i></div>
-          <figcaption><b>1</b><span data-t="b1" data-html>افتح قايمة التحميلات ودوس على ملف ماكتو اللي مكتوب تحته <bdi>Unverified download blocked</bdi>.</span></figcaption>
-        </figure>
-        <figure>
-          <div class="shot"><img src="/assets/dl-keep.png" width="905" height="370" alt="رسالة Chrome وفيها زرار Download unverified file" loading="lazy"><i class="hl" style="left:16.5%;top:66.5%;width:43.5%;height:24%"></i></div>
-          <figcaption><b>2</b><span data-t="b2" data-html>دوس <bdi>Download unverified file</bdi>، والتحميل هيكمّل عادي. بعد كده كمّل خطوات التثبيت اللي فوق.</span></figcaption>
-        </figure>
+        <!-- 6 easy -->
+        <article class="panel" data-demo="easy">
+          <div class="p-txt">
+            <span class="num">06</span>
+            <h3 data-t="d6">اسحب. دوس. صدّر.</h3>
+            <p data-t="d6p">واجهة زجاج هادية بالعربي والإنجليزي، مقاسات 9:16 و16:9 و1:1، خطوط أمان تيك توك وإنستجرام وسناب، حفظ تلقائي، وتحديثات بتوصلك لوحدها.</p>
+            <ul class="chips"><li data-t="d6c1">عربي + English</li><li data-t="d6c2">Safe zones</li><li data-t="d6c3">حفظ تلقائي</li></ul>
+          </div>
+          <div class="p-vis vis-easy" aria-hidden="true">
+            <div class="ez">
+              <div class="ez-bin"><b style="background-image:url(/assets/shots/s5.jpg)"></b><b style="background-image:url(/assets/shots/s6.jpg)"></b></div>
+              <div class="ez-pv"><b class="ez-pvi"></b><i class="sz"></i></div>
+              <div class="ez-tl"><b class="ez-drop"></b></div>
+              <span class="ez-exp"><svg><use href="#i-dl"/></svg><span data-t="exp">تصدير</span></span>
+              <div class="ez-bar"><span dir="ltr">4K · HEVC</span><i><b></b></i></div>
+              <b class="ghost" style="background-image:url(/assets/shots/s5.jpg)"></b>
+              <svg class="cur"><use href="#i-cursor"/></svg>
+            </div>
+          </div>
+        </article>
       </div>
     </div>
   </section>
 
-  <!-- CLAUDE CODE -->
+  <!-- INSIDE -->
+  <section class="wrap sec inside" id="inside">
+    <div class="in-txt">
+      <p class="eyebrow" data-t="iEye2">من جوه البرنامج</p>
+      <h2 class="split" data-t="iTitle2">لقطات حقيقية، مش موك أب.</h2>
+      <p class="sub" data-t="iSub2">ده ماكتو زي ما هتفتحه: لوحة الكابشن، مكتبة الإفكتات بمعاينات حية، الإستيكرز والأيقونات المتحركة، والتايملاين.</p>
+      <ul class="in-list">
+        <li><b data-t="il1">الكابشن</b><span data-t="il1p">اختار لغة الكلام وموديل التفريغ، ودوس «كابشن تلقائي».</span></li>
+        <li><b data-t="il2">الإفكتات</b><span data-t="il2p">رتّبها بالأشهر والمفضلة، ودوسة تانية تشيل الإفكت.</span></li>
+        <li><b data-t="il3">الإستيكرز</b><span data-t="il3p">إيموجي متحركة و646 أيقونة بلونك وسُمك خطك.</span></li>
+      </ul>
+    </div>
+    <div class="fan" aria-hidden="true">
+      <figure class="pan p1"><img src="/assets/shots/captions-panel.jpg" alt="" width="635" height="1218" loading="lazy"></figure>
+      <figure class="pan p2"><img src="/assets/shots/effects-panel.jpg" alt="" width="635" height="1218" loading="lazy"></figure>
+      <figure class="pan p3"><img src="/assets/shots/stickers-panel.jpg" alt="" width="635" height="1218" loading="lazy"></figure>
+    </div>
+  </section>
+
+  <!-- MORE FEATURES -->
+  <section class="wrap sec" id="more">
+    <p class="eyebrow" data-t="mEye">وكمان</p>
+    <h2 class="split" data-t="mTitle">كل اللي بتدوّر عليه، في برنامج واحد.</h2>
+    <div class="grid">
+      <article class="card fc" data-ic="color"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="18" class="o"/><g class="wheel"><path d="M24 6v36M6 24h36" class="o2"/></g><circle class="pk" cx="31" cy="17" r="4"/></svg><h3 data-t="m1">تلوين وLUTs</h3><p data-t="m1p">عجلات ألوان، منحنيات، وLUTs. والمعاينة نفس التصدير.</p></article>
+      <article class="card fc" data-ic="key"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="8" width="36" height="32" rx="6" class="o"/><rect class="gscr" x="10" y="12" width="28" height="24" rx="3"/><circle class="head" cx="24" cy="22" r="5"/><path class="body" d="M15 36c1-6 5-8 9-8s8 2 9 8"/></svg><h3 data-t="m2">كروما كي</h3><p data-t="m2p">شيل الشاشة الخضرا وحط أي خلفية في ثانية.</p></article>
+      <article class="card fc" data-ic="cutout"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="8" width="36" height="32" rx="6" class="o"/><circle cx="24" cy="21" r="6" class="o"/><path d="M13 40c1-7 6-10 11-10s10 3 11 10" class="o"/><path class="scan" d="M6 10h36"/></svg><h3 data-t="m3">إزالة الخلفية AI</h3><p data-t="m3p">للأشخاص والمنتجات، من غير كروما ومن غير إنترنت.</p></article>
+      <article class="card fc" data-ic="slow"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><circle class="d d1" cx="10" cy="24" r="4"/><circle class="d d2" cx="20" cy="24" r="4"/><circle class="d d3" cx="30" cy="24" r="4"/><circle class="d d4" cx="40" cy="24" r="4"/></svg><h3 data-t="m4">سلو موشن ناعم</h3><p data-t="m4p">فريمات وسطانية بالذكاء الاصطناعي (RIFE) عشان البطء ما يقطّعش.</p></article>
+      <article class="card fc" data-ic="mic"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="19" y="6" width="10" height="22" rx="5" class="o"/><path d="M12 22a12 12 0 0 0 24 0M24 34v8" class="o"/><g class="lv"><path d="M4 20v8M42 18v12M46 22v4"/></g></svg><h3 data-t="m5">تعليق صوتي ونقاوة صوت</h3><p data-t="m5p">سجّل جوه البرنامج، وشيل الدوشة بموديل RNNoise.</p></article>
+      <article class="card fc" data-ic="track"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="4" y="6" width="40" height="36" rx="6" class="o"/><g class="tb"><rect x="10" y="12" width="14" height="14" rx="2" class="box"/><circle cx="17" cy="19" r="2.5" class="pk"/></g></svg><h3 data-t="m6">تتبّع حركة</h3><p data-t="m6p">النص أو الإستيكر يمشي ورا الحاجة اللي بتتحرك في الكادر.</p></article>
+      <article class="card fc" data-ic="safe"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="13" y="3" width="22" height="42" rx="5" class="o"/><rect class="zone" x="16" y="10" width="13" height="26" rx="2"/><path class="ui" d="M31 14v2M31 20v2M31 26v2"/></svg><h3 data-t="m7">خطوط الأمان</h3><p data-t="m7p">شوف أماكن واجهة تيك توك وإنستجرام وسناب فوق الفيديو قبل ما تنشر.</p></article>
+      <article class="card fc" data-ic="exp"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="10" width="38" height="28" rx="6" class="o"/><text x="24" y="28" text-anchor="middle" class="k4">4K</text><rect class="bar" x="10" y="33" width="28" height="2.5" rx="1"/></svg><h3 data-t="m8">تصدير لحد 4K</h3><p data-t="m8p">H.264 وHEVC، بتسريع هاردوير على الماك، لحد 60 فريم.</p></article>
+      <article class="card fc" data-ic="font"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><text x="24" y="33" text-anchor="middle" class="fa">Aa</text></svg><h3 data-t="m9">خطوط بالمئات</h3><p data-t="m9p">كل خطوط جوجل العربي جاهزة، وخطوط جهازك، والعربي متشكّل صح.</p></article>
+      <article class="card fc" data-ic="upd"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><g class="rot"><path d="M8 24a16 16 0 0 1 27-11.5L40 17" class="o"/><path d="M40 8v9h-9" class="o"/><path d="M40 24a16 16 0 0 1-27 11.5L8 31" class="o"/><path d="M8 40v-9h9" class="o"/></g></svg><h3 data-t="m10">تحديثات تلقائية</h3><p data-t="m10p">كل نسخة جديدة بتوصلك لوحدها، موقّعة ومتأكد منها.</p></article>
+      <article class="card fc" data-ic="save"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><path d="M10 6h22l8 8v28H10z" class="o"/><path class="tick" d="M17 26l5 5 10-10"/></svg><h3 data-t="m11">حفظ تلقائي</h3><p data-t="m11p">ملفات .maqto بأيقونتها، واسترجاع لو الجهاز فصل.</p></article>
+      <article class="card fc" data-ic="lock"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="10" y="21" width="28" height="21" rx="5" class="o"/><path class="shk" d="M16 21v-6a8 8 0 0 1 16 0v6"/><circle cx="24" cy="31" r="2.5" class="pk"/></svg><h3 data-t="m12">على جهازك وبس</h3><p data-t="m12p">ملفاتك والصوت والتفريغ عمرهم ما بيترفعوا في أي مكان.</p></article>
+    </div>
+  </section>
+
+  <!-- CLAUDE / ASSISTANT -->
   <section class="wrap sec" id="claude">
-    <p class="eyebrow" data-t="cEye">ماكتو + Claude Code</p>
+    <p class="eyebrow" data-t="cEye">ماكتو + Claude</p>
     <h2 class="split" data-t="cTitle">اكتب الفكرة، وشوف الفيديو بيتعمل قدامك.</h2>
-    <p class="sub" data-t="cSub">ماكتو فيه سيرفر MCP. بتربطه بـ Claude Code مرة واحدة، وبعدها تكتب البرومبت وClaude يشتغل على التايملاين بتاعك لايف.</p>
+    <p class="sub" data-t="cSub">ماكتو فيه مساعد جوه التطبيق وسيرفر MCP. Claude بيشتغل على التايملاين بتاعك لايف: يقص، يضيف نصوص وحركة وترانزيشن، يشوف الفريم ويراجع، ويصدّر.</p>
     <div class="card asst">
       <div class="asst-txt">
-        <p class="tag" data-t="aTag">جديد · المساعد جوه التطبيق</p>
-        <h3 data-t="aTitle">Claude جوه ماكتو. اكتب، وشوف التايملاين بيتعدّل قدامك.</h3>
-        <p data-t="aSub">من غير تيرمنال ولا أوامر ربط: دوس زرار «المساعد» في ماكتو، اكتب اللي عايزه بالعربي، وClaude ينفّذه على التايملاين لايف ويراجع الفريم بنفسه.</p>
+        <p class="tag" data-t="aTag">المساعد جوه التطبيق</p>
+        <h3 data-t="aTitle">من غير تيرمنال ولا أوامر.</h3>
         <ol>
           <li data-t="as1" data-html>ثبّت <a href="https://claude.com/claude-code" target="_blank" rel="noopener"><b><bdi>Claude Code</bdi></b></a> وسجّل دخول بحسابك في Claude.</li>
           <li data-t="as2" data-html>في ماكتو دوس <b>المساعد</b> فوق.</li>
-          <li data-t="as3" data-html>اكتب طلبك، زي <b>«حط عنوان في أول 3 ثواني»</b>، وتابعه بيتعمل.</li>
+          <li data-t="as3" data-html>اكتب طلبك، زي <b>«شيل السكتات»</b> أو <b>«حط عنوان في أول 3 ثواني»</b>، وتابعه بيتعمل.</li>
         </ol>
         <p class="note" data-t="aNote" data-html>محتاج اشتراك <b><bdi>Claude Pro</bdi></b> أو أعلى. المساعد بيشتغل بحسابك إنت، ومش بيقدر يلمس أي ملفات على جهازك غير المشروع المفتوح.</p>
       </div>
       <div class="asst-ui" aria-hidden="true">
-        <div class="au-bar"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /><path d="M20 3v4" /><path d="M22 5h-4" /></svg><b data-t="aUiT">المساعد</b></div>
+        <div class="au-bar"><svg><use href="#i-spark"/></svg><b data-t="aUiT">المساعد</b></div>
         <div class="au-log">
-          <span class="au-me" data-t="aUiQ">حط عنوان «عرض اليوم» في أول 3 ثواني</span>
-          <span class="au-tool"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /><path d="M20 3v4" /><path d="M22 5h-4" /></svg><i>add items</i></span>
-          <span class="au-tool"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /><path d="M20 3v4" /><path d="M22 5h-4" /></svg><i>preview</i></span>
-          <span class="au-ai" data-t="aUiA">تمام، حطيت «عرض اليوم» من 0 لـ 3 ثواني وراجعت الفريم.</span>
+          <span class="au-me" data-t="aUiQ">شيل السكتات وحط عنوان «عرض اليوم» في أول 3 ثواني</span>
+          <span class="au-tool"><svg><use href="#i-spark"/></svg><i>get project</i></span>
+          <span class="au-tool"><svg><use href="#i-spark"/></svg><i>update items</i></span>
+          <span class="au-tool"><svg><use href="#i-spark"/></svg><i>add items</i></span>
+          <span class="au-tool"><svg><use href="#i-spark"/></svg><i>preview</i></span>
+          <span class="au-ai" data-t="aUiA">تمام: شلت 4 سكتات (9.4 ثانية)، وحطيت «عرض اليوم» من 0 لـ 3 ثواني وراجعت الفريم.</span>
         </div>
         <div class="au-in"><span data-t="aUiPh">عايز تعمل إيه؟</span><i></i></div>
       </div>
@@ -239,10 +328,54 @@
         <div class="cmd"><code dir="ltr">claude mcp add maqto -s user -- "$env:LOCALAPPDATA\Maqto\maqto.exe" --mcp</code><button class="cp" type="button" data-t="copy">نسخ</button></div>
         <p class="lbl" data-t="cTry">جرّب تكتب كده</p>
         <div class="cmd ex"><code data-t="cEx">اعمل في ماكتو فيديو موشن 9:16 مدته 8 ثواني عن مطعم برجر: خلفية متدرّجة، 3 جمل تدخل ورا بعض بحركة، وفي الآخر صدّره على الديسكتوب.</code><button class="cp" type="button" data-t="copy">نسخ</button></div>
-        <ul class="can" aria-label="Claude can">
-          <li data-t="k1">نصوص وستايلات</li><li data-t="k2">كي فريمز وحركة</li><li data-t="k3">ترانزيشن</li><li data-t="k4">فلاتر وإيفكتس</li><li data-t="k5">بيشوف الفريم ويراجع</li><li data-t="k6">تصدير</li>
-        </ul>
         <p class="note" data-t="cUndo">ماكتو بيفتح لوحده لو كان مقفول. وكل خطوة Claude بيعملها، تقدر ترجعها بـ Cmd/Ctrl+Z.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- INSTALL -->
+  <section class="wrap sec" id="install">
+    <p class="eyebrow" data-t="iEye">التثبيت</p>
+    <h2 class="split" data-t="iTitle">دقيقة وتبدأ.</h2>
+    <p class="sub" data-t="iSub">البرنامج مجاني ومش من متجر أبل أو مايكروسوفت، فالنظام هيسألك أول مرة بس.</p>
+    <div class="os-grid">
+      <div class="os card">
+        <h3><svg aria-hidden="true"><use href="#i-mac"/></svg><span data-t="iMac">ماك</span></h3>
+        <ol>
+          <li data-t="m1i" data-html>افتح ملف <b><bdi>.dmg</bdi></b> واسحب ماكتو لـ <b><bdi>Applications</bdi></b>.</li>
+          <li data-t="m2i" data-html>افتح ماكتو. لو ظهرت رسالة إنه مش من مطوّر معروف، دوس <b><bdi>Done</bdi></b>.</li>
+          <li data-t="m3i" data-html>روح <b><bdi dir="ltr">System Settings → Privacy &amp; Security</bdi></b> وانزل لتحت ودوس <b><bdi>Open Anyway</bdi></b>.</li>
+        </ol>
+        <div class="mshots">
+          <figure><div class="shot"><img src="/assets/mac-privacy.png" width="436" height="66" alt="Privacy &amp; Security في System Settings" loading="lazy"></div>
+            <figcaption><b>A</b><span data-t="mA" data-html>من <bdi>System Settings</bdi> اختار <bdi>Privacy &amp; Security</bdi> من القايمة الجانبية.</span></figcaption></figure>
+          <figure><div class="shot"><img src="/assets/mac-open.png" width="952" height="374" alt="رسالة Maqto was blocked to protect your Mac وجنبها زرار Open Anyway" loading="lazy"><i class="hl" style="left:73.2%;top:48%;width:25%;height:17.5%"></i></div>
+            <figcaption><b>B</b><span data-t="mB" data-html>انزل لحد جزء <bdi>Security</bdi>، هتلاقي <bdi>“Maqto” was blocked</bdi>. دوس <bdi>Open Anyway</bdi> وأكّد بالباسورد أو البصمة. ده بيحصل أول مرة بس.</span></figcaption></figure>
+        </div>
+        <p class="note" data-t="mNote">ماك بمعالج Apple (M1 أو أحدث)، و macOS 13.4 أو أحدث.</p>
+      </div>
+      <div class="os card">
+        <h3><svg aria-hidden="true"><use href="#i-win"/></svg><span data-t="iWin">ويندوز</span></h3>
+        <ol>
+          <li data-t="w1" data-html>شغّل ملف <b><bdi>setup.exe</bdi></b>.</li>
+          <li data-t="w2" data-html>لو ظهرت شاشة <b><bdi>Windows protected your PC</bdi></b>، دوس <b><bdi>More info</bdi></b> وبعدين <b><bdi>Run anyway</bdi></b>.</li>
+          <li data-t="w3" data-html>اختار اللغة وكمّل التثبيت.</li>
+        </ol>
+        <p class="note" data-t="wNote">Windows 10 أو 11، 64-bit.</p>
+      </div>
+    </div>
+    <div class="brw card">
+      <h3><svg aria-hidden="true"><use href="#i-dl"/></svg><span data-t="bTitle">لو المتصفح وقّف التحميل</span></h3>
+      <p class="bsub" data-t="bSub">المتصفح ساعات بيوقف ملفات البرامج المجانية اللي مش من متجر أبل أو مايكروسوفت، وبالذات لو الحماية في المتصفح مقفولة. الملف نفسه نازل من صفحة ماكتو الرسمية على GitHub، وكمّل التحميل بخطوتين:</p>
+      <div class="shots">
+        <figure>
+          <div class="shot"><img src="/assets/dl-blocked.png" width="664" height="232" alt="قايمة التحميلات في Chrome وفيها Maqto مكتوب تحته Unverified download blocked" loading="lazy"><i class="hl" style="left:1%;top:42%;width:98%;height:49%"></i></div>
+          <figcaption><b>1</b><span data-t="b1" data-html>افتح قايمة التحميلات ودوس على ملف ماكتو اللي مكتوب تحته <bdi>Unverified download blocked</bdi>.</span></figcaption>
+        </figure>
+        <figure>
+          <div class="shot"><img src="/assets/dl-keep.png" width="905" height="370" alt="رسالة Chrome وفيها زرار Download unverified file" loading="lazy"><i class="hl" style="left:16.5%;top:66.5%;width:43.5%;height:24%"></i></div>
+          <figcaption><b>2</b><span data-t="b2" data-html>دوس <bdi>Download unverified file</bdi>، والتحميل هيكمّل عادي. بعد كده كمّل خطوات التثبيت اللي فوق.</span></figcaption>
+        </figure>
       </div>
     </div>
   </section>
@@ -253,17 +386,21 @@
     <h2 class="split" data-t="qTitle">قبل ما تسأل.</h2>
     <div class="faq">
       <details class="card"><summary data-t="q1">هو مجاني فعلاً؟</summary><p data-t="a1">أيوه. من غير اشتراك، ومن غير إعلانات، ومن غير علامة مائية على الفيديو.</p></details>
-      <details class="card"><summary data-t="q2">محتاج إنترنت؟</summary><p data-t="a2">لا، المونتاج والتصدير بيشتغلوا من غير إنترنت. الإنترنت محتاجه بس للتحديثات، ولتحميل نموذج الكابشن أول مرة (حوالي 466 ميجا).</p></details>
-      <details class="card"><summary data-t="q3">بيشتغل على أنهي أجهزة؟</summary><p data-t="a3">ماك بمعالج Apple (M1 أو أحدث) عليه macOS 12 أو أحدث، وويندوز 10 أو 11 بنظام 64-bit.</p></details>
+      <details class="card"><summary data-t="q2">محتاج إنترنت؟</summary><p data-t="a2">لا، المونتاج والتصدير بيشتغلوا من غير إنترنت. الإنترنت محتاجه بس للتحديثات، ولتحميل موديل الكابشن أول مرة (حوالي 550 ميجا للموديل المقترح).</p></details>
+      <details class="card"><summary data-t="q3">بيشتغل على أنهي أجهزة؟</summary><p data-t="a3">ماك بمعالج Apple (M1 أو أحدث) عليه macOS 13.4 أو أحدث، وويندوز 10 أو 11 بنظام 64-bit.</p></details>
+      <details class="card"><summary data-t="q6">قص السكتات بيشتغل إزاي؟</summary><p data-t="a6">عن طريق المساعد جوه ماكتو: تكتب «شيل السكتات» وClaude يلاقي الوقفات ويقصها على التايملاين. محتاج Claude Code واشتراك Claude Pro أو أعلى.</p></details>
       <details class="card"><summary data-t="q4">التحديثات بتوصل إزاي؟</summary><p data-t="a4">أول ما تفتح البرنامج بيشوف لو فيه نسخة جديدة ويسألك. لو وافقت بيحمّلها ويقفل ويفتح تاني بالنسخة الجديدة.</p></details>
       <details class="card"><summary data-t="q5">فيديوهاتي بتترفع في أي مكان؟</summary><p data-t="a5">لا. ملفاتك والصوت والتفريغ كله بيحصل على جهازك.</p></details>
     </div>
   </section>
 
   <!-- CTA -->
-  <section class="wrap sec">
-    <div class="end card"><div class="pat" aria-hidden="true"></div>
+  <section class="wrap sec" id="get">
+    <div class="end card">
+      <div class="end-bg" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <img class="end-mark" src="/assets/maqto-symbol.svg" alt="" width="80" height="80">
       <h2 class="split" data-t="endT">جرّب ماكتو النهارده.</h2>
+      <p class="sub" data-t="endS">مجاني، من غير حساب، ومن غير علامة مائية.</p>
       <div class="dl" id="dl2"></div>
     </div>
   </section>
