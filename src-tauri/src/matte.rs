@@ -24,28 +24,32 @@ pub fn matte_ready(app: AppHandle, kind: Option<String>) -> R<bool> {
 #[tauri::command]
 pub async fn matte_download(app: AppHandle, kind: Option<String>) -> R<()> {
     tauri::async_runtime::spawn_blocking(move || {
-        let file = model(&app, &kind)?;
-        std::fs::create_dir_all(file.parent().unwrap()).map_err(err)?;
         let url = if is_obj(&kind) { "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx" } else { "https://huggingface.co/Xenova/modnet/resolve/main/onnx/model.onnx" };
-        let res = ureq::get(url).call().map_err(err)?;
-        let total: f64 = res.header("content-length").and_then(|s| s.parse().ok()).unwrap_or(0.0);
-        let part = file.with_extension("part");
-        let mut w = std::fs::File::create(&part).map_err(err)?;
-        let (mut r, mut buf) = (res.into_reader(), vec![0u8; 1 << 16]);
-        let (mut got, mut last) = (0f64, 0f64);
-        loop {
-            let n = r.read(&mut buf).map_err(err)?;
-            if n == 0 { break; }
-            w.write_all(&buf[..n]).map_err(err)?;
-            got += n as f64;
-            if total > 0.0 && got / total - last > 0.005 {
-                last = got / total;
-                let _ = app.emit("progress", json!({ "label": "matte_dl", "p": last }));
-            }
-        }
-        drop(w);
-        std::fs::rename(part, file).map_err(err)
+        fetch(&app, url, &model(&app, &kind)?, "matte_dl")
     }).await.map_err(err)?
+}
+
+/// Download `url` to `file` (through a .part file), with "progress" events under `label`.
+pub fn fetch(app: &AppHandle, url: &str, file: &std::path::Path, label: &str) -> R<()> {
+    std::fs::create_dir_all(file.parent().unwrap()).map_err(err)?;
+    let res = ureq::get(url).call().map_err(err)?;
+    let total: f64 = res.header("content-length").and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let part = file.with_extension("part");
+    let mut w = std::fs::File::create(&part).map_err(err)?;
+    let (mut r, mut buf) = (res.into_reader(), vec![0u8; 1 << 16]);
+    let (mut got, mut last) = (0f64, 0f64);
+    loop {
+        let n = r.read(&mut buf).map_err(err)?;
+        if n == 0 { break; }
+        w.write_all(&buf[..n]).map_err(err)?;
+        got += n as f64;
+        if total > 0.0 && got / total - last > 0.005 {
+            last = got / total;
+            let _ = app.emit("progress", json!({ "label": label, "p": last }));
+        }
+    }
+    drop(w);
+    std::fs::rename(part, file).map_err(err)
 }
 
 /// Matte for the whole of `path`. Cached per file.

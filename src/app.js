@@ -3455,7 +3455,7 @@ $('#rows').addEventListener('contextmenu', e => {
   select(c.dataset.id);
   const it = item(c.dataset.id), vid = !isText(it) && media(it).kind === 'video';
   ctxMenu(e, [['split', () => splitAt()], ['k_copy', copySel], ['k_cut', cutSel], ['k_paste', pasteClip], ['dup', duplicateSel],
-    vid && ['freeze', freezeFrame], vid && media(it).hasAudio && ['extractAudio', extractAudio], !isText(it) && media(it).kind !== 'audio' && ['rotate90', rotateSel], (isText(it) || media(it).kind !== 'audio') && [it.hidden ? 'showLayer' : 'hideLayer', toggleHidden], ['-'], ['del', removeSel, 'danger']]);
+    vid && ['freeze', freezeFrame], vid && media(it).hasAudio && ['extractAudio', extractAudio], !isText(it) && (media(it).kind === 'audio' || media(it).hasAudio) && ['stems', separateSounds], !isText(it) && media(it).kind !== 'audio' && ['rotate90', rotateSel], (isText(it) || media(it).kind !== 'audio') && [it.hidden ? 'showLayer' : 'hideLayer', toggleHidden], ['-'], ['del', removeSel, 'danger']]);
 });
 
 // The clip's sound as its own clip on a free audio lane under it (same file, same timing); the video goes silent.
@@ -3476,6 +3476,43 @@ function extractAudio() {
   P.items.push(a);
   sel = a.id; msel.clear(); inspTab = null;
   dirty = true; refresh(); renderBin();
+}
+
+// Voice, music and sound effects of a clip, each on its own audio lane under it (TIGER-DnR, on this computer; model 7 MB once)
+let stemsTool = false;
+inv('stems_ready').then(v => (stemsTool = v), () => {});
+async function separateSounds() {
+  const it = sel && item(sel), m = it && !isText(it) && media(it);
+  if (!m || !(m.kind === 'audio' || m.hasAudio)) return;
+  cancelled = false;
+  try {
+    if (!stemsTool) {
+      if (!(await TA.dialog.ask(tr('stemsAsk'), { title: tr('stems') }))) return;
+      progress(tr('p_stems_dl'), 0); await inv('stems_download'); stemsTool = true;
+    }
+    progress(tr('p_stems'), 0);
+    const paths = await inv('stems_make', { path: m.path, start: num(it.in, 0), len: S.srcLen(it) });
+    hideModal();
+    const mids = addToBin(await inv('probe', { paths }));
+    if (mids.length !== 3) return;
+    snapshot();
+    const end = it.start + it.dur, free = x => !P.items.some(i => i.track === x.id && i.start < end - 1e-6 && it.start < i.start + i.dur - 1e-6);
+    const base = m.name.replace(/\.[^.]+$/, '');
+    mids.forEach((mid, k) => {
+      P.media[mid].name = base + ' · ' + tr(['stVoice', 'stMusic', 'stSfx'][k]);
+      let lane = P.tracks.find(x => x.kind === 'audio' && free(x));
+      if (!lane) P.tracks.push(lane = { id: 'a' + uid(), kind: 'audio' });
+      const a = { id: uid(), track: lane.id, media: mid, start: it.start, dur: it.dur, in: 0, speed: it.speed, volume: num(it.volume, 1) };
+      const fi = m.kind === 'audio' ? it.fadeIn : it.afIn, fo = m.kind === 'audio' ? it.fadeOut : it.afOut;
+      if (fi) a.fadeIn = fi;
+      if (fo) a.fadeOut = fo;
+      if (it.pitch != null) a.pitch = it.pitch;
+      P.items.push(a);
+    });
+    it.muted = true;
+    sel = null; msel.clear(); inspTab = null;
+    dirty = true; refresh(); renderBin(); toast(tr('stemsOk'));
+  } catch (err) { hideModal(); if (!cancelled) toast(cleanErr(err)); cancelled = false; }
 }
 
 /* ---------- apply to all captions ---------- */

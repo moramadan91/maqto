@@ -2,6 +2,7 @@ mod mcp;
 mod assistant;
 mod rife;
 mod matte;
+mod stems;
 mod media_server;
 
 pub fn mcp_stdio() { mcp::serve_stdio() }
@@ -103,6 +104,7 @@ fn run_job(state: &AppState, bin: &Path, args: &[String], on_line: impl Fn(&str)
 
 #[tauri::command]
 fn cancel(state: State<AppState>) {
+    stems::STOP.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Some(mut c) = state.job.lock().unwrap().take() {
         let _ = c.kill();
         let _ = c.wait();
@@ -775,7 +777,7 @@ pub fn run() {
         .manage(MediaServer::start().expect("media server"))
         .invoke_handler(tauri::generate_handler![
             probe, save_project, open_project, recovery_path, work_begin, work_end, write_frame, export_run, audio_fx, video_stab, proxy_render, write_work, read_lut, lut_library, lut_add, lut_remove, sfx_library, sfx_import, overlay_library,
-            cancel, take_open_file, model_ready, model_download, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, sparse_keys, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_make, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop
+            cancel, take_open_file, model_ready, model_download, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, sparse_keys, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_make, stems::stems_ready, stems::stems_download, stems::stems_make, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
