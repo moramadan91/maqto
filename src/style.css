@@ -159,6 +159,11 @@ main { display: grid; grid-template-columns: var(--libW, 290px) minmax(0, 1fr) v
   border: 1px solid rgba(255, 255, 255, .22); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25);
 }
 .clip.k-image { --c: var(--image); } .clip.k-audio { --c: var(--audio); } .clip.k-text { --c: var(--text-c); }
+.clip .wf { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.clip .wf .wv { fill: rgba(255, 255, 255, .38); }
+.clip .wf .vln { fill: none; stroke: #ffd36a; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.clip .vl { position: absolute; left: 8px; right: 8px; height: 8px; cursor: ns-resize; z-index: 2; }
+.clip.swap { outline: 2px dashed var(--accent); outline-offset: -2px; }
 .clip span { padding: 0 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; display: flex; align-items: center; gap: 5px; }
 .clip span svg.ic { width: 13px; height: 13px; }
 .clip.sel { border: 2px solid var(--accent); }

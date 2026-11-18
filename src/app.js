@@ -1688,13 +1688,69 @@ function laneGap() {
   $('#rows').style.marginTop = $('#heads').style.marginTop = g + 'px';
 }
 new ResizeObserver(() => laneGap()).observe($('#scroll'));
+/* ---------- audio waveforms on the timeline ---------- */
+// Peaks (the loudest sample of each 1/50 s) of a sound, from the buffer Web Audio decodes for playback.
+const PK = 50, peaks = new Map(), pkWait = new Set();
+function peaksOf(it) {
+  const m = media(it);
+  if (peaks.has(m.path)) return peaks.get(m.path);
+  const B = waOf(m);
+  if (!B) {
+    if (AC && !pkWait.has(m.path)) { pkWait.add(m.path); waLoad(it.media); (waBuf.get(m.path) || Promise.reject()).then(() => renderTimeline(), () => {}); }
+    return null;
+  }
+  const n = Math.ceil(B.duration * PK), step = B.sampleRate / PK, out = new Float32Array(n), chs = [...Array(B.numberOfChannels)].map((_, c) => B.getChannelData(c));
+  for (let i = 0; i < n; i++) {
+    let mx = 0;
+    for (const d of chs) for (let j = Math.floor(i * step), e = Math.min(d.length, Math.floor((i + 1) * step)); j < e; j++) { const v = Math.abs(d[j]); if (v > mx) mx = v; }
+    out[i] = mx;
+  }
+  const mx = out.reduce((a, v) => Math.max(a, v), 1e-6);
+  for (let i = 0; i < n; i++) out[i] /= mx; // the file's loudest moment fills the lane
+  peaks.set(m.path, out);
+  return out;
+}
+// Clip time 0..dur on x (seconds, stretched by the lane zoom), loudness 0..1 on y; volume and fades shape both
+// the wave and the volume line. The line's grip (.vl) drags the volume up and down.
+function waveHtml(it) {
+  const pk = peaksOf(it), vol = num(it.volume, 1), fi = num(it.fadeIn, 0), fo = num(it.fadeOut, 0), dur = it.dur, sp = num(it.speed, 1);
+  const env = x => Math.min(1, fi > 0 ? x / fi : 1, fo > 0 ? (dur - x) / fo : 1);
+  const vy = 1 - vol / 2; // volume 0..200% -> bottom..top; 100% sits halfway
+  let wave = '';
+  if (pk) {
+    const n = Math.min(1500, Math.max(2, Math.round(dur * PK))), top = [], bot = [];
+    for (let k = 0; k <= n; k++) {
+      const x = dur * k / n, a = (pk[Math.floor((num(it.in, 0) + x * sp) * PK)] || 0) * Math.min(1, 0.35 + 0.65 * vol) * env(x) * 0.46; // quiet clips stay readable
+      top.push(`${x.toFixed(3)} ${(0.5 - a).toFixed(3)}`); bot.unshift(`${x.toFixed(3)} ${(0.5 + a).toFixed(3)}`);
+    }
+    wave = `<path d="M${top.join('L')}L${bot.join('L')}Z" class="wv"/>`;
+  }
+  const line = `<polyline class="vln" points="0 1 ${fi} ${vy} ${dur - fo} ${vy} ${dur} 1"/>`;
+  return `<svg class="wf" viewBox="0 0 ${dur} 1" preserveAspectRatio="none">${wave}${line}</svg><div class="vl" style="top:calc(${vy * 100}% - 4px)" title="${Math.round(vol * 100)}%"></div>`;
+}
+function volDrag(e, it) {
+  e.stopPropagation();
+  const y0 = e.clientY, v0 = num(it.volume, 1);
+  let changed = false;
+  const mv = ev => {
+    if (!changed) { snapshot(); changed = true; }
+    it.volume = Math.round(clamp(v0 + (y0 - ev.clientY) / 100, 0, 2) * 100) / 100; // 1% a pixel: the lane is too short to map its height
+    const live = $(`.clip[data-id="${it.id}"]`), h = live && live.querySelector('.wf');
+    if (h) { const tmp = document.createElement('div'); tmp.innerHTML = waveHtml(it); h.replaceWith(tmp.firstChild); live.querySelector('.vl').replaceWith(tmp.firstChild); }
+    toast(tr('volume') + ' ' + Math.round(it.volume * 100) + '%');
+    dirty = true; needsDraw = true;
+  };
+  window.addEventListener('pointermove', mv);
+  window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); if (changed) refresh(); }, { once: true });
+}
+
 function renderTimeline() {
   const width = (Math.max(total(), t) + 30) * pps, TS = shownTracks();
   ppsVar();
   $('#rows').style.width = $('#ruler').style.width = `calc(${width / pps}px * var(--pps))`;
   $('#heads').innerHTML = TS.map(x => `<div class="head${x.locked ? ' locked' : ''}" data-track="${x.id}" title="${tr('dragTrack')}"><i style="background:${TRACK_COLOR[x.kind]}"></i><em>${esc(trackLabel(x))}</em>${laneBtns(x)}</div>`).join('');
   $('#rows').innerHTML = TS.map(x => `<div class="row${x.id === 'v1' ? ' main' : ''}${x.locked ? ' locked' : ''}" data-track="${x.id}">${
-    P.items.filter(i => i.track === x.id).map(it => `<div class="clip k-${kindOf(it)}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))"><div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}<span>${clipLabel(it)}</span>${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div></div>`).join('') + trBoxes(x.id)
+    P.items.filter(i => i.track === x.id).map(it => `<div class="clip k-${kindOf(it)}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))"><div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}${kindOf(it) === 'audio' ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div></div>`).join('') + trBoxes(x.id)
   }</div>`).join('');
   laneGap();
   renderRuler(width);
@@ -1756,10 +1812,14 @@ function sourceBound(it) {
   return m && m.kind !== 'image' && m.dur ? m : null;
 }
 // Magnetic main track: clips on v1 sit end to end from 0, in start order.
-function pack() {
-  if (!magnet) return;
+function pack() { packLane('v1'); }
+// Magnet on, every video/audio lane packs like the main one once you drop a clip on it (text lanes stay free).
+// Only lanes a drag touches pack, so sounds placed by time elsewhere (assistant, older projects) keep their spot.
+const magLane = id => magnet && (P.tracks.find(x => x.id === id) || {}).kind !== 'text';
+function packLane(id) {
+  if (!magLane(id)) return;
   let at = 0;
-  for (const it of P.items.filter(i => i.track === 'v1').sort((a, b) => a.start - b.start)) { it.start = at; at += it.dur; }
+  for (const it of P.items.filter(i => i.track === id).sort((a, b) => a.start - b.start)) { it.start = at; at += it.dur; }
 }
 
 $('#rows').addEventListener('pointerdown', e => {
@@ -1772,6 +1832,7 @@ $('#rows').addEventListener('pointerdown', e => {
   if (msel.size > 1 && msel.has(it.id) && !e.target.classList.contains('h')) return groupMove(e, it);
   select(it.id);
   if ((P.tracks.find(x => x.id === it.track) || {}).locked) return;
+  if (e.target.classList.contains('vl')) return volDrag(e, it);
   const mode = e.target.classList.contains('l') ? 'l' : e.target.classList.contains('r') ? 'r' : 'move';
   const x0 = e.clientX, o = JSON.parse(JSON.stringify(it)), pts = snapPoints(it.id);
   const sp = num(o.speed, 1), m = sourceBound(it);
@@ -1811,7 +1872,7 @@ $('#rows').addEventListener('pointerdown', e => {
   const lane = { nt: null, from: it.track };
   const onUp = () => {
     window.removeEventListener('pointermove', onMove);
-    if (changed) { if (lane.gap != null && it.track === 'v1') it.start = lane.gap; dropLaneEnd(lane); refresh(); }
+    if (changed) { if (lane.gap != null && magLane(it.track)) it.start = lane.gap; packLane(it.track); if (lane.from !== it.track) packLane(lane.from); dropLaneEnd(lane); refresh(); }
   };
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp, { once: true });
@@ -1824,7 +1885,7 @@ function dropLane(it, clientY, lane) {
   if (it.track === 'c1' && !lane.nt) return;
   const TS = shownTracks(), r = $('#rows').getBoundingClientRect(), i = Math.floor((clientY - r.top) / ROW), x = TS[i], kind = laneKind(it);
   if (x && x === lane.nt) return;
-  const free = x && x.id !== 'c1' && !x.locked && compatible(it, x.id) && (x.id === 'v1' || x.id === it.track ||
+  const free = x && x.id !== 'c1' && !x.locked && compatible(it, x.id) && (magLane(x.id) || x.id === it.track ||
     !P.items.some(q => q !== it && q.track === x.id && q.start < it.start + it.dur - 1e-6 && it.start < q.start + q.dur - 1e-6));
   if (free) { it.track = x.id; return; }
   if (i >= TS.length && kind !== 'audio') return; // below the last lane: only sounds get a new lane there
@@ -1840,7 +1901,7 @@ function dropLane(it, clientY, lane) {
 function settle(it, lane) {
   lane.gap = null;
   const others = P.items.filter(q => q !== it && q.track === it.track).sort((a, b) => a.start - b.start);
-  if (it.track === 'v1') {
+  if (magLane(it.track)) {
     const idx = others.filter(q => q.start + q.dur / 2 < it.start).length;
     let at = 0;
     others.forEach((q, i) => {
@@ -3346,23 +3407,42 @@ $('#binList').addEventListener('pointerdown', e => {
     ghost.textContent = n > 1 ? tr('nClips', { n }) : P.media[mid].name;
     ghost.style.left = ev.clientX + 12 + 'px';
     ghost.style.top = ev.clientY + 12 + 'px';
-    $$('.row.over').forEach(r => r.classList.remove('over'));
-    const row = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('.row');
-    if (row) row.classList.add('over');
+    $$('.row.over, .clip.swap').forEach(r => r.classList.remove('over', 'swap'));
+    const hit = document.elementFromPoint(ev.clientX, ev.clientY), row = hit?.closest('.row'), c = swapTarget(hit, n);
+    if (c) c.classList.add('swap');
+    else if (row) row.classList.add('over');
   };
-  const up = ev => {
+  const up = async ev => {
     window.removeEventListener('pointermove', mv);
     ghost.hidden = true;
-    $$('.row.over').forEach(r => r.classList.remove('over'));
+    $$('.row.over, .clip.swap').forEach(r => r.classList.remove('over', 'swap'));
     if (!dragging) { if (wasSel) { binSel.clear(); binPick(mid, ev); } if (!(ev.shiftKey || ev.metaKey || ev.ctrlKey)) toggleBinPrev(mi); return; }
     const hit = document.elementFromPoint(ev.clientX, ev.clientY), row = hit?.closest('.row');
-    const t0 = snap1(Math.max(0, timeAt(ev.clientX)), snapPoints(null));
-    if (row) addMany(picked(), row.dataset.track, t0);
+    const t0 = snap1(Math.max(0, timeAt(ev.clientX)), snapPoints(null)), sw = swapTarget(hit, binSel.size);
+    if (sw && await TA.dialog.ask(tr('swapAsk', { a: (media(item(sw.dataset.id)) || {}).name || '', b: P.media[mid].name }), { title: tr('swapT') })) return swapMedia(item(sw.dataset.id), mid);
+    if (row) { addMany(picked(), row.dataset.track, t0); if (magnet && row.dataset.track !== 'v1') { packLane(row.dataset.track); refresh(); } }
     else if (hit?.closest('#tl')) addMany(picked(), newLaneFor(picked()[0], ev.clientY < $('#rows').getBoundingClientRect().top), t0); // empty timeline space: a lane of its own
   };
   window.addEventListener('pointermove', mv);
   window.addEventListener('pointerup', up, { once: true });
 });
+// One file dropped on a clip of the same kind (picture/video on a picture/video, sound on a sound): offer to swap it in.
+function swapTarget(hit, n) {
+  const c = n === 1 && hit?.closest('.clip'), it = c && item(c.dataset.id), mid = picked()[0], m = P.media[mid];
+  if (!it || isText(it) || !m || it.media === mid || (P.tracks.find(x => x.id === it.track) || {}).locked) return null;
+  return (m.kind === 'audio') === (media(it).kind === 'audio') ? c : null;
+}
+// The clip keeps its place, look and effects; only the file changes (a shorter file shortens the clip).
+function swapMedia(it, mid) {
+  const m = P.media[mid];
+  snapshot();
+  it.media = mid; it.in = 0;
+  delete it.curve;
+  if (m.kind !== 'image') it.dur = Math.min(it.dur, m.dur / num(it.speed, 1));
+  sel = it.id; inspTab = null;
+  if (magnet) packLane(it.track);
+  dirty = true; refresh();
+}
 // Drag on empty space: rubber-band select (adds to the selection with ⌘/shift).
 function binMarquee(e) {
   const list = $('#binList'), keep = e.metaKey || e.ctrlKey || e.shiftKey, base = keep ? new Set(binSel) : new Set();
