@@ -714,7 +714,7 @@ function clipHtml(i, half) {
   const pos = `left:${half + i.start * pps}px;width:${Math.max(dur(i) * pps - 2, 12)}px`, s = (i.id === sel ? ' sel' : '') + (i.hide ? ' off' : '');
   if (isVis(i.lane)) return `<div class="clip v${i.lane === 'v' ? '' : ' ov'}${s}" data-id="${i.id}" style="${pos};--h:${i.h}">${strip(i)}<span class="du">${dur(i).toFixed(1)}s${i.speed !== 1 ? ' · ' + i.speed + 'x' : ''}</span></div>`;
   if (i.lane[0] === 'a') return `<div class="clip a${s}" data-id="${i.id}" style="${pos};--c:var(${i.c})">${wave(i)}<span>${i.name}</span></div>`;
-  if (i.lane[0] === 'e') return `<div class="clip e${s}" data-id="${i.id}" style="${pos}"><span>${i.name}</span></div>`;
+  if (i.lane[0] === 'e') return `<div class="clip e${s}" data-id="${i.id}" style="${pos}"><span>${i.fx ? fxName(i.fx.id) : i.name}</span></div>`;  // fx label follows the current language
   return `<div class="clip t${i.kind === 'sticker' ? ' st' : ''}${s}" data-id="${i.id}" style="${pos}"><span>${i.name}</span></div>`;
 }
 sc.addEventListener('scroll', () => { stick(); if (playing) return; t = Math.max(0, Math.min((sc.scrollLeft + phOff) / pps, total())); endLine(); draw(); });
@@ -1177,7 +1177,10 @@ const FL_HOT = ['warm', 'cool', 'vivid', 'tealOrange', 'clear', 'glow', 'rosy', 
 const FX_HOT = ['shake', 'zoomPulse', 'glitch', 'rgbSplit', 'vhs', 'blur', 'bounce', 'earthquake', 'zoomIn', 'mirror', 'oldFilm', 'strobe', 'swirl', 'grain', 'vignette', 'flash'];
 let flCat = 'hot', fxCat = 'hot';
 // the frame under the playhead, small, for the cards
-function snapFrame() { const c = document.createElement('canvas'), h = 120; c.width = Math.round(h * cv.width / cv.height) || 68; c.height = h; c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height); return c; }
+function snapFrame(raw) { // raw: frame without the project filter, so filter cards don't stack on it
+  const f = raw && P && P.filter, c = document.createElement('canvas'), h = 120; if (f) { P.filter = null; paint(cx, cv.width, cv.height); }
+  c.width = Math.round(h * cv.width / cv.height) || 68; c.height = h; c.getContext('2d').drawImage(cv, 0, 0, c.width, c.height);
+  if (f) { P.filter = f; paint(cx, cv.width, cv.height); } return c; }
 function cardsDraw(box, src, one) { // one(id) -> [L, F]; a few cards per frame so the sheet opens at once
   const L = [...box.querySelectorAll('canvas[data-id]')]; let k = 0;
   const step = () => { if (!box.isConnected) return; for (const e = k + 8; k < Math.min(e, L.length); k++) { const c = L[k], [lu, F] = one(c.dataset.id); c.width = src.width; c.height = src.height;
@@ -1186,7 +1189,7 @@ function cardsDraw(box, src, one) { // one(id) -> [L, F]; a few cards per frame 
   requestAnimationFrame(step);
 }
 function libSheet(title, cats, catName, ids, cur, name, one, pickFn) {
-  const src = snapFrame(); let cat = cats.cur;
+  const src = snapFrame(cats.raw); let cat = cats.cur;
   const card = k => `<button aria-pressed="${k === cur()}" data-n="${k}"><span class="sw">${k ? `<canvas data-id="${k}"></canvas>` : ico('x')}</span>${k ? name(k) : 'بدون'}</button>`;
   const grid = () => { $('#trG').innerHTML = `<div class="opts4">${card('')}${ids(cat).map(card).join('')}</div>`; $('#trG').scrollTop = 0; cardsDraw($('#trG'), src, one); };
   sheet(title, `<div class="trcats">${cats.list.map(k => `<button data-c="${k}" aria-pressed="${k === cat}">${catName(k)}</button>`).join('')}</div><div class="trgrid" id="trG"></div>`);
@@ -1196,7 +1199,7 @@ function libSheet(title, cats, catName, ids, cur, name, one, pickFn) {
 }
 function filterSheet() {
   const S = MaqtoShared, L = MaqtoI18n[lang === 'en' ? 'en' : 'ar'] || {}, cats = ['hot', ...new Set(Object.values(S.PRESETS).map(p => p.cat).filter(Boolean))];
-  libSheet('فلاتر', { list: cats, cur: flCat, set: c => flCat = c }, k => L['flc_' + k] || k,
+  libSheet('فلاتر', { list: cats, cur: flCat, set: c => flCat = c, raw: true }, k => L['flc_' + k] || k,
     k => (k === 'hot' ? FL_HOT : Object.keys(S.PRESETS).filter(p => S.PRESETS[p].cat === k)).filter(p => S.PRESETS[p]), () => preId(), flName,
     id => [lutOf(id, '', 9), null],
     id => { P.filter = id || null; draw(); saveProjects(); }); // undo history holds the clips only, not the filter

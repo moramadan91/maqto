@@ -63,7 +63,7 @@ const EN = {
   q6: 'How does silence cutting work?', a6: 'Through the assistant inside Maqto: write “cut the silences” and Claude finds the pauses and cuts them on the timeline. It needs Claude Code and a Claude Pro plan or higher.',
   q4: 'How do updates arrive?', a4: 'When you open Maqto it checks for a new version and asks you. Say yes and it downloads, restarts and opens the new version.',
   q5: 'Are my videos uploaded anywhere?', a5: 'No. Your files, audio and transcription all stay on your computer.',
-  endT: 'Try Maqto today.', endS: 'Free, no account, no watermark.', foot: 'Maqto · free, no ads', all: 'All versions',
+  endT: 'Try Maqto today.', endS: 'Free, no account, no watermark.', foot: 'Maqto · free, no ads', all: 'All versions', priv: 'Privacy',
 };
 Object.assign(EN, {
   dockAria: 'Sections', k1: 'Intro', k2: 'Demos', k3: 'Inside', k4: 'Features', k5: 'Assistant', k6: 'Install', k7: 'FAQ', k8: 'Export',
