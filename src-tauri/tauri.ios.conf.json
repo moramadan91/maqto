@@ -1,0 +1,26 @@
+{
+  "bundle": {
+    "externalBin": [],
+    "createUpdaterArtifacts": false,
+    "fileAssociations": []
+  },
+  "plugins": {
+    "updater": null
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "url": "mobile.html",
+        "visible": true,
+        "title": "Maqto"
+      }
+    ],
+    "security": {
+      "dangerousDisableAssetCspModification": [
+        "style-src"
+      ],
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' http://127.0.0.1:* data: blob:; media-src 'self' http://127.0.0.1:* blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data: blob: http://127.0.0.1:*; script-src 'self' 'wasm-unsafe-eval'; connect-src ipc: http://ipc.localhost http://127.0.0.1:*"
+    }
+  }
+}

@@ -766,18 +766,166 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     Menu::with_items(app, &[&maqto, &file, &edit, &window])
 }
 
+/// iOS: the exported video goes into the Photos library (Info.plist has NSPhotoLibraryAddUsageDescription)
+#[tauri::command]
+fn save_to_photos(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    {
+        use objc2_foundation::NSString;
+        let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("no video data".into()) };
+        let ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("maqto-{ms}.mp4"));
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        let s = NSString::from_str(&path.to_string_lossy());
+        #[link(name = "UIKit", kind = "framework")]
+        extern "C" {
+            fn UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(path: &NSString) -> bool;
+            fn UISaveVideoAtPathToSavedPhotosAlbum(path: &NSString, target: *const std::ffi::c_void, sel: *const std::ffi::c_void, ctx: *mut std::ffi::c_void);
+        }
+        unsafe {
+            if !UIVideoAtPathIsCompatibleWithSavedPhotosAlbum(&s) { return Err("Photos cannot take this video".into()); }
+            UISaveVideoAtPathToSavedPhotosAlbum(&s, std::ptr::null(), std::ptr::null(), std::ptr::null_mut());
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "ios"))]
+    { let _ = request; Err("iOS only".into()) }
+}
+
+// Auto captions on iPhone: Apple's speech recognizer (on the phone when the language supports it), WAV bytes in, words out.
+#[tauri::command]
+async fn speech_to_text(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    #[cfg(target_os = "ios")]
+    {
+        let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("no audio".into()) };
+        let lang = request.headers().get("lang").and_then(|v| v.to_str().ok()).unwrap_or("ar").to_string();
+        let ns = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let path = std::env::temp_dir().join(format!("maqto-stt-{ns}.wav"));
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        tauri::async_runtime::spawn_blocking(move || { let r = ios_stt(&path, &lang); let _ = std::fs::remove_file(&path); r })
+            .await.map_err(|e| e.to_string())?
+    }
+    #[cfg(not(target_os = "ios"))]
+    { let _ = request; Err("iOS only".into()) }
+}
+
+#[cfg(target_os = "ios")]
+fn ios_stt(path: &std::path::Path, lang: &str) -> Result<String, String> {
+    use objc2::AnyThread;
+    use objc2_foundation::{NSError, NSLocale, NSOperationQueue, NSString, NSURL};
+    use objc2_speech::{SFSpeechRecognitionResult, SFSpeechRecognizer, SFSpeechRecognizerAuthorizationStatus as Auth, SFSpeechURLRecognitionRequest};
+    use std::sync::mpsc;
+    unsafe {
+        let mut st = SFSpeechRecognizer::authorizationStatus();
+        if st == Auth::NotDetermined {
+            let (tx, rx) = mpsc::channel();
+            let blk = block2::RcBlock::new(move |s: Auth| { let _ = tx.send(s); });
+            SFSpeechRecognizer::requestAuthorization(&blk);
+            st = rx.recv().map_err(|e| e.to_string())?;
+        }
+        if st != Auth::Authorized { return Err("denied".into()); }
+        // prefer a locale the phone can do offline
+        let ids: &[&str] = if lang == "en" { &["en-US", "en-GB"] } else { &["ar-EG", "ar-SA", "ar-AE"] };
+        let mut pick = None;
+        for id in ids {
+            let loc = NSLocale::localeWithLocaleIdentifier(&NSString::from_str(id));
+            let Some(r) = SFSpeechRecognizer::initWithLocale(SFSpeechRecognizer::alloc(), &loc) else { continue };
+            if !r.isAvailable() { continue; }
+            let od = r.supportsOnDeviceRecognition();
+            if od || pick.is_none() { pick = Some((r, od)); }
+            if od { break; }
+        }
+        let (rec, on_device) = pick.ok_or("unavailable")?;
+        rec.setQueue(&NSOperationQueue::new()); // results must not wait on the main thread
+        let url = NSURL::fileURLWithPath(&NSString::from_str(&path.to_string_lossy()));
+        let req = SFSpeechURLRecognitionRequest::initWithURL(SFSpeechURLRecognitionRequest::alloc(), &url);
+        req.setShouldReportPartialResults(false);
+        req.setRequiresOnDeviceRecognition(on_device);
+        req.setAddsPunctuation(true);
+        let (tx, rx) = mpsc::channel::<Result<String, String>>();
+        let blk = block2::RcBlock::new(move |res: *mut SFSpeechRecognitionResult, err: *mut NSError| {
+            if let Some(res) = res.as_ref() {
+                if !res.isFinal() { return; }
+                let words: Vec<_> = res.bestTranscription().segments().iter()
+                    .map(|g| serde_json::json!({ "w": g.substring().to_string(), "s": g.timestamp(), "e": g.timestamp() + g.duration() })).collect();
+                let _ = tx.send(Ok(serde_json::json!({ "words": words, "onDevice": on_device }).to_string()));
+            } else if let Some(e) = err.as_ref() {
+                let _ = tx.send(Err(e.localizedDescription().to_string()));
+            }
+        });
+        let task = rec.recognitionTaskWithRequest_resultHandler(&req, &blk);
+        let out = rx.recv_timeout(std::time::Duration::from_secs(300)).map_err(|_| "timeout".to_string());
+        task.cancel();
+        out?
+    }
+}
+
+// Auto captions on iPhone with the desktop's own whisper model (model_download fetches it once):
+// 16 kHz mono f32 in, the same JSON whisper-cli writes with -ojf (one word per segment, DTW times) out.
+#[tauri::command]
+async fn whisper_words(app: AppHandle, request: tauri::ipc::Request<'_>) -> R<String> {
+    #[cfg(target_os = "ios")]
+    {
+        let tauri::ipc::InvokeBody::Raw(b) = request.body() else { return Err("no audio".into()) };
+        let pcm: Vec<f32> = b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        let lang = request.headers().get("lang").and_then(|v| v.to_str().ok()).unwrap_or("ar").to_string();
+        tauri::async_runtime::spawn_blocking(move || whisper_run(&app, &pcm, &lang)).await.map_err(err)?
+    }
+    #[cfg(not(target_os = "ios"))]
+    { let _ = (app, request); Err("iOS only".into()) }
+}
+
+#[cfg(target_os = "ios")]
+fn whisper_run(app: &AppHandle, pcm: &[f32], lang: &str) -> R<String> {
+    use whisper_rs::*;
+    // loaded per run, not kept: ~600 MB held while editing video gets the app killed
+    let mut cp = WhisperContextParameters::default();
+    cp.use_gpu(!cfg!(target_abi = "sim")); // the simulator's Metal can't hold the model; phones run it on the GPU
+    cp.dtw_parameters(DtwParameters { mode: DtwMode::ModelPreset { model_preset: DtwModelPreset::LargeV3Turbo }, ..Default::default() });
+    let ctx = WhisperContext::new_with_params(model_path(app, "large-v3-turbo-q5_0")?, cp).map_err(err)?;
+    let mut st = ctx.create_state().map_err(err)?;
+    let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    p.set_language(Some(lang));
+    p.set_max_len(1);
+    p.set_split_on_word(true);
+    p.set_token_timestamps(true);
+    p.set_print_progress(false);
+    p.set_print_realtime(false);
+    p.set_print_special(false);
+    p.set_print_timestamps(false);
+    p.set_n_threads(std::thread::available_parallelism().map(|n| n.get().clamp(2, 6)).unwrap_or(4) as i32);
+    let a = app.clone();
+    p.set_progress_callback_safe(move |q: i32| { let _ = a.emit("progress", json!({ "label": "asr", "p": q as f64 / 100.0 })); });
+    st.full(p, pcm).map_err(err)?;
+    let mut segs = vec![];
+    for i in 0..st.full_n_segments() {
+        let Some(s) = st.get_segment(i) else { continue };
+        let toks: Vec<Value> = (0..s.n_tokens()).filter_map(|j| s.get_token(j))
+            .map(|t| json!({ "text": t.to_str_lossy().map(|x| x.into_owned()).unwrap_or_default(), "t_dtw": t.token_data().t_dtw })).collect();
+        segs.push(json!({ "text": s.to_str_lossy().map(|x| x.into_owned()).unwrap_or_default(),
+            "offsets": { "from": s.start_timestamp() * 10, "to": s.end_timestamp() * 10 }, "tokens": toks }));
+    }
+    Ok(json!({ "transcription": segs }).to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let b = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init());
+    #[cfg(desktop)]
+    let b = b.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_process::init())
+        .on_menu_event(|app, e| match e.id().as_ref() {
+            "quit" => { let _ = app.emit("quit-requested", ()); }
+            id @ ("new" | "open" | "save" | "saveAs" | "import" | "export") => { let _ = app.emit("menu-file", id.to_string()); }
+            _ => {}
+        });
+    b
         .manage(AppState::default())
         .manage(MediaServer::start().expect("media server"))
         .invoke_handler(tauri::generate_handler![
             probe, save_project, open_project, recovery_path, work_begin, work_end, write_frame, export_run, audio_fx, video_stab, proxy_render, write_work, read_lut, lut_library, lut_add, lut_remove, sfx_library, sfx_import, overlay_library,
-            cancel, take_open_file, model_ready, model_download, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, sparse_keys, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_make, stems::stems_ready, stems::stems_download, stems::stems_make, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop
+            cancel, take_open_file, model_ready, model_download, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, sparse_keys, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_make, stems::stems_ready, stems::stems_download, stems::stems_make, stems::stems_raw, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop, save_to_photos, speech_to_text, whisper_words, matte::cut_ready, matte::cut_download, matte::cut_raw, matte::slow_raw
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -792,11 +940,6 @@ pub fn run() {
             let h = app.handle().clone();
             std::thread::spawn(move || { std::thread::sleep(std::time::Duration::from_secs(6)); splash_done(h); });
             Ok(())
-        })
-        .on_menu_event(|app, e| match e.id().as_ref() {
-            "quit" => { let _ = app.emit("quit-requested", ()); }
-            id @ ("new" | "open" | "save" | "saveAs" | "import" | "export") => { let _ = app.emit("menu-file", id.to_string()); }
-            _ => {}
         })
         .on_window_event(|w, e| if w.label() == "main" { match e {
             // The page decides: it asks to save unsaved work, then calls quit_app.

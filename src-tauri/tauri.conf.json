@@ -116,7 +116,12 @@
         "installerHooks": "windows-hooks.nsh"
       }
     },
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "iOS": {
+      "frameworks": [
+        "Accelerate"
+      ]
+    }
   },
   "plugins": {
     "updater": {

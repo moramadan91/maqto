@@ -9,6 +9,14 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// ONNX Runtime allows one environment per process: every model run shares it
+pub fn ort_env() -> R<ort::environment::Environment> {
+    static ENV: std::sync::Mutex<Option<ort::environment::Environment>> = std::sync::Mutex::new(None);
+    let mut g = ENV.lock().map_err(err)?;
+    if g.is_none() { *g = Some(ort::init().build().map_err(err)?); }
+    Ok(g.clone().unwrap())
+}
+
 fn is_obj(kind: &Option<String>) -> bool {
     kind.as_deref() == Some("object")
 }
@@ -81,7 +89,7 @@ pub async fn matte_make(app: AppHandle, path: String, job: String, kind: Option<
             let mut enc = command(&sidecar("ffmpeg")).args([s("-v"), s("error"), s("-y"), s("-f"), s("rawvideo"), s("-pix_fmt"), s("gray"), s("-s"), format!("{mw}x{mh}"),
                 s("-framerate"), format!("{fps:.4}"), s("-i"), s("-"), s("-c:v"), s("libx264"), s("-preset"), s("fast"), s("-crf"), s("10"), s("-g"), s("15"), s("-pix_fmt"), s("yuv420p"),
                 tmp.to_string_lossy().into_owned()]).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().map_err(err)?;
-            let env = ort::init().build().map_err(err)?;
+            let env = ort_env()?;
             let mut b = ort::session::Session::builder(&env).map_err(err)?;
             // ort picks CoreML on macOS by default; BiRefNet's Neural Engine compile never finishes there, CPU is ~2.8 s a frame
             if obj { b = b.with_auto_device(ort::session::builder::AutoDevicePolicy::PreferCPU).map_err(err)?; }
@@ -127,5 +135,104 @@ pub async fn matte_make(app: AppHandle, path: String, job: String, kind: Option<
         let p = out.to_string_lossy().into_owned();
         srv.allow(&p);
         Ok(p)
+    }).await.map_err(err)?
+}
+
+// Remove background on the phone: U2-Net-p (Apache-2.0, 4.6 MB, shipped inside the iOS app), one model for people and products.
+// Raw IPC body = 320x320 RGBA frames (the app squashes each frame); the answer = one 256x256 8-bit matte per frame.
+const CUT_URL: &str = "https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2netp.onnx";
+const CUT_SIZE: u64 = 4_574_861;
+fn cut_model(app: &AppHandle) -> R<PathBuf> { Ok(app.path().app_data_dir().map_err(err)?.join("models").join("u2netp.onnx")) }
+
+#[cfg(target_os = "ios")]
+fn cut_bytes(_: &AppHandle) -> R<std::borrow::Cow<'static, [u8]>> { Ok(include_bytes!("../resources/u2netp.onnx").as_slice().into()) }
+#[cfg(not(target_os = "ios"))]
+fn cut_bytes(app: &AppHandle) -> R<std::borrow::Cow<'static, [u8]>> { Ok(std::fs::read(cut_model(app)?).map_err(err)?.into()) }
+
+#[tauri::command]
+pub fn cut_ready(app: AppHandle) -> R<bool> {
+    if cfg!(target_os = "ios") { return Ok(true); } // bundled
+    Ok(cut_model(&app)?.metadata().map(|m| m.len() == CUT_SIZE).unwrap_or(false))
+}
+
+#[tauri::command]
+pub async fn cut_download(app: AppHandle) -> R<()> {
+    tauri::async_runtime::spawn_blocking(move || { let f = cut_model(&app)?; fetch(&app, CUT_URL, &f, "cut_dl") }).await.map_err(err)?
+}
+
+#[tauri::command]
+pub async fn cut_raw(app: AppHandle, request: tauri::ipc::Request<'_>) -> R<tauri::ipc::Response> {
+    const S: usize = 320; const M: usize = 256;
+    let tauri::ipc::InvokeBody::Raw(b) = request.body() else { return Err("expected raw frames".into()) };
+    if b.is_empty() || b.len() % (S * S * 4) != 0 { return Err("bad frame size".into()); }
+    let b = b.clone();
+    tauri::async_runtime::spawn_blocking(move || -> R<tauri::ipc::Response> {
+        let rt = ort_env()?;
+        let mut sess = ort::session::Session::builder(&rt).map_err(err)?
+            .with_auto_device(ort::session::builder::AutoDevicePolicy::PreferCPU).map_err(err)?
+            .commit_from_memory(&cut_bytes(&app)?).map_err(err)?;
+        const MEAN: [f32; 3] = [0.485, 0.456, 0.406];
+        const SD: [f32; 3] = [0.229, 0.224, 0.225];
+        let n = S * S;
+        let mut out = Vec::with_capacity(b.len() / (S * S * 4) * M * M);
+        let mut x = vec![0f32; 3 * n];
+        for f in b.chunks_exact(n * 4) {
+            for i in 0..n { for c in 0..3 { x[c * n + i] = (f[i * 4 + c] as f32 / 255.0 - MEAN[c]) / SD[c]; } }
+            let t = ort::value::Tensor::from_array(([1usize, 3, S, S], x.clone())).map_err(err)?;
+            let o = sess.run(ort::inputs![t]).map_err(err)?;
+            let (_, a) = o[0].try_extract_tensor::<f32>().map_err(err)?;
+            // the model's output is relative: stretch it to 0..1 the way rembg does
+            let (lo, hi) = a.iter().fold((f32::MAX, f32::MIN), |(l, h), &v| (l.min(v), h.max(v)));
+            let k = 1.0 / (hi - lo).max(1e-6);
+            for y in 0..M { for xx in 0..M { out.push((((a[(y * S / M) * S + xx * S / M] - lo) * k).clamp(0.0, 1.0) * 255.0) as u8); } }
+        }
+        Ok(tauri::ipc::Response::new(out))
+    }).await.map_err(err)?
+}
+
+// Smooth slow motion on the phone: RIFE 4.25 lite (MIT, hzwer; ONNX export from huggingface t9749/rife-4.25-lite-onnx), shipped inside the iOS app.
+// Raw IPC body = two RGBA frames back to back, headers w, h, n; the answer = the n-1 RGBA frames between them.
+#[cfg(target_os = "ios")]
+const SLOW_MODEL: &[u8] = include_bytes!("../resources/rife_v425lite.onnx");
+#[cfg(not(target_os = "ios"))]
+const SLOW_MODEL: &[u8] = &[]; // the desktop app uses rife-ncnn (rife.rs)
+
+#[tauri::command]
+pub async fn slow_raw(request: tauri::ipc::Request<'_>) -> R<tauri::ipc::Response> {
+    static SESS: std::sync::Mutex<Option<ort::session::Session>> = std::sync::Mutex::new(None);
+    let hd = |k: &str| request.headers().get(k).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok()).ok_or_else(|| format!("missing {k}"));
+    let (w, h, n) = (hd("w")?, hd("h")?, hd("n")?);
+    let tauri::ipc::InvokeBody::Raw(b) = request.body() else { return Err("expected raw frames".into()) };
+    if w == 0 || h == 0 || !(2..=8).contains(&n) || b.len() != w * h * 8 { return Err("bad frames".into()); }
+    if SLOW_MODEL.is_empty() { return Err("slow motion model is in the phone app only".into()); }
+    let b = b.clone();
+    tauri::async_runtime::spawn_blocking(move || -> R<tauri::ipc::Response> {
+        let mut g = SESS.lock().map_err(err)?;
+        if g.is_none() { // 22 MB model: load once, keep for the next pairs
+            let rt = ort_env()?;
+            *g = Some(ort::session::Session::builder(&rt).map_err(err)?
+                .with_auto_device(ort::session::builder::AutoDevicePolicy::PreferCPU).map_err(err)?
+                .commit_from_memory(SLOW_MODEL).map_err(err)?);
+        }
+        let sess = g.as_mut().unwrap();
+        // the network wants sides in multiples of 64: pad by repeating the edge, crop back after
+        let (pw, ph) = ((w + 63) / 64 * 64, (h + 63) / 64 * 64);
+        let pn = pw * ph;
+        let planar = |f: &[u8]| {
+            let mut x = vec![0f32; 3 * pn];
+            for y in 0..ph { let r = y.min(h - 1) * w; for xx in 0..pw { let p = (r + xx.min(w - 1)) * 4; for c in 0..3 { x[c * pn + y * pw + xx] = f[p + c] as f32 / 255.0; } } }
+            x
+        };
+        let (a, c) = (planar(&b[..w * h * 4]), planar(&b[w * h * 4..]));
+        let mut out = Vec::with_capacity((n - 1) * w * h * 4);
+        for k in 1..n {
+            let t0 = ort::value::Tensor::from_array(([1usize, 3, ph, pw], a.clone())).map_err(err)?;
+            let t1 = ort::value::Tensor::from_array(([1usize, 3, ph, pw], c.clone())).map_err(err)?;
+            let ts = ort::value::Tensor::from_array(([1usize, 1, 1, 1], vec![k as f32 / n as f32])).map_err(err)?;
+            let o = sess.run(ort::inputs![t0, t1, ts]).map_err(err)?;
+            let (_, d) = o[0].try_extract_tensor::<f32>().map_err(err)?;
+            for y in 0..h { for x in 0..w { let q = y * pw + x; for ch in 0..3 { out.push((d[ch * pn + q] * 255.0 + 0.5).clamp(0.0, 255.0) as u8); } out.push(255); } }
+        }
+        Ok(tauri::ipc::Response::new(out))
     }).await.map_err(err)?
 }
