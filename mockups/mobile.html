@@ -1,0 +1,1200 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>ماكتو موبايل</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap">
+<style>
+/* Layout: one phone column; liquid-glass panels float over a slow mint/blue/violet glow, like Maqto desktop.
+   Home -> permission -> picker -> editor (preview / controls / timeline / swipe dock) -> export -> saved. */
+:root {
+  --bg: #07090c; --text: #eef2f6; --dim: rgba(238,242,246,.6); --faint: rgba(238,242,246,.32);
+  --glass: rgba(255,255,255,.07); --glass-hi: rgba(255,255,255,.13); --stroke: rgba(255,255,255,.14); --well: rgba(0,0,0,.32);
+  --accent: #5cd3c6; --ink: #0b1a18; --danger: #ff8080;
+  --video: 62,132,255; --audio: 74,210,110; --voice: 255,186,74; --tx: 168,112,255;
+  --f: 'Cairo', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 var(--f); overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+#app { position: relative; height: 100%; max-width: 440px; margin: 0 auto; overflow: hidden; isolation: isolate; }
+/* the glow every glass panel refracts */
+.aura { position: absolute; inset: -20%; z-index: -1; pointer-events: none; filter: blur(60px); opacity: .55; }
+.aura i { position: absolute; border-radius: 50%; animation: drift 18s ease-in-out infinite alternate; }
+.aura i:nth-child(1) { width: 60%; height: 40%; top: 4%; right: 6%; background: #1f8f86; }
+.aura i:nth-child(2) { width: 55%; height: 38%; top: 40%; left: 0; background: #2346a8; animation-delay: -6s; }
+.aura i:nth-child(3) { width: 45%; height: 30%; bottom: 6%; right: 18%; background: #5b2ea6; animation-delay: -12s; }
+@keyframes drift { to { transform: translate(8%, -6%) scale(1.12); } }
+
+.glass { background: var(--glass); -webkit-backdrop-filter: blur(22px) saturate(170%); backdrop-filter: blur(22px) saturate(170%); border: 1px solid var(--stroke); box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 12px 32px rgba(0,0,0,.35); }
+.scr { position: absolute; inset: 0; display: flex; flex-direction: column; padding-top: env(safe-area-inset-top, 0px); }
+.top { display: flex; align-items: center; gap: 10px; padding: 10px 16px; min-height: 56px; box-sizing: border-box; }
+.top h2 { margin: 0; font-size: 20px; font-weight: 800; flex: 1; }
+.ib { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 14px; color: var(--text); }
+.ib:active { background: var(--glass-hi); }
+.pill { background: var(--accent); color: var(--ink); font-weight: 800; padding: 8px 18px; border-radius: 999px; font-size: 13.5px; box-shadow: 0 6px 18px rgba(92,211,198,.25); }
+.pill:disabled { opacity: .35; }
+.ghost { background: var(--glass-hi); border: 1px solid var(--stroke); padding: 8px 16px; border-radius: 999px; font-weight: 700; font-size: 13px; }
+.vs { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 0 16px 110px; scrollbar-width: none; }
+.vs::-webkit-scrollbar { display: none; }
+h3 { font-size: 14px; margin: 22px 2px 10px; color: var(--dim); font-weight: 700; }
+.thumb { background: radial-gradient(circle at 70% 30%, hsl(calc(var(--h) + 180) 70% 70% / .3), transparent 45%), linear-gradient(150deg, hsl(var(--h) 55% 44%), hsl(calc(var(--h) + 40) 60% 15%)); }
+
+/* home */
+.logo { display: flex; align-items: center; gap: 8px; font-weight: 800; font-size: 20px; flex: 1; }
+.lang { background: var(--glass-hi); border: 1px solid var(--stroke); padding: 7px 14px; border-radius: 999px; font-weight: 700; font-size: 13px; }
+.logo .mk { width: 46px; height: 12px; flex: none; }
+.hero { border-radius: 26px; padding: 14px; display: grid; grid-template-columns: 1fr 96px; gap: 14px; align-items: center; overflow: hidden; }
+.hero small { color: var(--accent); font-weight: 700; font-size: 12px; }
+.hero b { display: block; font-size: 21px; line-height: 1.25; margin: 2px 0 6px; text-wrap: balance; }
+.hero p { margin: 0; font-size: 12.5px; color: var(--dim); }
+.mini { height: 150px; border-radius: 16px; background: var(--well); position: relative; overflow: hidden; border: 1px solid var(--stroke); }
+.mini .scn { position: absolute; inset: 6px 6px 44px; border-radius: 9px; animation: scene 6s steps(1) infinite; }
+@keyframes scene { 0% { background: linear-gradient(150deg, #2c6fb0, #12263f); } 33% { background: linear-gradient(150deg, #b07a2c, #3a2410); } 66% { background: linear-gradient(150deg, #6a3db0, #1f1240); } }
+.mini .cap { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); background: var(--accent); color: var(--ink); font-size: 8px; font-weight: 800; padding: 1px 6px; border-radius: 4px; white-space: nowrap; animation: pop 6s infinite; }
+@keyframes pop { 0%, 30% { opacity: 0; transform: translateX(-50%) scale(.6); } 36%, 62% { opacity: 1; transform: translateX(-50%) scale(1); } 68%, 100% { opacity: 0; } }
+.mini .strip { position: absolute; left: 6px; right: 6px; bottom: 18px; height: 16px; display: flex; gap: 2px; }
+.mini .strip i { flex: 1; border-radius: 3px; }
+.mini .strip i:nth-child(1) { background: #2c6fb0; } .mini .strip i:nth-child(2) { background: #b07a2c; } .mini .strip i:nth-child(3) { background: #6a3db0; }
+.mini .wav { position: absolute; left: 6px; right: 6px; bottom: 6px; height: 8px; border-radius: 3px; background: repeating-linear-gradient(90deg, rgba(74,210,110,.8) 0 2px, transparent 2px 4px); opacity: .7; }
+.mini .ph { position: absolute; bottom: 4px; height: 34px; width: 2px; background: #fff; animation: sweep 6s linear infinite; }
+@keyframes sweep { from { left: 6px; } to { left: calc(100% - 8px); } }
+.newv { width: 100%; margin-top: 14px; border-radius: 24px; padding: 20px 18px; display: flex; align-items: center; gap: 14px; text-align: start; }
+.newv .plus { width: 54px; height: 54px; border-radius: 18px; background: var(--accent); color: var(--ink); display: grid; place-items: center; box-shadow: 0 8px 22px rgba(92,211,198,.35); }
+.newv .plus svg { width: 28px; height: 28px; stroke-width: 2.4; }
+.newv b { display: block; font-size: 18px; }
+.newv span { font-size: 12.5px; color: var(--dim); }
+.tgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.tgrid button { border-radius: 18px; padding: 14px 6px 11px; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; text-align: center; }
+.tgrid button svg { color: var(--accent); }
+.tgrid button:active, .newv:active { background: var(--glass-hi); }
+.recent { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.recent::-webkit-scrollbar { display: none; }
+.recent button { flex: none; width: 92px; text-align: start; font-size: 11.5px; }
+.recent .thumb { height: 120px; border-radius: 14px; margin-bottom: 5px; border: 1px solid var(--stroke); }
+
+.tabs { position: absolute; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); display: flex; gap: 4px; padding: 5px; border-radius: 999px; z-index: 5; }
+.tabs button { display: flex; align-items: center; gap: 6px; padding: 9px 20px; border-radius: 999px; font-weight: 700; font-size: 13px; white-space: nowrap; color: var(--dim); }
+.tabs button[aria-selected="true"] { background: var(--glass-hi); color: var(--text); box-shadow: inset 0 1px 0 rgba(255,255,255,.15); }
+
+/* projects */
+.plist { display: grid; gap: 10px; }
+.pcard { display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 20px; text-align: start; width: 100%; }
+.pcard .thumb { width: 58px; height: 76px; border-radius: 12px; flex: none; }
+.pcard div { flex: 1; min-width: 0; }
+.pcard b { display: block; font-size: 15px; }
+.pcard span { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.empty { text-align: center; padding: 60px 20px; color: var(--dim); }
+.empty b { display: block; color: var(--text); font-size: 16px; margin-bottom: 4px; }
+.fab { position: absolute; left: 18px; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 6px; z-index: 5; }
+
+/* modal + sheets */
+.veil { position: absolute; inset: 0; background: rgba(4,5,7,.55); z-index: 20; display: grid; place-items: center; padding: 24px; }
+.alert { border-radius: 26px; padding: 22px 18px 14px; text-align: center; width: 100%; max-width: 320px; box-sizing: border-box; }
+.alert .ic { width: 56px; height: 56px; margin: 0 auto 10px; border-radius: 18px; background: var(--accent); color: var(--ink); display: grid; place-items: center; }
+.alert b { display: block; font-size: 16px; margin-bottom: 4px; }
+.alert p { margin: 0 0 14px; color: var(--dim); font-size: 13px; }
+.alert .opts { display: grid; gap: 8px; }
+.alert .opts button { padding: 11px; border-radius: 14px; background: var(--glass-hi); font-weight: 700; }
+.alert .opts button.pri { background: var(--accent); color: var(--ink); }
+.alert .opts button.no { background: none; color: var(--dim); }
+
+/* picker */
+.seg { display: flex; gap: 4px; padding: 4px; border-radius: 999px; margin: 0 16px 10px; }
+.seg button { flex: 1; padding: 7px; border-radius: 999px; font-weight: 700; font-size: 13px; color: var(--dim); }
+.seg button[aria-selected="true"] { background: var(--glass-hi); color: var(--text); }
+.limited { margin: 0 16px 10px; font-size: 12px; color: var(--dim); display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 14px; }
+.limited button { color: var(--accent); font-weight: 700; }
+.pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; padding: 0 3px 150px; }
+.tile { position: relative; aspect-ratio: 3/4; border-radius: 4px; overflow: hidden; }
+.tile .d { position: absolute; bottom: 4px; left: 6px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,.7); font-variant-numeric: tabular-nums; }
+.tile .live { position: absolute; top: 6px; left: 6px; width: 14px; height: 14px; border: 1.5px solid #fff; border-radius: 50%; box-shadow: inset 0 0 0 2px rgba(0,0,0,.2), inset 0 0 0 3.5px #fff; }
+.tile .ck { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid #fff; display: grid; place-items: center; font-size: 12px; font-weight: 800; background: rgba(0,0,0,.2); }
+.tile.on .ck { background: var(--accent); border-color: var(--accent); color: var(--ink); }
+.tile.on::after { content: ""; position: absolute; inset: 0; background: rgba(92,211,198,.18); }
+.tray { position: absolute; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); border-radius: 22px; padding: 10px; z-index: 4; }
+.tray .trow { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; min-height: 48px; align-items: center; }
+.tray .trow::-webkit-scrollbar { display: none; }
+.tray .trow .thumb { width: 40px; height: 48px; border-radius: 8px; flex: none; position: relative; }
+.tray .trow .thumb button { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; border-radius: 50%; background: #fff; color: #000; display: grid; place-items: center; }
+.tray .trow .thumb button svg { width: 11px; height: 11px; stroke-width: 3; }
+.tray .bar { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--dim); }
+.tray .hint0 { font-size: 12.5px; color: var(--dim); }
+
+/* editor */
+.etop { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+.etop .nm { flex: 1; min-width: 0; text-align: center; font-weight: 700; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stage { flex: 1; min-height: 0; position: relative; }
+.frame { position: absolute; top: 4px; bottom: 4px; left: 50%; transform: translateX(-50%); aspect-ratio: var(--ar, 9/16); height: calc(100% - 8px); max-width: calc(100% - 24px); }
+.frame canvas { width: 100%; height: 100%; border-radius: 12px; display: block; background: #000; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
+.frame { touch-action: none; }
+.selbox { position: absolute; border: 1.5px solid #fff; border-radius: 4px; box-shadow: 0 0 0 1px rgba(0,0,0,.35); pointer-events: none; z-index: 2; }
+.selbox i { position: absolute; width: 14px; height: 14px; margin: -7px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+.selbox [data-h="nw"] { left: 0; top: 0; } .selbox [data-h="ne"] { right: 0; top: 0; margin-right: -7px; } .selbox [data-h="sw"] { left: 0; bottom: 0; margin-bottom: -7px; } .selbox [data-h="se"] { right: 0; bottom: 0; margin: 0 -7px -7px 0; }
+.endln { position: absolute; top: 0; height: 100%; width: 1.5px; margin-left: -1px; background: #ff5a5a; pointer-events: none; z-index: 3; opacity: 0; transition: opacity .15s; }
+.endln.on { opacity: .9; }
+.safe { position: absolute; inset: 0; pointer-events: none; border-radius: 12px; overflow: hidden; }
+.safe i { position: absolute; background: repeating-linear-gradient(135deg, rgba(255,128,128,.28) 0 6px, rgba(255,128,128,.12) 6px 12px); border: 1px dashed rgba(255,150,150,.7); }
+.safe span { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.6); font-size: 10.5px; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+.ctrl { display: flex; align-items: center; padding: 4px 10px; gap: 2px; direction: ltr; }
+.ctrl .tc { font-size: 11.5px; color: var(--dim); font-variant-numeric: tabular-nums; min-width: 84px; text-align: center; }
+.ctrl .tc b { color: var(--text); }
+.ctrl .ib { width: 32px; height: 36px; color: var(--dim); }
+.ctrl .ib.on { color: var(--accent); }
+.ctrl .ib:disabled { opacity: .3; }
+.play { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; margin: 0 auto; }
+.play svg { fill: currentColor; stroke: none; width: 18px; height: 18px; }
+
+.tl { flex: 0 0 auto; position: relative; margin: 0 8px; border-radius: 22px; overflow: hidden; }
+.scroll { overflow: auto; max-height: 196px; overscroll-behavior: contain; touch-action: none; scrollbar-width: none; direction: ltr; position: relative; }
+.scroll::-webkit-scrollbar { display: none; }
+.track { position: relative; }
+.ruler { position: absolute; top: 0; left: 0; right: 0; height: 22px; background: rgba(14,17,22,.92); z-index: 3; }
+.ruler .mk { position: absolute; top: 13px; width: 8px; height: 8px; margin-left: -4px; background: #ffd36a; border-radius: 2px 2px 4px 4px; }
+.ruler span { position: absolute; top: 3px; font-size: 9.5px; color: var(--faint); transform: translateX(-50%); font-variant-numeric: tabular-nums; }
+.row { position: absolute; left: 0; right: 0; }
+.clip { position: absolute; top: 0; bottom: 0; border-radius: 7px; overflow: hidden; box-sizing: border-box; cursor: pointer; }
+.clip.lifted { opacity: .25; }
+.clip.v.ov { box-shadow: inset 0 0 0 1px rgba(255,255,255,.4); }
+.clip.e { background: rgba(255,92,138,.22); border: 1px solid rgba(255,92,138,.55); }
+.ghost { z-index: 8; pointer-events: none; outline: 2px solid var(--accent); box-shadow: 0 10px 24px rgba(0,0,0,.6); transform: scale(1.05); opacity: 1 !important; }
+.dropln { position: absolute; left: 0; right: 0; border-radius: 8px; background: rgba(92,211,198,.14); border: 1px solid rgba(92,211,198,.6); pointer-events: none; }
+.dropln.new { background: var(--accent); border: 0; border-radius: 1px; }
+.clip.sel { outline: 2px solid #fff; outline-offset: 0; z-index: 2; }
+.clip.sel::before, .clip.sel::after { content: ""; position: absolute; top: 0; bottom: 0; width: 8px; background: #fff; z-index: 2; }
+.clip.sel::before { left: 0; border-radius: 8px 0 0 8px; } .clip.sel::after { right: 0; border-radius: 0 8px 8px 0; }
+.clip.v { background-image: repeating-linear-gradient(90deg, transparent 0 calc(var(--pps) - 1px), rgba(0,0,0,.4) calc(var(--pps) - 1px) var(--pps)), radial-gradient(circle at 70% 30%, hsl(calc(var(--h) + 180) 70% 70% / .3), transparent 50%), linear-gradient(120deg, hsl(var(--h) 55% 44%), hsl(calc(var(--h) + 40) 60% 17%)); }
+.clip.v .du { position: absolute; top: 50%; transform: translateY(-50%); left: 6px; font-size: 9.5px; background: rgba(0,0,0,.5); padding: 0 5px; border-radius: 5px; font-variant-numeric: tabular-nums; }
+.clip.v .ph8 { position: absolute; bottom: 4px; left: 6px; width: 14px; height: 12px; }
+.clip.a { background: rgba(var(--c), .2); border: 1px solid rgba(var(--c), .45); }
+.clip.a svg { position: absolute; inset: 2px 4px; width: calc(100% - 8px); height: calc(100% - 4px); }
+.clip.a rect { fill: rgba(var(--c), .85); }
+.clip.a span, .clip.t span, .clip.e span { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 10.5px; font-weight: 700; white-space: nowrap; unicode-bidi: plaintext; }
+.clip.a span { background: rgba(7,9,12,.6); padding: 0 6px; border-radius: 5px; }
+.clip.t { background: rgba(var(--tx), .3); border: 1px solid rgba(var(--tx), .6); }
+.clip.t.st { background: rgba(255,186,74,.28); border-color: rgba(255,186,74,.6); }
+.addrow { position: absolute; top: 3px; bottom: 3px; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-radius: 8px; background: rgba(255,255,255,.05); font-size: 11.5px; color: var(--dim); white-space: nowrap; }
+.addrow svg { width: 14px; height: 14px; }
+.tr { position: absolute; width: 18px; height: 18px; margin-left: -9px; top: 50%; margin-top: -9px; border-radius: 6px; background: #fff; color: #000; display: grid; place-items: center; z-index: 3; box-shadow: 0 2px 6px rgba(0,0,0,.5); }
+.tr svg { width: 12px; height: 12px; stroke-width: 2.4; }
+.tr.set { background: var(--accent); }
+.phk { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 46px; height: 34px; padding: 2px 7px 12px; pointer-events: auto; touch-action: none; background: none; border: 0; }
+.phk svg { display: block; width: 100%; height: 100%; background: #fff; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.45); fill: none; stroke: #0b1a18; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; padding: 2px 3px; box-sizing: border-box; }
+.phk.on svg { background: var(--accent); }
+.tlph { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: #fff; z-index: 4; pointer-events: none; border-radius: 1px; }
+.addclip { position: absolute; right: 8px; width: 34px; height: 34px; border-radius: 10px; background: #fff; color: #000; display: grid; place-items: center; z-index: 5; box-shadow: 0 4px 12px rgba(0,0,0,.4); }
+.addclip svg { stroke-width: 2.6; }
+
+
+.dock { display: flex; align-items: center; gap: 2px; margin: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px)); border-radius: 24px; padding: 6px 4px; }
+.dock .back { flex: none; width: 40px; height: 56px; display: grid; place-items: center; border-inline-end: 1px solid var(--stroke); margin-inline-end: 2px; }
+.dock .rail { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; flex: 1; }
+.dock .rail::-webkit-scrollbar { display: none; }
+.dock .rail button { flex: none; width: 64px; height: 58px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 11px; font-weight: 600; border-radius: 16px; scroll-snap-align: start; position: relative; }
+.dock .rail button:active { background: var(--glass-hi); }
+.dock .rail button.danger { color: var(--danger); }
+.dock .rail button .new { position: absolute; top: 3px; left: 8px; background: var(--accent); color: var(--ink); font-size: 8px; font-weight: 800; padding: 0 4px; border-radius: 4px; }
+
+.sheet { position: absolute; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 12; border-radius: 26px; padding: 12px 14px 14px; max-height: 58%; display: flex; flex-direction: column; background: rgba(22,26,32,.72); }
+.sheet .sh { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.sheet .sh b { flex: 1; font-size: 15px; }
+.sheet .body { overflow-y: auto; scrollbar-width: none; }
+.sheet .body::-webkit-scrollbar { display: none; }
+.opts4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.opts4 button { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; padding: 6px 0; border-radius: 14px; }
+.opts4 button .sw { width: 100%; aspect-ratio: 1; border-radius: 14px; display: grid; place-items: center; background: var(--glass-hi); border: 2px solid transparent; box-sizing: border-box; }
+.opts4 button[aria-pressed="true"] .sw { border-color: var(--accent); }
+.list button { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 6px; border-radius: 14px; text-align: start; }
+.list button:active { background: var(--glass-hi); }
+.list .ic2 { width: 40px; height: 40px; border-radius: 12px; background: var(--glass-hi); display: grid; place-items: center; color: var(--accent); }
+.list b { display: block; font-size: 14px; }
+.list span { font-size: 12px; color: var(--dim); }
+.field { display: flex; gap: 8px; }
+.field input { flex: 1; min-width: 0; background: var(--well); border: 1px solid var(--stroke); border-radius: 14px; padding: 10px 12px; color: var(--text); font: inherit; font-size: 15px; }
+.chk { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: 13px; color: var(--dim); }
+.chk input { accent-color: var(--accent); width: 18px; height: 18px; }
+.prog { height: 4px; border-radius: 2px; background: var(--well); overflow: hidden; margin-top: 10px; }
+.prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+/* coach marks */
+.coach { position: absolute; inset: 0; z-index: 30; }
+.coach .hole { position: absolute; border-radius: 18px; box-shadow: 0 0 0 2000px rgba(4,5,7,.72); transition: all .3s; pointer-events: none; }
+.coach .tip { position: absolute; left: 20px; right: 20px; text-align: center; border-radius: 20px; padding: 14px; }
+.coach .tip b { display: block; font-size: 15px; margin-bottom: 2px; }
+.coach .tip span { font-size: 12.5px; color: var(--dim); }
+.coach .tip small { display: block; margin-top: 8px; color: var(--accent); font-weight: 700; }
+.hand { position: absolute; width: 42px; height: 42px; pointer-events: none; color: #fff; filter: drop-shadow(0 4px 8px rgba(0,0,0,.6)); }
+.hand.drag { animation: hdrag 1.8s ease-in-out infinite; }
+.hand.pinch { animation: hpinch 1.6s ease-in-out infinite; }
+.hand.swipe { animation: hswipe 1.6s ease-in-out infinite; }
+@keyframes hdrag { 0%, 20% { transform: translate(0, 0) scale(1); } 30% { transform: translate(0, 0) scale(.88); } 75% { transform: translate(70px, 0) scale(.88); } 100% { transform: translate(70px, 0) scale(1); } }
+@keyframes hpinch { 0%, 100% { transform: scale(.9); } 50% { transform: scale(1.25); } }
+@keyframes hswipe { 0% { transform: translateX(60px); } 100% { transform: translateX(-60px); } }
+
+/* full screen (landscape when the phone is upright) */
+.fs { position: absolute; inset: 0; z-index: 25; background: #000; }
+.fs .land { position: absolute; top: 50%; left: 50%; display: flex; flex-direction: column; }
+.fs canvas { flex: 1; min-height: 0; width: 100%; object-fit: contain; }
+.fs .bar { display: flex; align-items: center; gap: 10px; padding: 10px 16px; direction: ltr; }
+.fs input[type=range] { flex: 1; accent-color: var(--accent); }
+.fs .tc { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* export */
+.ring { width: 150px; height: 150px; margin: 0 auto 14px; position: relative; display: grid; place-items: center; }
+.ring svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 8; }
+.ring b { font-size: 30px; font-variant-numeric: tabular-nums; }
+.done-hero { display: grid; place-items: center; padding: 10px 0 18px; }
+.check { width: 92px; height: 92px; border-radius: 50%; display: grid; place-items: center; position: relative; }
+.check svg { width: 46px; height: 46px; stroke: var(--accent); stroke-width: 3; stroke-dasharray: 30; stroke-dashoffset: 30; animation: drawck .5s .25s ease-out forwards; }
+.check::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--accent); animation: ripple 1.2s .2s ease-out forwards; opacity: 0; }
+@keyframes drawck { to { stroke-dashoffset: 0; } }
+@keyframes ripple { 0% { opacity: .8; transform: scale(1); } 100% { opacity: 0; transform: scale(1.6); } }
+.vthumb { width: 150px; aspect-ratio: 9/16; margin: 0 auto; border-radius: 16px; background-size: cover; box-shadow: 0 16px 40px rgba(0,0,0,.5); border: 1px solid var(--stroke); }
+.share { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-top: 18px; }
+.share button { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); }
+.share button i { width: 48px; height: 48px; border-radius: 16px; display: grid; place-items: center; color: var(--text); }
+.qa { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.qa button { border-radius: 18px; padding: 12px 4px; display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
+
+.toast { position: absolute; left: 50%; top: calc(64px + env(safe-area-inset-top, 0px)); transform: translate(-50%, -8px); background: var(--text); color: var(--bg); font-weight: 700; font-size: 13px; padding: 8px 16px; border-radius: 999px; opacity: 0; transition: opacity .2s, transform .2s; z-index: 40; pointer-events: none; white-space: nowrap; max-width: calc(100% - 32px); overflow: hidden; text-overflow: ellipsis; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } .check svg { stroke-dashoffset: 0; } }
+</style>
+
+<div id="app" dir="rtl">
+  <div class="aura"><i></i><i></i><i></i></div>
+
+  <!-- HOME -->
+  <section class="scr" id="home">
+    <div class="top"><div class="logo"><svg class="mk" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" viewBox="234 213 373 93"><g fill="#5cd3c6"><polygon points="286.43 303.37 303.09 277.23 342.17 215.53 291.79 215.49 259.81 266.04 236.1 303.36 286.43 303.37"/><path d="M432.36,232.63l-25.11,39.54-19.66,31.2h217.01s.75,0,.75,0c.09,0,.09-.2,0-.22l-.63-.09-2.84-.39-41.24-5.92-83.41-11.98-13.3-2.01,10.23-16.35,15.16-23.81,17.16-27.09h-124.68s-11.37,10.05-11.37,10.05l-35.06,31.23-19.18,30.35-10.43,16.23h46.84s10.9-9.49,10.9-9.49l20.42-18.27,18.6-16.44,29.85-26.55Z"/></g></svg>
+<span>ماكتو</span></div><button class="lang" id="langBtn">English</button></div>
+    <div class="vs">
+      <div class="hero glass">
+        <div><small>ماكتو للموبايل</small><b>مونتاجك كله في إيدك</b><p>كابشن تلقائي، فصل أصوات، انتقالات وفلاتر. مجانًا ومفتوح المصدر.</p></div>
+        <div class="mini" aria-hidden="true"><div class="scn"></div><div class="cap">كابشن تلقائي</div><div class="strip"><i></i><i></i><i></i></div><div class="wav"></div><div class="ph"></div></div>
+      </div>
+      <button class="newv glass" id="newv"><span class="plus" data-i="add"></span><span><b>فيديو جديد</b><span>اختار فيديوهات أو صور من موبايلك</span></span></button>
+      <h3>أدوات ماكتو</h3>
+      <div class="tgrid" id="tgrid"></div>
+      <div id="recentWrap"><h3>آخر مشاريعك</h3><div class="recent" id="recent"></div></div>
+    </div>
+  </section>
+
+  <!-- PROJECTS -->
+  <section class="scr" id="projects" hidden>
+    <div class="top"><h2>مشاريعي</h2><span id="pcount" style="color:var(--dim);font-size:13px"></span></div>
+    <div class="vs"><div class="plist" id="plist"></div></div>
+    <button class="pill fab" id="fab"><span data-i="add"></span>مشروع جديد</button>
+  </section>
+
+  <nav class="tabs glass" id="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-tab="home"><span data-i="scissors"></span>تعديل</button>
+    <button role="tab" aria-selected="false" data-tab="projects"><span data-i="folder"></span>مشاريعي</button>
+  </nav>
+
+  <!-- PICKER -->
+  <section class="scr" id="picker" hidden style="background:rgba(7,9,12,.6)">
+    <div class="top"><button class="ib" id="pkClose" aria-label="إغلاق"><span data-i="x"></span></button><h2 style="text-align:center">موبايلك</h2><span style="width:40px"></span></div>
+    <div class="seg glass" role="tablist" id="pkTabs">
+      <button role="tab" data-k="video" aria-selected="true">فيديوهات</button>
+      <button role="tab" data-k="photo" aria-selected="false">صور</button>
+      <button role="tab" data-k="live" aria-selected="false">لايف فوتو</button>
+    </div>
+    <div class="limited glass" id="limited" hidden><span>سمحت لماكتو بصور معينة بس</span><button id="limEdit">تعديل</button></div>
+    <div class="vs" style="padding:0"><div class="pgrid" id="pgrid"></div></div>
+    <div class="tray glass" id="tray"></div>
+  </section>
+
+  <!-- EDITOR -->
+  <section class="scr" id="editor" hidden>
+    <div class="etop">
+      <button class="ib" id="eClose" aria-label="حفظ والخروج"><span data-i="x"></span></button>
+      <div class="nm" id="eName"></div>
+      <button class="pill" id="eExport">تصدير</button>
+    </div>
+    <div class="stage"><div class="frame" id="frame"><canvas id="cv" aria-label="معاينة الفيديو"></canvas><div class="selbox" id="selbox" hidden><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div><div class="safe" id="safe" hidden></div></div></div>
+    <div class="ctrl">
+      <button class="ib" id="cFull" aria-label="ملء الشاشة"><span data-i="expand"></span></button>
+      <button class="ib" id="cSafe" aria-label="المنطقة الآمنة للسوشيال ميديا"><span data-i="safe"></span></button>
+      <span class="tc" id="tc"></span>
+      <button class="play glass" id="cPlay" aria-label="تشغيل"></button>
+      <button class="ib on" id="cMag" aria-label="المغناطيس"><span data-i="magnet"></span></button>
+      <button class="ib on" id="cSnap" aria-label="اللزق"><span data-i="link"></span></button>
+      <button class="ib" id="cUndo" aria-label="تراجع"><span data-i="undo"></span></button>
+      <button class="ib" id="cRedo" aria-label="إعادة"><span data-i="redo"></span></button>
+    </div>
+    <div class="tl glass" id="tl">
+      <div class="scroll" id="sc"><div class="track" id="track"></div></div>
+      <div class="tlph" id="tlph"><button class="phk" id="phk" aria-label="حرّك المؤشر"><svg viewBox="0 0 24 12"><path d="M8 2L4 6l4 4M16 2l4 4-4 4"/></svg></button></div>
+      <button class="addclip" id="addClip" aria-label="إضافة كليب"><span data-i="add"></span></button>
+    </div>
+    <div class="dock glass" id="dock"><button class="back" id="dBack" aria-label="رجوع للأدوات" hidden><span data-i="chev"></span></button><div class="rail" id="rail"></div></div>
+  </section>
+
+  <!-- SAVED -->
+  <section class="scr" id="done" hidden style="background:rgba(7,9,12,.5)">
+    <div class="top"><button class="ib" id="dnBack" aria-label="رجوع للمونتاج"><span data-i="chev"></span></button><h2 style="text-align:center;font-size:16px">اتحفظ على موبايلك</h2><button class="ghost" id="dnDone">تم</button></div>
+    <div class="vs" style="padding-bottom:30px">
+      <div class="done-hero"><div class="check glass"><svg viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div></div>
+      <div class="vthumb" id="vthumb"></div>
+      <h3>شارك على</h3>
+      <div class="share" id="share"></div>
+      <h3>خطوات سريعة</h3>
+      <div class="qa" id="qa"></div>
+    </div>
+  </section>
+
+  <div class="sheet glass" id="sheet" hidden><div class="sh"><b id="shT"></b><button class="ib" id="shOk" aria-label="تم"><span data-i="check"></span></button></div><div class="body" id="shB"></div></div>
+  <div class="veil" id="veil" hidden></div>
+  <div class="fs" id="fs" hidden><div class="land" id="land"><canvas id="cv2"></canvas><div class="bar"><button class="ib" id="fsPlay" aria-label="تشغيل"></button><span class="tc" id="fsTc"></span><input type="range" id="fsR" min="0" max="1000" value="0" aria-label="الوقت"><button class="ib" id="fsX" aria-label="خروج من ملء الشاشة"><span data-i="shrink"></span></button></div></div></div>
+  <div class="coach" id="coach" hidden><div class="hole" id="hole"></div><svg class="hand" id="hand" viewBox="0 0 24 24" fill="#fff" stroke="#111" stroke-width="1"><path d="M9 11V5a1.5 1.5 0 013 0v5l.5-1a1.5 1.5 0 012.8.4l.2 1 .3-.6a1.5 1.5 0 012.7.6l.3 1.2.2-.1a1.4 1.4 0 012 1.3V16a6 6 0 01-6 6h-1.4a6 6 0 01-4.7-2.3L5.3 15a1.5 1.5 0 012.3-1.9L9 14.5z"/></svg><div class="tip glass" id="tip"></div></div>
+  <div class="toast" id="toast" role="status"></div>
+</div>
+
+<script>
+const I = {
+  trimL: '<path d="M4 5v14M20 12H9M14 7l-5 5 5 5"/>', trimR: '<path d="M20 5v14M4 12h11M10 7l5 5-5 5"/>', crop: '<path d="M6 2v14a2 2 0 0 0 2 2h14"/><path d="M18 22V8a2 2 0 0 0-2-2H2"/>', mirror: '<path d="M12 3v18M8 7l-5 5 5 5zM16 7l5 5-5 5z"/>', rotate: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>', freeze: '<path d="M12 2v20M3.5 7l17 10M3.5 17l17-10M9 4l3 2 3-2M9 20l3-2 3 2"/>', marker: '<path d="M6 3h12v18l-6-4-6 4z"/>', magnet: '<path d="M6 3v8a6 6 0 0 0 12 0V3h-4v8a2 2 0 0 1-4 0V3zM6 7h4M14 7h4"/>', link: '<path d="M9 17H7a5 5 0 0 1 0-10h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8"/>',
+  add: '<path d="M12 5v14M5 12h14"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>', check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  chev: '<path d="M9 6l6 6-6 6"/>', play: '<path d="M7 4.5v15l13-7.5z"/>', pause: '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>',
+  undo: '<path d="M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-3"/>', redo: '<path d="M15 14l5-5-5-5M20 9H10a6 6 0 000 12h3"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', shrink: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
+  safe: '<rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M15 8v8M8.5 17.5h4"/>',
+  scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 7.5L20 18M8.5 16.5L20 6"/>',
+  folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
+  music: '<path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
+  text: '<path d="M5 6h14M12 6v13M9 19h6"/>', cc: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 12h4M13 12h4M7 15.5h7"/>',
+  trans: '<rect x="3" y="6" width="7" height="12" rx="1.5"/><rect x="14" y="6" width="7" height="12" rx="1.5"/><path d="M10 12h4"/>',
+  sticker: '<path d="M4 6a2 2 0 012-2h9l5 5v9a2 2 0 01-2 2H6a2 2 0 01-2-2z"/><path d="M15 4v3a2 2 0 002 2h3M9 14c1 1.3 2 2 3 2s2-.7 3-2"/>',
+  filter: '<circle cx="9" cy="9" r="5"/><circle cx="15" cy="9" r="5"/><circle cx="12" cy="15" r="5"/>',
+  fx: '<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M6 18l2.5-2.5M15.5 8.5L18 6"/>',
+  stems: '<path d="M3 7h5M3 12h9M3 17h6M15 7h6M17 12h4M14 17h7"/>',
+  cutout: '<circle cx="12" cy="9" r="3.5"/><path d="M5.5 20a6.5 6.5 0 0113 0"/><path d="M3 3h3M3 3v3M21 3h-3M21 3v3" />',
+  stab: '<path d="M4 8V4h4M20 8V4h-4M4 16v4h4M20 16v4h-4"/><circle cx="12" cy="12" r="3"/>',
+  denoise: '<path d="M3 12h2l2-5 3 10 3-12 3 9 2-4h3"/>', slow: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+  ratio: '<rect x="7" y="3" width="10" height="18" rx="2"/>', bg: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0014 0M12 18v3"/>',
+  split: '<path d="M12 3v18"/><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/>', speed: '<path d="M4.5 17a8 8 0 1115 0"/><path d="M12 13l4-4"/>',
+  vol: '<path d="M4 10h4l5-4v12l-5-4H4z"/><path d="M17 9a4 4 0 010 6"/>', anim: '<path d="M4 17c4 0 4-10 8-10s4 10 8 10"/>',
+  dup: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 012-2h10"/>', del: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>', layers: '<rect x="3" y="8" width="13" height="13" rx="2"/><path d="M8 8V5a2 2 0 012-2h9a2 2 0 012 2v9a2 2 0 01-2 2h-3"/>', swap: '<path d="M7 4L3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>',
+  photo: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/>',
+  share: '<path d="M12 3v12M7 8l5-5 5 5"/><path d="M5 13v6a2 2 0 002 2h10a2 2 0 002-2v-6"/>',
+  chat: '<path d="M4 18l1.5-4A8 8 0 1112 20a8 8 0 01-4-1z"/>', cam: '<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/>',
+  people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0113 0"/><path d="M16 4.5a3.5 3.5 0 010 7M18 14a6.5 6.5 0 013.5 6"/>',
+  dots: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
+  note: '<path d="M14 3v11.5a3.5 3.5 0 11-3-3.46V3c1 2.5 3 3.5 6 3.5"/>', lock: '<rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/>'
+};
+const ico = n => `<svg class="i" viewBox="0 0 24 24">${I[n]}</svg>`;
+const $ = s => document.querySelector(s);
+const paintIcons = root => root.querySelectorAll('[data-i]').forEach(e => { e.innerHTML = ico(e.dataset.i); e.removeAttribute('data-i'); });
+paintIcons(document);
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+// seeded noise (mulberry32): stable sample media and waveforms
+function rng(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let x = Math.imul(a ^ a >>> 15, 1 | a); x = x + Math.imul(x ^ x >>> 7, 61 | x) ^ x; return ((x ^ x >>> 14) >>> 0) / 4294967296; }; }
+const R = rng(42);
+// sample phone library (drawn stand-ins, not real footage)
+const LIB = [];
+for (let n = 0; n < 21; n++) LIB.push({ id: 'v' + n, kind: 'video', h: Math.floor(R() * 360), dur: +(2 + R() * 12).toFixed(1) });
+for (let n = 0; n < 15; n++) LIB.push({ id: 'p' + n, kind: 'photo', h: Math.floor(R() * 360), dur: 3 });
+for (let n = 0; n < 6; n++) LIB.push({ id: 'l' + n, kind: 'live', h: Math.floor(R() * 360), dur: 3 });
+const media = id => LIB.find(m => m.id === id);
+const REAL = !!window.__TAURI_INTERNALS__;
+let realN = 0;
+function loadFile(f) { // a picked photo or video becomes a library entry with its own element to draw from
+  return new Promise(res => {
+    const url = URL.createObjectURL(f), id = 'r' + realN++, h0 = Math.floor(Math.random() * 360);
+    if (f.type.startsWith('image/')) { const el = new Image(); el.onload = () => res({ id, kind: 'photo', h: h0, dur: 3, url, el, w: el.naturalWidth, hh: el.naturalHeight }); el.onerror = () => res(null); el.src = url; return; }
+    const el = document.createElement('video'); el.playsInline = true; el.muted = true; el.preload = 'auto'; el.setAttribute('playsinline', '');
+    // iOS decodes frames only for videos on the page: park it off-screen, nudge it once so the first frame is ready
+    el.style.cssText = 'position:fixed;left:-10px;top:-10px;width:2px;height:2px;opacity:0;pointer-events:none'; document.body.appendChild(el); el.src = url;
+    el.onloadedmetadata = () => { el.play().then(() => { el.pause(); el.currentTime = .01; }, () => { el.currentTime = .01; }); res({ id, kind: 'video', h: h0, dur: +el.duration.toFixed(2) || 3, url, el, w: el.videoWidth, hh: el.videoHeight }); };
+    el.onerror = () => res(null);
+    el.addEventListener('seeked', () => draw()); el.addEventListener('loadeddata', () => draw());
+  });
+}
+function sysPick() { // iOS shows its own photo picker here: no permission prompt, nothing leaves the phone
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'video/*,image/*'; inp.multiple = true;
+  inp.onchange = async () => {
+    const got = (await Promise.all([...inp.files].map(loadFile))).filter(Boolean);
+    if (!got.length) return toast('مقدرناش نفتح الملفات دي');
+    LIB.push(...got); pk.sel = got.map(m => m.id); commitPick();
+  };
+  inp.click();
+}
+const fmt = s => { s = Math.max(0, s); const m = Math.floor(s / 60); return `${String(m).padStart(2, '0')}:${String(Math.floor(s - m * 60)).padStart(2, '0')}`; };
+const fmt1 = s => { s = Math.max(0, s); const m = Math.floor(s / 60); return `${String(m).padStart(2, '0')}:${(s - m * 60).toFixed(1).padStart(4, '0')}`; };
+
+let uid = 100;
+const vclip = (mid, base) => { const m = media(mid); return { id: uid++, lane: 'v', mid, h: m.h, kind: m.kind, base: base ?? m.dur, speed: 1, vol: 100, start: 0, off: 0, trans: null }; };
+const projects = [
+  { id: 1, name: 'إعلان المحل', when: 'مثال', ar: '9/16', filter: null, items: [vclip('v2', 4), vclip('v5', 3.5), vclip('p1'), { id: uid++, lane: 'a1', kind: 'music', name: 'موسيقى هادية', start: 0, base: 10.5, speed: 1, vol: 100, c: '--audio' }, { id: uid++, lane: 't1', kind: 'text', name: 'خصم 30%', start: 1, base: 3, speed: 1 }, Object.assign(vclip('p4'), { lane: 'o1', start: 5, base: 2.5 })] },
+  { id: 2, name: 'رحلة الساحل', when: 'مثال', ar: '9/16', filter: 'دافي', items: [vclip('v8', 5), vclip('v11', 4), vclip('v14', 6)] }
+];
+
+/* ---------- navigation ---------- */
+const SCREENS = ['home', 'projects', 'picker', 'editor', 'done'];
+function go(s) {
+  SCREENS.forEach(k => $('#' + k).hidden = k !== s);
+  $('#tabs').hidden = !(s === 'home' || s === 'projects');
+  $('#tabs').querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b.dataset.tab === s));
+  closeSheet(); $('#coach').hidden = true;
+  if (s === 'home') renderHome();
+  if (s === 'projects') renderProjects();
+}
+$('#tabs').onclick = e => { const b = e.target.closest('button'); if (b) go(b.dataset.tab); };
+
+/* ---------- home ---------- */
+const HOME_TOOLS = [['cc', 'كابشن تلقائي', 'captions'], ['stems', 'فصل الأصوات', 'stems'], ['cutout', 'إزالة الخلفية', 'cutout'], ['stab', 'تثبيت الفيديو', 'stab'], ['denoise', 'تنقية الصوت', 'denoise'], ['slow', 'حركة بطيئة ناعمة', 'slow'], ['filter', 'فلاتر وألوان', 'filters'], ['trans', 'انتقالات', 'trans'], ['text', 'نصوص متحركة', 'text'], ['sticker', 'ستيكرات', 'stickers'], ['mic', 'تسجيل صوت', 'record'], ['ratio', 'تغيير المقاس', 'ratio']];
+$('#tgrid').innerHTML = HOME_TOOLS.map(([i, l, k]) => `<button class="glass" data-k="${k}">${ico(i)}${l}</button>`).join('');
+$('#tgrid').onclick = e => { const b = e.target.closest('button'); if (!b) return; pendingTool = b.dataset.k; startNew(); toast('اختار الفيديو الأول وبعدين نطبق الأداة'); };
+let pendingTool = null;
+function renderHome() {
+  $('#recentWrap').hidden = !projects.length;
+  $('#recent').innerHTML = projects.slice(0, 8).map(p => `<button data-p="${p.id}"><div class="thumb" style="--h:${p.items.find(i => i.lane === 'v')?.h ?? 200}"></div>${p.name}</button>`).join('');
+}
+$('#recent').onclick = e => { const b = e.target.closest('button'); if (b) openProject(projects.find(p => p.id === +b.dataset.p)); };
+$('#newv').onclick = () => { pendingTool = null; startNew(); };
+$('#fab').onclick = () => { pendingTool = null; startNew(); };
+
+/* ---------- projects ---------- */
+const pDur = p => Math.max(0, ...p.items.map(i => i.start + i.base / i.speed));
+function renderProjects() {
+  $('#pcount').textContent = projects.length ? projects.length + ' مشروع' : '';
+  $('#plist').innerHTML = projects.length ? projects.map(p => { packOf(p); return `<button class="pcard glass" data-p="${p.id}"><span class="thumb" style="--h:${p.items.find(i => i.lane === 'v')?.h ?? 200}"></span><div><b>${p.name}</b><span>${fmt(pDur(p))} · ${p.when}</span></div>${ico('chev')}</button>`; }).join('')
+    : `<div class="empty">${ico('folder')}<b>مفيش مشاريع لسه</b>مشاريعك بتتحفظ هنا على موبايلك أول ما تبدأ.</div>`;
+}
+$('#plist').onclick = e => { const b = e.target.closest('[data-p]'); if (b) openProject(projects.find(p => p.id === +b.dataset.p)); };
+
+/* ---------- permission ---------- */
+let granted = null;
+function startNew() {
+  if (REAL) return openPicker();
+  if (granted) return openPicker();
+  const v = $('#veil');
+  v.innerHTML = `<div class="alert glass" role="dialog" aria-label="إذن الصور"><div class="ic">${ico('photo')}</div><b>ماكتو عايز يوصل لصورك وفيديوهاتك</b><p>عشان تختار اللي هتعمل عليه مونتاج. ماكتو مش بيرفع حاجة، كله بيفضل على موبايلك.</p><div class="opts"><button class="pri" data-g="all">السماح بالوصول لكل الصور</button><button data-g="some">اختيار صور معينة</button><button class="no" data-g="no">عدم السماح</button></div></div>`;
+  v.hidden = false;
+  v.onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    v.hidden = true;
+    if (b.dataset.g === 'no') return toast('لازم تسمح لماكتو بالصور عشان تختار فيديو');
+    granted = b.dataset.g; openPicker();
+  };
+}
+
+/* ---------- picker ---------- */
+let pk = { tab: 'video', sel: [], adding: false };
+function openPicker(mode = 'new') { pk = { tab: 'video', sel: [], mode, adding: mode !== 'new' }; if (REAL) return sysPick(); $('#limited').hidden = granted !== 'some'; go('picker'); renderPicker(); }
+function renderPicker() {
+  $('#pkTabs').querySelectorAll('button').forEach(b => b.setAttribute('aria-selected', b.dataset.k === pk.tab));
+  let list = LIB.filter(m => m.kind === pk.tab);
+  if (granted === 'some') list = list.slice(0, 4);
+  $('#pgrid').innerHTML = list.map(m => { const n = pk.sel.indexOf(m.id) + 1; return `<button class="tile thumb${n ? ' on' : ''}" style="--h:${m.h}" data-m="${m.id}" aria-label="${m.kind === 'video' ? 'فيديو ' + fmt(m.dur) : 'صورة'}">${m.kind === 'live' ? '<span class="live"></span>' : ''}<span class="ck">${n || ''}</span>${m.kind === 'video' ? `<span class="d">${fmt(m.dur)}</span>` : ''}</button>`; }).join('');
+  const n = pk.sel.length;
+  $('#tray').innerHTML = n ? `<div class="trow">${pk.sel.map(id => `<span class="thumb" style="--h:${media(id).h}"><button data-rm="${id}" aria-label="شيل">${ico('x')}</button></span>`).join('')}</div><div class="bar"><span>${n} مختار${pk.adding ? '' : ' · هيتحطوا بالترتيب ده'}</span><button class="pill" id="pkAdd">إضافة (${n})</button></div>`
+    : `<div class="bar"><span class="hint0">دوس على الفيديوهات والصور اللي عايزها بالترتيب</span><button class="pill" disabled>إضافة</button></div>`;
+}
+$('#pkTabs').onclick = e => { const b = e.target.closest('button'); if (b) { pk.tab = b.dataset.k; renderPicker(); } };
+$('#pgrid').onclick = e => { const b = e.target.closest('[data-m]'); if (!b) return; const id = b.dataset.m, n = pk.sel.indexOf(id); n < 0 ? pk.sel.push(id) : pk.sel.splice(n, 1); renderPicker(); };
+$('#tray').onclick = e => {
+  const rm = e.target.closest('[data-rm]'); if (rm) { pk.sel = pk.sel.filter(x => x !== rm.dataset.rm); return renderPicker(); }
+  if (e.target.closest('#pkAdd')) commitPick();
+};
+function commitPick() {
+  {
+    if (pk.mode === 'overlay') { snap(); let s0 = t; for (const id of pk.sel) { const c = vclip(id); c.start = s0; c.lane = freeLane('o', s0, c.base); P.items.push(c); s0 += c.base; } go('editor'); render(); return toast('اتضافت كطبقة فوق الفيديو'); }
+    if (pk.adding) { const v = P.items.filter(i => i.lane === 'v'); snap(); const at = v.findIndex(i => t < i.start + dur(i)); const clips = pk.sel.map(id => vclip(id)); const idx = at < 0 ? P.items.length : P.items.indexOf(v[at]) + 1; P.items.splice(idx, 0, ...clips); go('editor'); render(); return toast(`اتضاف ${clips.length} بعد الكليب الحالي`); }
+    const p = { id: Date.now(), name: 'مشروع ' + (projects.length + 1), when: 'النهارده', ar: '9/16', filter: null, items: pk.sel.map(id => vclip(id)) };
+    projects.unshift(p); openProject(p);
+  }
+}
+$('#pkClose').onclick = () => go(pk.adding ? 'editor' : 'home');
+$('#limEdit').onclick = () => { granted = 'all'; $('#limited').hidden = true; renderPicker(); toast('دلوقتي ماكتو شايف كل الصور'); };
+
+/* ---------- editor model ---------- */
+let P = null, t = 0, playing = false, pps = 48, sel = null, hist = [], fut = [], safeMode = 0;
+const dur = i => i.base / i.speed;
+let magnet = true, snapOn = true;
+// magnet on: video and audio lanes close up end to end after a drop, like the main one (text and effects stay free)
+function packLane(l) { if (l === 'v' || !'oa'.includes(l[0])) return; const its = P.items.filter(i => i.lane === l).sort((a, b) => a.start - b.start); let at = its.length ? its[0].start : 0; for (const i of its) { i.start = Math.max(at, 0); at = i.start + dur(i); } }
+function packOf(p) { let at = 0; for (const i of p.items.filter(i => i.lane === 'v')) { i.start = at; at += i.base / i.speed; } }
+const total = () => Math.max(.1, ...P.items.map(i => i.start + dur(i)));
+const snap = () => { hist.push(JSON.stringify(P.items)); fut = []; updUndo(); };
+function updUndo() { $('#cUndo').disabled = !hist.length; $('#cRedo').disabled = !fut.length; }
+function openProject(p) {
+  P = p; t = 0; sel = null; hist = []; fut = []; playing = false;
+  $('#eName').textContent = p.name;
+  go('editor'); updUndo(); setPlay(); renderDock(); render(); fitCanvas();
+  if (!coached && !store.get('maqto-coach')) { coached = true; setTimeout(() => { if (!$('#editor').hidden) coach(0); }, 350); }
+  if (pendingTool) { const k = pendingTool; pendingTool = null; setTimeout(() => tool(k), 400); }
+}
+
+/* ---------- timeline ---------- */
+// lanes: t* text, e* effects, o* overlays (all above the main video lane v), a* sound below it
+const sc = $('#sc');
+const LH = { t: 22, e: 22, o: 30, v: 30, a: 22 };
+const pre = l => l === 'v' ? 'v' : l[0];
+const num = l => +l.slice(1) || 0;
+const isVis = l => l === 'v' || l[0] === 'o';
+let ROWS = [];
+function lanes() {
+  const used = [...new Set(P.items.map(i => i.lane))];
+  const of = p => used.filter(l => pre(l) === p).sort((a, b) => num(a) - num(b));
+  let tl = of('t'); if (!tl.length) tl = ['t1'];
+  let al = of('a'); if (!al.length) al = ['a1'];
+  const order = [...tl.reverse(), ...of('e').reverse(), ...of('o').reverse(), 'v', ...al];
+  let y = 24; return order.map(l => { const r = { lane: l, top: y, h: LH[pre(l)] }; y += r.h + 4; return r; });
+}
+const overlaps = (l, s, d, self) => P.items.some(i => i !== self && i.lane === l && i.start < s + d - .01 && i.start + dur(i) > s + .01);
+function freeLane(p, s, d, pref, self) { if (pref && !overlaps(pref, s, d, self)) return pref; for (let n = 1; ; n++) if (!overlaps(p + n, s, d, self)) return p + n; }
+function place(it) { if (it.lane !== 'v' && overlaps(it.lane, it.start, dur(it), it)) it.lane = freeLane(it.lane[0], it.start, dur(it), null, it); }
+function render() {
+  packOf(P);
+  const T = total(), half = sc.clientWidth / 2 || 180; ROWS = lanes();
+  const last = ROWS.at(-1), H = last.top + last.h + 12;
+  sc.style.height = Math.min(H, 196) + 'px';
+  const tr = $('#track'); tr.style.width = T * pps + half * 2 + 'px'; tr.style.height = H + 'px'; tr.style.setProperty('--pps', pps + 'px');
+  const step = pps < 22 ? 4 : pps < 40 ? 2 : 1;
+  let html = '<div class="ruler" id="rul">';
+  for (let s = 0; s <= T + .01; s += step) html += `<span style="left:${half + s * pps}px">${fmt(s)}</span>`;
+  for (const m of P.markers || []) html += `<i class="mk" style="left:${half + m * pps}px"></i>`;
+  html += '</div>';
+  for (const r of ROWS) {
+    const its = P.items.filter(i => i.lane === r.lane);
+    html += `<div class="row" data-lane="${r.lane}" style="top:${r.top}px;height:${r.h}px">`;
+    if (!its.length) html += `<button class="addrow" data-add="${r.lane}" style="left:${half + 4}px">${ico('add')}${r.lane[0] === 't' ? 'إضافة نص' : 'إضافة صوت'}</button>`;
+    html += its.map(i => clipHtml(i, half)).join('');
+    if (r.lane === 'v') its.slice(0, -1).forEach(i => { html += `<button class="tr${i.trans ? ' set' : ''}" data-tr="${i.id}" style="left:${half + (i.start + dur(i)) * pps}px" aria-label="انتقال">${ico(i.trans ? 'trans' : 'add')}</button>`; });
+    html += '</div>';
+  }
+  html += `<div class="dropln" id="dropln" hidden></div><div class="endln" id="endln" style="left:${half + T * pps}px"></div>`;
+  tr.innerHTML = html;
+  sc.scrollLeft = t * pps; stick(); draw();
+}
+function stick() {
+  const r = $('#rul'); if (r) r.style.transform = `translateY(${sc.scrollTop}px)`;
+  const v = ROWS.find(q => q.lane === 'v'); if (!v) return;
+  const y = v.top + v.h / 2 - 17 - sc.scrollTop, b = $('#addClip');
+  b.style.top = y + 'px'; b.hidden = y < 4 || y > sc.clientHeight - 30;
+}
+function wave(i) {
+  const n = Math.max(4, Math.round(dur(i) * 6)), r = rng(i.id * 977), k = i.vol / 100; let s = '';
+  for (let j = 0; j < n; j++) { const a = (.25 + .75 * r()) * (.3 + .7 * k); s += `<rect x="${j + .15}" y="${50 - a * 48}" width=".55" height="${a * 96}"/>`; }
+  return `<svg viewBox="0 0 ${n} 100" preserveAspectRatio="none">${s}</svg>`;
+}
+function clipHtml(i, half) {
+  const pos = `left:${half + i.start * pps}px;width:${Math.max(dur(i) * pps - 2, 12)}px`, s = i.id === sel ? ' sel' : '';
+  if (isVis(i.lane)) return `<div class="clip v${i.lane === 'v' ? '' : ' ov'}${s}" data-id="${i.id}" style="${pos};--h:${i.h}"><span class="du">${dur(i).toFixed(1)}s${i.speed !== 1 ? ' · ' + i.speed + 'x' : ''}</span></div>`;
+  if (i.lane[0] === 'a') return `<div class="clip a${s}" data-id="${i.id}" style="${pos};--c:var(${i.c})">${wave(i)}<span>${i.name}</span></div>`;
+  if (i.lane[0] === 'e') return `<div class="clip e${s}" data-id="${i.id}" style="${pos}"><span>${i.name}</span></div>`;
+  return `<div class="clip t${i.kind === 'sticker' ? ' st' : ''}${s}" data-id="${i.id}" style="${pos}"><span>${i.name}</span></div>`;
+}
+sc.addEventListener('scroll', () => { stick(); if (playing) return; t = Math.max(0, Math.min((sc.scrollLeft + phOff) / pps, total())); endLine(); draw(); });
+/* playhead handle: grab the arrows and the line itself walks over the timeline; let go and the timeline glides so it sits in the middle again */
+let phOff = 0, phg = null;
+const phk = $('#phk'), setOff = v => { phOff = v; $('#tlph').style.transform = v ? `translateX(${v}px)` : ''; };
+function phClamp(o) { const half = sc.clientWidth / 2; o = Math.max(-half + 10, Math.min(half - 10, o)); return Math.max(-sc.scrollLeft, Math.min(total() * pps - sc.scrollLeft, o)); }
+function phEdge() { // held near an edge: keep the timeline rolling under the finger
+  if (!phg) return; const half = sc.clientWidth / 2, d = phOff > half - 30 ? 1 : phOff < -half + 30 ? -1 : 0;
+  if (d) { sc.scrollLeft += d * 6; setOff(phClamp(phOff)); t = Math.max(0, Math.min((sc.scrollLeft + phOff) / pps, total())); draw(); }
+  phg.raf = requestAnimationFrame(phEdge);
+}
+phk.addEventListener('pointerdown', e => {
+  e.stopPropagation(); try { phk.setPointerCapture(e.pointerId); } catch {}
+  if (playing) togglePlay(); cancelAnimationFrame(inertia);
+  phg = { x0: e.clientX - phOff }; phk.classList.add('on'); phg.raf = requestAnimationFrame(phEdge);
+});
+phk.addEventListener('pointermove', e => {
+  if (!phg) return;
+  setOff(phClamp(e.clientX - phg.x0)); t = Math.max(0, Math.min((sc.scrollLeft + phOff) / pps, total())); endLine(); draw();
+});
+function phUp() {
+  if (!phg) return; cancelAnimationFrame(phg.raf); phg = null; phk.classList.remove('on');
+  const o0 = phOff, s0 = sc.scrollLeft, t0 = performance.now();
+  const step = now => { const k = Math.min(1, (now - t0) / 220), e = 1 - Math.pow(1 - k, 3), o = o0 * (1 - e); sc.scrollLeft = s0 + (o0 - o); setOff(o); if (k < 1) requestAnimationFrame(step); else setOff(0); };
+  requestAnimationFrame(step);
+}
+phk.addEventListener('pointerup', phUp); phk.addEventListener('pointercancel', phUp);
+// red line at the end of the last clip: shows while a finger pans near the end or drags a clip, so ends line up
+function endLine() { const e = $('#endln'); if (e) e.classList.toggle('on', (!!g && (g.type === 'drag' || (g.type === 'pan' && (total() - t) * pps < 60))) || (!!phg && (total() - t) * pps < 60)); }
+$('#addClip').onclick = () => openPicker('main');
+
+/* gestures: drag pans, two fingers zoom, press-and-hold lifts a clip so it can move in time or to another lane */
+const ptrs = new Map(); let g = null, inertia = 0;
+const pd = () => { const [a, b] = [...ptrs.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+const zoomTo = v => { pps = Math.min(150, Math.max(14, v)); render(); };
+function tap(el) {
+  const add = el.closest('[data-add]'); if (add) return tool(add.dataset.add[0] === 't' ? 'text' : 'audio');
+  const trb = el.closest('[data-tr]'); if (trb) return transSheet(+trb.dataset.tr);
+  const c = el.closest('.clip'); select(c ? +c.dataset.id : null);
+}
+$('#track').addEventListener('click', e => { if (e.detail === 0) tap(e.target); }); // keyboard activation
+sc.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  cancelAnimationFrame(inertia);
+  try { sc.setPointerCapture(e.pointerId); } catch {}
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (playing) togglePlay();
+  if (ptrs.size === 2) { if (g) { clearTimeout(g.timer); if (g.type === 'drag') endDrag(null); } g = { type: 'pinch', d: pd(), p: pps }; return; }
+  if (ptrs.size > 2) return;
+  const c = e.target.closest('.clip');
+  g = { type: 'pend', target: e.target, x0: e.clientX, y0: e.clientY, sl: sc.scrollLeft, st: sc.scrollTop, lx: e.clientX, ly: e.clientY, lt: performance.now(), vx: 0, vy: 0 };
+  if (c) g.timer = setTimeout(() => startDrag(c), 420);
+});
+sc.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!g) return;
+  if (g.type === 'pinch') { if (ptrs.size === 2) zoomTo(g.p * pd() / g.d); return; }
+  if (g.type === 'pend' && Math.hypot(e.clientX - g.x0, e.clientY - g.y0) > 6) { clearTimeout(g.timer); g.type = 'pan'; }
+  if (g.type === 'pan') {
+    sc.scrollLeft = g.sl - (e.clientX - g.x0); sc.scrollTop = g.st - (e.clientY - g.y0);
+    const now = performance.now(), dt = Math.max(1, now - g.lt);
+    g.vx = (e.clientX - g.lx) / dt; g.vy = (e.clientY - g.ly) / dt; g.lx = e.clientX; g.ly = e.clientY; g.lt = now;
+  } else if (g.type === 'drag') moveDrag(e.clientX, e.clientY);
+});
+function up(e) {
+  if (!ptrs.delete(e.pointerId) || !g) return;
+  if (g.type === 'pinch') { if (!ptrs.size) g = null; return; }
+  clearTimeout(g.timer);
+  if (g.type === 'pend') tap(g.target);
+  else if (g.type === 'pan' && e.type === 'pointerup' && performance.now() - g.lt < 80) glide(g.vx, g.vy);
+  else if (g.type === 'drag') endDrag(e.type === 'pointerup');
+  g = null; endLine();
+}
+sc.addEventListener('pointerup', up); sc.addEventListener('pointercancel', up);
+sc.addEventListener('contextmenu', e => e.preventDefault());
+function glide(vx, vy) {
+  let last = performance.now();
+  const step = now => { const dt = now - last; last = now; sc.scrollLeft -= vx * dt; sc.scrollTop -= vy * dt; const k = Math.pow(.994, dt); vx *= k; vy *= k; if (Math.abs(vx) + Math.abs(vy) > .03) inertia = requestAnimationFrame(step); };
+  inertia = requestAnimationFrame(step);
+}
+sc.addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); zoomTo(pps * (e.deltaY < 0 ? 1.1 : .9)); } }, { passive: false });
+
+function startDrag(c) {
+  const it = P.items.find(i => i.id === +c.dataset.id); if (!it || !g) return;
+  if (navigator.vibrate) navigator.vibrate(12);
+  sel = null; renderDock(); closeSheet();
+  const row = ROWS.find(r => r.lane === it.lane), gh = c.cloneNode(true);
+  gh.classList.add('ghost'); gh.classList.remove('sel'); gh.style.top = row.top + 'px'; gh.style.height = row.h + 'px';
+  $('#track').appendChild(gh); c.classList.add('lifted');
+  Object.assign(g, { type: 'drag', it, el: gh, left0: parseFloat(c.style.left), top0: row.top, sl0: sc.scrollLeft, st0: sc.scrollTop, s: it.start, lane: it.lane });
+}
+function dropTarget(it, Y) {
+  const vis = isVis(it.lane), ok = l => vis ? isVis(l) : l[0] === it.lane[0];
+  const rows = ROWS.filter(r => ok(r.lane)), hit = ROWS.find(r => Y >= r.top - 2 && Y < r.top + r.h + 2);
+  if (hit && ok(hit.lane)) return hit.lane;
+  if (it.lane[0] === 'a' ? Y > rows.at(-1).top + rows.at(-1).h : Y < rows[0].top) return 'NEW';
+  return it.lane;
+}
+function moveDrag(x, y) {
+  const r = sc.getBoundingClientRect();
+  if (x < r.left + 28) sc.scrollLeft -= 10; else if (x > r.right - 28) sc.scrollLeft += 10;
+  if (y < r.top + 14) sc.scrollTop -= 6; else if (y > r.bottom - 14) sc.scrollTop += 6;
+  const half = sc.clientWidth / 2, it = g.it, D = dur(it);
+  let s = (g.left0 + (x - g.x0) + (sc.scrollLeft - g.sl0) - half) / pps;
+  // magnet to the playhead, 0 and other clips' edges
+  const cands = snapOn ? [0, t, ...(P.markers || [])] : []; if (snapOn) P.items.forEach(i => { if (i !== it) cands.push(i.start, i.start + dur(i)); });
+  let best = null, bd = 10 / pps;
+  for (const c of cands) for (const off of [0, D]) { const dd = Math.abs(s + off - c); if (dd < bd) { bd = dd; best = c - off; } }
+  if (best !== null) s = best;
+  g.s = Math.max(0, s);
+  g.el.style.left = half + g.s * pps + 'px';
+  g.el.style.top = g.top0 + (y - g.y0) + (sc.scrollTop - g.st0) + 'px';
+  g.lane = dropTarget(it, y - r.top + sc.scrollTop); endLine();
+  const ln = $('#dropln'); ln.hidden = false;
+  if (g.lane === 'NEW') {
+    const grp = ROWS.filter(q => isVis(it.lane) ? isVis(q.lane) : q.lane[0] === it.lane[0]);
+    const top = it.lane[0] === 'a' ? grp.at(-1).top + grp.at(-1).h + 2 : grp[0].top - 4;
+    ln.className = 'dropln new'; ln.style.top = top + 'px'; ln.style.height = '2px';
+  } else { const rw = ROWS.find(q => q.lane === g.lane); ln.className = 'dropln'; ln.style.top = rw.top - 2 + 'px'; ln.style.height = rw.h + 4 + 'px'; }
+}
+function endDrag(commit) {
+  const it = g.it; g.el.remove(); $('#dropln').hidden = true;
+  if (!commit) return render();
+  const s = g.s, from = it.lane, p = isVis(from) ? 'o' : from[0];
+  let lane = g.lane;
+  if (lane === 'NEW') lane = p + (Math.max(0, ...P.items.filter(i => i.lane !== 'v' && i.lane[0] === p).map(i => num(i.lane))) + 1);
+  snap();
+  if (lane === 'v') {
+    // drop into the main lane: insert where the clip's middle lands, the rest close up around it
+    const main = P.items.filter(i => i.lane === 'v' && i !== it);
+    let at = 0; const mids = main.map(i => { const m = at + dur(i) / 2; at += dur(i); return m; });
+    const k = mids.findIndex(m => s + dur(it) / 2 < m);
+    P.items = P.items.filter(i => i !== it); it.lane = 'v'; it.trans = null;
+    if (k < 0) { const lastMain = main.at(-1); P.items.splice(lastMain ? P.items.indexOf(lastMain) + 1 : 0, 0, it); }
+    else P.items.splice(P.items.indexOf(main[k]), 0, it);
+    toast(from === 'v' ? 'اتغير مكان الكليب' : 'رجع للمسار الرئيسي');
+  } else {
+    it.lane = lane; it.start = s; it.trans = null; place(it); if (magnet) packLane(it.lane);
+    if (from === 'v' && it.lane[0] === 'o') toast('بقى طبقة فوق الفيديو');
+    else if (it.lane !== from) toast('اتنقل لمسار تاني');
+  }
+  render();
+}
+
+/* ---------- dock ---------- */
+const MAIN = [['scissors', 'تعديل', 'editsel'], ['layers', 'طبقة', 'overlay', 1], ['music', 'صوت', 'audio'], ['mic', 'تسجيل صوت', 'record'], ['text', 'نص', 'text'], ['cc', 'كابشن تلقائي', 'captions', 1], ['trans', 'انتقالات', 'trans'], ['sticker', 'ستيكرات', 'stickers'], ['filter', 'فلاتر', 'filters'], ['fx', 'تأثيرات', 'effects'], ['stems', 'فصل الأصوات', 'stems', 1], ['cutout', 'إزالة الخلفية', 'cutout'], ['stab', 'تثبيت', 'stab'], ['denoise', 'تنقية الصوت', 'denoise'], ['slow', 'حركة بطيئة', 'slow'], ['ratio', 'المقاس', 'ratio'], ['bg', 'الخلفية', 'bg'], ['marker', 'علامة', 'marker']];
+const CLIP = {
+  v: [['split', 'قص', 'split'], ['trimL', 'شيل اللي قبل', 'trimL'], ['trimR', 'شيل اللي بعد', 'trimR'], ['speed', 'السرعة', 'speed'], ['vol', 'الصوت', 'vol'], ['crop', 'قص الإطار', 'crop'], ['mirror', 'مرآة', 'mirror'], ['rotate', 'لف 90°', 'rotate'], ['freeze', 'تجميد', 'freeze', 1], ['anim', 'حركات', 'anim'], ['filter', 'فلتر', 'filters'], ['cutout', 'إزالة الخلفية', 'cutout'], ['stab', 'تثبيت', 'stab'], ['swap', 'استبدال', 'replace'], ['dup', 'تكرار', 'dup'], ['del', 'حذف', 'del']],
+  a: [['split', 'قص', 'split'], ['trimL', 'شيل اللي قبل', 'trimL'], ['trimR', 'شيل اللي بعد', 'trimR'], ['vol', 'الصوت', 'vol'], ['speed', 'السرعة', 'speed'], ['denoise', 'تنقية', 'denoise'], ['stems', 'فصل الأصوات', 'stems'], ['dup', 'تكرار', 'dup'], ['del', 'حذف', 'del']],
+  e: [['split', 'قص', 'split'], ['trimL', 'شيل اللي قبل', 'trimL'], ['trimR', 'شيل اللي بعد', 'trimR'], ['dup', 'تكرار', 'dup'], ['del', 'حذف', 'del']],
+  t: [['edit', 'تعديل', 'textedit'], ['anim', 'حركات', 'anim'], ['split', 'قص', 'split'], ['trimL', 'شيل اللي قبل', 'trimL'], ['trimR', 'شيل اللي بعد', 'trimR'], ['dup', 'تكرار', 'dup'], ['del', 'حذف', 'del']]
+};
+const laneKind = i => isVis(i.lane) ? 'v' : i.lane[0];
+function renderDock() {
+  const it = P && P.items.find(i => i.id === sel), set = it ? CLIP[laneKind(it)] : MAIN;
+  $('#dBack').hidden = !it;
+  $('#rail').innerHTML = set.map(([i, l, k, nw]) => `<button data-k="${k}"${k === 'del' ? ' class="danger"' : ''}>${nw ? '<span class="new">جديد</span>' : ''}${ico(i)}${l}</button>`).join('');
+  $('#rail').scrollLeft = 0;
+}
+$('#rail').onclick = e => { const b = e.target.closest('button'); if (b) tool(b.dataset.k); };
+$('#dBack').onclick = () => select(null);
+function select(id) { sel = id; closeSheet(); renderDock(); render(); }
+
+/* ---------- tools ---------- */
+const cur = () => P.items.find(i => i.id === sel);
+const vAt = () => P.items.find(i => i.lane === 'v' && t >= i.start && t < i.start + dur(i)) || P.items.filter(i => i.lane === 'v').at(-1);
+function needClip(fn, label) { const it = cur() || vAt(); if (!it) return toast('ضيف كليب الأول'); fn(it); if (label) toast(label); render(); }
+const freeAudioLane = (s0 = t, d = 6) => freeLane('a', s0, d);
+function tool(k) {
+  const it = cur();
+  switch (k) {
+    case 'editsel': { const v = vAt(); return v ? select(v.id) : toast('ضيف كليب الأول'); }
+    case 'split': {
+      const c = it || vAt(), at = t - c.start;
+      if (at < .2 || at > dur(c) - .2) return toast('حط الخط الأبيض جوه الكليب الأول');
+      snap(); const b = { ...c, id: uid++, start: t, base: (dur(c) - at) * c.speed, off: (c.off || 0) + at * c.speed, trans: c.trans }; c.base = at * c.speed; c.trans = null;
+      P.items.splice(P.items.indexOf(c) + 1, 0, b); toast('اتقص عند ' + fmt1(t)); return render();
+    }
+    case 'speed': return needClip(c => { snap(); c.speed = { 1: 2, 2: .5, .5: 1 }[c.speed]; toast('السرعة ' + c.speed + 'x'); });
+    case 'vol': return needClip(c => { snap(); c.vol = { 100: 50, 50: 0, 0: 100 }[c.vol]; toast('مستوى الصوت ' + c.vol + '%'); });
+    case 'dup': return needClip(c => { snap(); const n = { ...c, id: uid++, start: c.start + dur(c) }; P.items.splice(P.items.indexOf(c) + 1, 0, n); place(n); toast('اتعمل نسخة'); });
+    case 'del': if (!it) return; snap(); P.items = P.items.filter(i => i !== it); toast('اتحذف'); return select(null);
+    case 'replace': return openPicker('main');
+    case 'overlay': return openPicker('overlay');
+    case 'text': case 'textedit': return textSheet(k === 'textedit' ? it : null);
+    case 'audio': return audioSheet();
+    case 'captions': return captionSheet();
+    case 'trans': { const v = P.items.filter(i => i.lane === 'v'); if (v.length < 2) return toast('محتاج كليبين عشان تحط انتقال بينهم'); const b = v.slice(0, -1).reduce((a, i) => Math.abs(i.start + dur(i) - t) < Math.abs(a.start + dur(a) - t) ? i : a); return transSheet(b.id); }
+    case 'stickers': return stickerSheet();
+    case 'filters': return filterSheet();
+    case 'effects': case 'anim': return fxSheet(k);
+    case 'stems': return stemsRun();
+    case 'ratio': return ratioSheet();
+    case 'record': { snap(); P.items.push({ id: uid++, lane: freeAudioLane(t, 4), kind: 'voice', name: 'تعليق صوتي', start: t, base: 4, speed: 1, vol: 100, c: '--voice' }); toast('بيسجل… اتضاف تعليق صوتي'); return render(); }
+    case 'trimL': case 'trimR': { // like desktop: drop the part before / after the white line
+      const c = it || vAt(), at = t - c.start;
+      if (at < .1 || at > dur(c) - .1) return toast('حط الخط الأبيض جوه الكليب الأول');
+      snap();
+      if (k === 'trimR') c.base = at * c.speed; else { c.base -= at * c.speed; c.off = (c.off || 0) + at * c.speed; if (c.lane !== 'v') c.start = t; }
+      toast(k === 'trimL' ? 'اتشال اللي قبل الخط' : 'اتشال اللي بعد الخط'); if (k === 'trimL' && c.lane === 'v') { packOf(P); t = c.start; } return render();
+    }
+    case 'crop': return needClip(c => { snap(); const L = [null, '1:1', '4:5', '16:9']; c.crop = L[(L.indexOf(c.crop || null) + 1) % L.length]; toast(c.crop ? 'قص الإطار ' + c.crop : 'رجع الإطار كامل'); });
+    case 'mirror': return needClip(c => { snap(); c.flip = !c.flip; }, 'اتقلب زي المراية');
+    case 'rotate': return needClip(c => { snap(); c.rot = ((c.rot || 0) + 90) % 360; toast('اتلف ' + c.rot + '°'); });
+    case 'freeze': { // still frame at the white line, 2 s, the rest moves after it
+      const c = it && isVis(it.lane) ? it : vAt(); if (!c) return toast('ضيف كليب الأول');
+      const at = t - c.start; if (at < 0 || at > dur(c)) return toast('حط الخط الأبيض جوه الكليب الأول');
+      snap(); const b = { ...c, id: uid++, start: t + 2, base: (dur(c) - at) * c.speed, off: (c.off || 0) + at * c.speed, trans: c.trans }, fz = { ...c, id: uid++, start: t, base: 2, speed: 1, off: (c.off || 0) + at * c.speed, freeze: true, trans: null, tf: c.tf && { ...c.tf } };
+      c.base = at * c.speed; c.trans = null; const ix = P.items.indexOf(c);
+      P.items.splice(ix + 1, 0, fz, b); if (c.base < .05) P.items.splice(ix, 1);
+      if (c.lane !== 'v') { place(fz); place(b); }
+      toast('اتجمد الكادر ثانيتين'); return render();
+    }
+    case 'marker': { P.markers = P.markers || []; const j = P.markers.findIndex(m => Math.abs(m - t) < .15); if (j >= 0) { P.markers.splice(j, 1); toast('اتشالت العلامة'); } else { P.markers.push(t); toast('اتحطت علامة عند ' + fmt1(t)); } return render(); }
+    case 'cutout': return needClip(c => {}, 'اتشالت الخلفية من الكليب');
+    case 'stab': return needClip(c => {}, 'الكليب اتثبت');
+    case 'denoise': return toast('الضوضاء اتشالت من الصوت');
+    case 'slow': return needClip(c => { snap(); c.speed = .5; }, 'حركة بطيئة ناعمة 0.5x');
+    case 'bg': return toast('الخلفية: لون، ضبابية، أو صورة');
+  }
+}
+
+/* sheets */
+function sheet(title, html, ok) {
+  $('#shT').textContent = title; $('#shB').innerHTML = html; $('#sheet').hidden = false;
+  $('#shOk').onclick = () => { if (ok) ok(); closeSheet(); };
+}
+function closeSheet() { $('#sheet').hidden = true; }
+function textSheet(edit) {
+  sheet(edit ? 'تعديل النص' : 'إضافة نص', `<div class="field"><input id="txIn" maxlength="40" placeholder="اكتب النص هنا" value="${edit ? edit.name : ''}"></div>`, () => {
+    const v = $('#txIn').value.trim(); if (!v) return;
+    snap(); if (edit) edit.name = v; else P.items.push({ id: uid++, lane: freeLane('t', t, 3), kind: 'text', name: v, start: t, base: 3, speed: 1 });
+    toast(edit ? 'اتعدل النص' : 'اتضاف النص'); render();
+  });
+  setTimeout(() => $('#txIn')?.focus(), 50);
+}
+function audioSheet() {
+  const L = [['music', 'موسيقى هادية', 'هادية · 0:30'], ['music', 'إيقاع سريع', 'حماسية · 0:24'], ['music', 'بيانو', 'عاطفية · 0:40'], ['mic', 'تسجيل صوتك', 'سجّل تعليق على الفيديو'], ['share', 'من ملفاتك', 'MP3 أو صوت من فيديو']];
+  sheet('صوت', `<div class="list">${L.map(([i, n, s], k) => `<button data-n="${k}"><span class="ic2">${ico(i)}</span><span><b>${n}</b><span>${s}</span></span></button>`).join('')}</div>`);
+  $('#shB').onclick = e => {
+    const b = e.target.closest('[data-n]'); if (!b) return;
+    const k = +b.dataset.n, name = k === 3 ? 'تعليق صوتي' : L[k][1];
+    snap(); const st0 = k === 3 ? t : 0, b0 = k === 3 ? 4 : Math.min(total(), 30); P.items.push({ id: uid++, lane: freeAudioLane(st0, b0), kind: k === 3 ? 'voice' : 'music', name, start: st0, base: b0, speed: 1, vol: 100, c: k === 3 ? '--voice' : '--audio' });
+    closeSheet(); toast('اتضاف ' + name); render();
+  };
+}
+function captionSheet() {
+  sheet('كابشن تلقائي', `<div class="list"><button id="capGo"><span class="ic2">${ico('cc')}</span><span><b>اعمل كابشن من الكلام</b><span>بيشتغل على موبايلك من غير نت · عربي وإنجليزي</span></span></button></div><div class="prog" hidden id="capP"><i></i></div>`);
+  $('#capGo').onclick = () => {
+    $('#capP').hidden = false; let p = 0;
+    const iv = setInterval(() => { p += 4; $('#capP i').style.width = p + '%'; if (p >= 100) { clearInterval(iv); finish(); } }, 40);
+    function finish() {
+      snap(); const words = ['أهلا بيكم', 'النهارده هنوريكم', 'أحسن عروض الموسم', 'الحقوا قبل ما تخلص'], T = total(), step = T / words.length;
+      P.items = P.items.filter(i => i.kind !== 'caption');
+      words.forEach((w, n) => P.items.push({ id: uid++, lane: freeLane('t', n * step, step * .95), kind: 'caption', name: w, start: n * step, base: step * .95, speed: 1 }));
+      closeSheet(); toast('اتعمل ' + words.length + ' كابشن على التايم لاين'); render();
+    }
+  };
+}
+const TRANS = ['بدون', 'تلاشي', 'انزلاق', 'تكبير', 'دوران', 'وميض', 'ضبابية', 'مسح'];
+function transSheet(id) {
+  const c = P.items.find(i => i.id === id); let pick = c.trans || 'بدون';
+  sheet('انتقال', `<div class="opts4">${TRANS.map(n => `<button aria-pressed="${n === pick}" data-n="${n}"><span class="sw">${ico(n === 'بدون' ? 'x' : 'trans')}</span>${n}</button>`).join('')}</div><label class="chk"><input type="checkbox" id="trAll">تطبيق على كل الكليبات</label>`, () => {
+    snap(); const all = $('#trAll').checked, v = P.items.filter(i => i.lane === 'v').slice(0, -1);
+    (all ? v : [c]).forEach(i => i.trans = pick === 'بدون' ? null : pick);
+    toast(pick === 'بدون' ? 'اتشال الانتقال' : `انتقال ${pick}${all ? ' على الكل' : ''}`); render();
+  });
+  $('#shB').querySelector('.opts4').onclick = e => { const b = e.target.closest('[data-n]'); if (!b) return; pick = b.dataset.n; $('#shB').querySelectorAll('[data-n]').forEach(x => x.setAttribute('aria-pressed', x === b)); };
+  t = Math.max(0, c.start + dur(c) - .6); sc.scrollLeft = t * pps; draw();
+}
+const STICK = [['star', 'نجمة'], ['heart', 'قلب'], ['badge', 'جديد'], ['arrow', 'سهم'], ['burst', 'عرض'], ['ring', 'دايرة']];
+function stickerSheet() {
+  sheet('ستيكرات', `<div class="opts4">${STICK.map(([k, n]) => `<button data-k="${k}"><span class="sw"><canvas width="80" height="80" data-st="${k}" style="width:70%"></canvas></span>${n}</button>`).join('')}</div>`);
+  $('#shB').querySelectorAll('[data-st]').forEach(c => { const x = c.getContext('2d'); drawSticker(x, c.dataset.st, 40, 40, 30); });
+  $('#shB').onclick = e => { const b = e.target.closest('[data-k]'); if (!b) return; snap(); P.items.push({ id: uid++, lane: freeLane('t', t, 2.5), kind: 'sticker', st: b.dataset.k, name: STICK.find(s => s[0] === b.dataset.k)[1], start: t, base: 2.5, speed: 1 }); closeSheet(); toast('اتضاف الستيكر'); render(); };
+}
+const FILTERS = [['بدون', 'none'], ['دافي', 'sepia(.35) saturate(1.3) brightness(1.05)'], ['سينما', 'contrast(1.25) saturate(.8) brightness(.9)'], ['أبيض وأسود', 'grayscale(1) contrast(1.1)'], ['حيوي', 'saturate(1.7) contrast(1.05)'], ['بارد', 'hue-rotate(-18deg) saturate(1.1) brightness(1.03)'], ['فيلم قديم', 'sepia(.6) contrast(.9) brightness(1.05)'], ['ليل', 'brightness(.75) contrast(1.2) hue-rotate(10deg)']];
+const fcss = () => (FILTERS.find(f => f[0] === P.filter) || FILTERS[0])[1];
+function filterSheet() {
+  const v = vAt();
+  sheet('فلاتر', `<div class="opts4">${FILTERS.map(([n, css]) => `<button aria-pressed="${(P.filter || 'بدون') === n}" data-n="${n}"><span class="sw thumb" style="--h:${v ? v.h : 200};filter:${css}"></span>${n}</button>`).join('')}</div>`);
+  $('#shB').onclick = e => { const b = e.target.closest('[data-n]'); if (!b) return; P.filter = b.dataset.n === 'بدون' ? null : b.dataset.n; $('#shB').querySelectorAll('[data-n]').forEach(x => x.setAttribute('aria-pressed', x === b)); draw(); };
+}
+function fxSheet(k) {
+  const L = k === 'anim' ? ['دخول بتكبير', 'دخول من تحت', 'نبض', 'خروج بتلاشي'] : ['اهتزاز', 'زووم بطيء', 'وميض', 'ضبابية', 'إضاءة', 'حبوب فيلم', 'مرآة', 'أبيض وأسود'];
+  sheet(k === 'anim' ? 'حركات' : 'تأثيرات', `<div class="opts4">${L.map(n => `<button data-n="${n}"><span class="sw">${ico(k === 'anim' ? 'anim' : 'fx')}</span>${n}</button>`).join('')}</div>`);
+  $('#shB').onclick = e => { const b = e.target.closest('[data-n]'); if (!b) return; closeSheet();
+    if (k === 'anim') return toast('اتطبق: ' + b.dataset.n);
+    snap(); P.items.push({ id: uid++, lane: freeLane('e', t, 2), kind: 'fx', name: b.dataset.n, start: t, base: 2, speed: 1 }); toast('اتضاف تأثير ' + b.dataset.n + ' في مسار لوحده'); render(); };
+}
+function ratioSheet() {
+  const L = [['9/16', '9:16', 'تيك توك · ريلز'], ['1/1', '1:1', 'مربع'], ['4/5', '4:5', 'بوست'], ['16/9', '16:9', 'يوتيوب']];
+  sheet('المقاس', `<div class="opts4">${L.map(([v, n, s]) => `<button aria-pressed="${P.ar === v}" data-v="${v}"><span class="sw"><span style="aspect-ratio:${v};height:${v === '16/9' ? 34 : 48}%;border:2px solid currentColor;border-radius:4px"></span></span>${n}<small style="color:var(--dim);font-size:10px">${s}</small></button>`).join('')}</div>`);
+  $('#shB').onclick = e => { const b = e.target.closest('[data-v]'); if (!b) return; P.ar = b.dataset.v; $('#frame').style.setProperty('--ar', P.ar); fitCanvas(); $('#shB').querySelectorAll('[data-v]').forEach(x => x.setAttribute('aria-pressed', x === b)); };
+}
+function stemsRun() {
+  const src = cur() && laneKind(cur()) !== 't' ? cur() : vAt(); if (!src) return toast('ضيف كليب الأول');
+  sheet('فصل الأصوات', `<div class="list"><button disabled><span class="ic2">${ico('stems')}</span><span><b>بنفصل الصوت لـ 3 مسارات</b><span>كلام · موسيقى · مؤثرات</span></span></button></div><div class="prog"><i></i></div>`);
+  let p = 0; const iv = setInterval(() => { p += 3; const bar = $('#shB .prog i'); if (bar) bar.style.width = p + '%'; if (p >= 100) { clearInterval(iv); fin(); } }, 40);
+  function fin() {
+    snap(); src.vol = 0;
+    [['كلام', '--voice'], ['موسيقى', '--audio'], ['مؤثرات', '--tx']].forEach(([n, c]) => P.items.push({ id: uid++, lane: freeAudioLane(src.start, dur(src)), kind: 'stem', name: n, start: src.start, base: dur(src), speed: 1, vol: 100, c }));
+    closeSheet(); toast('اتفصل لـ 3 مسارات تحت الفيديو'); render();
+  }
+}
+
+$('#cMag').onclick = e => { magnet = !magnet; e.currentTarget.classList.toggle('on', magnet); toast(magnet ? 'المغناطيس شغال: المسارات بتقفل الفراغات' : 'المغناطيس مقفول'); };
+$('#cSnap').onclick = e => { snapOn = !snapOn; e.currentTarget.classList.toggle('on', snapOn); toast(snapOn ? 'اللزق شغال: الكليب بيلزق في الأطراف والخط' : 'اللزق مقفول'); };
+$('#cUndo').onclick = () => { if (!hist.length) return; fut.push(JSON.stringify(P.items)); P.items = JSON.parse(hist.pop()); sel = null; renderDock(); render(); updUndo(); toast('تراجع'); };
+$('#cRedo').onclick = () => { if (!fut.length) return; hist.push(JSON.stringify(P.items)); P.items = JSON.parse(fut.pop()); sel = null; renderDock(); render(); updUndo(); toast('إعادة'); };
+
+/* safe zones for social apps */
+const SAFE = [null, ['تيك توك', 8, 17, 24], ['ريلز', 10, 15, 22], ['شورتس', 7, 16, 20]];
+$('#cSafe').onclick = () => {
+  safeMode = (safeMode + 1) % SAFE.length; const s = SAFE[safeMode], el = $('#safe');
+  $('#cSafe').classList.toggle('on', !!s); el.hidden = !s;
+  if (s) { const [n, top, right, bottom] = s; el.innerHTML = `<i style="top:0;left:0;right:0;height:${top}%"></i><i style="top:30%;bottom:${bottom}%;right:0;width:${right}%"></i><i style="bottom:0;left:0;right:0;height:${bottom}%"></i><span>المنطقة الآمنة · ${n}</span>`; toast('خلي النص والوش بعيد عن المناطق الحمرا'); }
+};
+
+/* ---------- preview drawing ---------- */
+const cv = $('#cv'), cx = cv.getContext('2d'), cv2 = $('#cv2'), cx2 = cv2.getContext('2d');
+function fitCanvas() { const d = devicePixelRatio || 1; for (const c of [cv, cv2]) { const r = c.getBoundingClientRect(); if (r.width) { c.width = Math.round(r.width * d); c.height = Math.round(r.height * d); } } draw(); }
+function scene(x, W, H, v, lt) {
+  if (v.freeze) lt = 0;
+  const m = media(v.mid);
+  if (m && m.el) { // real photo / video: cover the box, seek the file to this moment
+    const el = m.el, sw = m.w || el.videoWidth || el.naturalWidth || 1, sh = m.hh || el.videoHeight || el.naturalHeight || 1, k = Math.max(W / sw, H / sh);
+    if (m.kind === 'video') { const want = Math.min((v.off || 0) + lt * v.speed, m.dur - .03); if (!(playing && !el.paused) && !el.seeking && Math.abs(el.currentTime - want) > .04) el.currentTime = want; }
+    x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+    if (m.kind === 'photo' || el.readyState >= 2) x.drawImage(el, (W - sw * k) / 2, (H - sh * k) / 2, sw * k, sh * k);
+    return;
+  }
+  const p = lt / dur(v);
+  if (v.kind === 'video') {
+    const g = x.createLinearGradient(0, 0, W * (.4 + p), H); g.addColorStop(0, `hsl(${v.h} 55% ${34 + p * 10}%)`); g.addColorStop(1, `hsl(${v.h + 40} 60% 12%)`);
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    x.fillStyle = `hsl(${v.h + 180} 70% 70% / .25)`; x.beginPath(); x.arc(W * (.2 + .6 * p), H * .42, Math.min(W, H) * .3, 0, 7); x.fill();
+    x.fillStyle = 'rgba(0,0,0,.25)'; x.fillRect(0, H * .72, W, H * .28);
+  } else {
+    const z = 1 + p * .08; x.save(); x.translate(W / 2, H / 2); x.scale(z, z); x.translate(-W / 2, -H / 2);
+    const g = x.createRadialGradient(W * .6, H * .35, 0, W * .5, H * .5, Math.max(W, H) * .8); g.addColorStop(0, `hsl(${v.h} 60% 60%)`); g.addColorStop(1, `hsl(${v.h + 30} 55% 14%)`);
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    x.fillStyle = `hsl(${v.h + 150} 40% 20% / .55)`; x.beginPath(); x.moveTo(0, H * .78); x.lineTo(W * .35, H * .55); x.lineTo(W * .62, H * .7); x.lineTo(W, H * .5); x.lineTo(W, H); x.lineTo(0, H); x.fill(); x.restore();
+  }
+}
+function drawSticker(x, k, cx0, cy, r) {
+  x.save(); x.translate(cx0, cy); x.lineWidth = r * .12; x.strokeStyle = '#0b1a18';
+  if (k === 'star' || k === 'burst') { const n = k === 'star' ? 5 : 12, ri = k === 'star' ? .45 : .75; x.beginPath(); for (let j = 0; j < n * 2; j++) { const a = j * Math.PI / n - Math.PI / 2, rr = j % 2 ? r * ri : r; x.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); } x.closePath(); x.fillStyle = k === 'star' ? '#ffd36a' : '#ff6b6b'; x.fill(); x.stroke(); if (k === 'burst') { x.fillStyle = '#fff'; x.font = `800 ${r * .5}px Cairo, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(T('عرض'), 0, 0); } }
+  else if (k === 'heart') { x.beginPath(); x.moveTo(0, r * .8); x.bezierCurveTo(-r * 1.3, -r * .1, -r * .6, -r * 1, 0, -r * .35); x.bezierCurveTo(r * .6, -r * 1, r * 1.3, -r * .1, 0, r * .8); x.fillStyle = '#ff5c8a'; x.fill(); x.stroke(); }
+  else if (k === 'badge') { x.beginPath(); x.roundRect(-r, -r * .5, r * 2, r, r * .5); x.fillStyle = '#5cd3c6'; x.fill(); x.stroke(); x.fillStyle = '#0b1a18'; x.font = `800 ${r * .55}px Cairo, sans-serif`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(T('جديد'), 0, 0); }
+  else if (k === 'arrow') { x.beginPath(); x.moveTo(-r, -r * .25); x.lineTo(r * .2, -r * .25); x.lineTo(r * .2, -r * .6); x.lineTo(r, 0); x.lineTo(r * .2, r * .6); x.lineTo(r * .2, r * .25); x.lineTo(-r, r * .25); x.closePath(); x.fillStyle = '#fff'; x.fill(); x.stroke(); }
+  else { x.beginPath(); x.arc(0, 0, r * .85, 0, 7); x.lineWidth = r * .2; x.strokeStyle = '#ffd36a'; x.stroke(); }
+  x.restore();
+}
+const cropA = i => i.crop ? (([a, b]) => a / b)(i.crop.split(':').map(Number)) : 0;
+function cropWH(i, W, H) { const a = cropA(i); return !a ? [W, H] : a > W / H ? [W, W / a] : [H * a, H]; }
+function paint(x, W, H) {
+  x.filter = 'none'; x.globalAlpha = 1;
+  const vs = P.items.filter(i => i.lane === 'v'), v = vs.find(i => t >= i.start && t < i.start + dur(i)) || (t >= total() - .01 ? vs.at(-1) : null);
+  x.fillStyle = '#000'; x.fillRect(0, 0, W, H);
+  const fx = P.items.filter(i => i.lane[0] === 'e' && t >= i.start && t < i.start + dur(i)).map(i => i.name), has = n => fx.includes(n);
+  x.save();
+  if (has('اهتزاز')) x.translate(Math.sin(t * 53) * W * .015, Math.cos(t * 41) * H * .01);
+  if (has('زووم بطيء')) { const z = 1.08 + Math.sin(t) * .04; x.translate(W / 2, H / 2); x.scale(z, z); x.translate(-W / 2, -H / 2); }
+  if (has('مرآة')) { x.translate(W, 0); x.scale(-1, 1); }
+  const flt = [fcss(), has('ضبابية') ? 'blur(5px)' : '', has('إضاءة') ? 'brightness(1.3)' : '', has('أبيض وأسود') ? 'grayscale(1)' : ''].filter(f => f && f !== 'none').join(' ') || 'none';
+  const rec = x === cx; if (rec) BX = [];
+  if (v) {
+    const f = tfOf(v), [cw, ch] = cropWH(v, W, H), q = (v.rot || 0) % 180, bw = (q ? ch : cw) * f.s, bh = (q ? cw : ch) * f.s, mx = W / 2 + f.x * W, my = H / 2 + f.y * H;
+    if (rec) BX.push({ id: v.id, x: mx - bw / 2, y: my - bh / 2, w: bw, h: bh });
+    x.translate(mx, my); x.scale(f.s * (v.flip ? -1 : 1), f.s); x.rotate((v.rot || 0) * Math.PI / 180);
+    if (v.crop) { x.beginPath(); x.rect(-cw / 2, -ch / 2, cw, ch); x.clip(); }
+    x.translate(-W / 2, -H / 2);
+    x.filter = flt;
+    scene(x, W, H, v, Math.min(t - v.start, dur(v) - .001));
+    const k = vs.indexOf(v), prev = vs[k - 1], into = t - v.start;
+    if (prev && prev.trans && into < .5) { // blend out of the previous clip
+      const a = 1 - into / .5;
+      x.save(); x.globalAlpha = a;
+      if (prev.trans === 'انزلاق' || prev.trans === 'مسح') x.translate(-W * (1 - a), 0);
+      if (prev.trans === 'تكبير') { x.translate(W / 2, H / 2); x.scale(1 + (1 - a) * .4, 1 + (1 - a) * .4); x.translate(-W / 2, -H / 2); }
+      scene(x, W, H, prev, dur(prev) - .001);
+      if (prev.trans === 'وميض') { x.fillStyle = `rgba(255,255,255,${a * .8})`; x.fillRect(0, 0, W, H); }
+      x.restore();
+    }
+    x.filter = 'none';
+  }
+  x.restore(); x.filter = 'none';
+  if (has('وميض')) { x.fillStyle = `rgba(255,255,255,${Math.max(0, Math.sin(t * 18)) * .55})`; x.fillRect(0, 0, W, H); }
+  if (has('حبوب فيلم')) { const r = rng(Math.floor(t * 24) + 7); x.fillStyle = 'rgba(255,255,255,.18)'; for (let n = 0; n < 400; n++) x.fillRect(r() * W, r() * H, 2, 2); }
+  // overlay lanes: each active clip sits on top of the main video, higher lanes on top
+  for (const o of P.items.filter(i => i.lane[0] === 'o' && t >= i.start && t < i.start + dur(i)).sort((a, b) => num(a.lane) - num(b.lane))) {
+    const k = num(o.lane), f = tfOf(o), a = cropA(o), w0 = W * .46 * f.s, h0 = a ? w0 / a : H * .46 * f.s, q = (o.rot || 0) % 180, w = q ? h0 : w0, h = q ? w0 : h0, rr = W * .03 * f.s;
+    const ccx = W * (.5 + (k % 2 ? .13 : -.13) + f.x), ccy = H * (.3 + f.y) + (k - 1) * H * .07, ox = ccx - w / 2, oy = ccy - h / 2;
+    if (rec) BX.push({ id: o.id, x: ox, y: oy, w, h });
+    x.fillStyle = 'rgba(0,0,0,.35)'; x.beginPath(); x.roundRect(ox + W * .012, oy + W * .018, w, h, rr); x.fill();
+    x.save(); x.beginPath(); x.roundRect(ox, oy, w, h, rr); x.clip(); x.translate(ccx, ccy); x.rotate((o.rot || 0) * Math.PI / 180); x.scale(o.flip ? -1 : 1, 1); x.translate(-w0 / 2, -h0 / 2); x.filter = flt; scene(x, w0, h0, o, t - o.start); x.restore();
+    x.strokeStyle = 'rgba(255,255,255,.85)'; x.lineWidth = W * .006; x.beginPath(); x.roundRect(ox, oy, w, h, rr); x.stroke();
+  }
+  for (const o of P.items.filter(i => i.lane[0] === 't' && t >= i.start && t < i.start + dur(i))) {
+    const f = tfOf(o);
+    if (o.kind === 'sticker') { const r = W * .11 * f.s, sx = W * (.72 + f.x), sy = H * (.22 + f.y); drawSticker(x, o.st, sx, sy, r); if (rec) BX.push({ id: o.id, x: sx - r, y: sy - r, w: r * 2, h: r * 2 }); continue; }
+    const cap = o.kind === 'caption', fs = Math.round(W * (cap ? .07 : .085) * f.s);
+    x.font = `800 ${fs}px Cairo, system-ui`; x.textAlign = 'center'; x.textBaseline = 'middle'; x.direction = 'rtl';
+    const w = x.measureText(T(o.name)).width + W * .1 * f.s, y = H * ((cap ? .7 : .5) + f.y) - (num(o.lane) - 1) * fs * 2;
+    x.save(); x.translate(f.x * W, 0); if (rec) BX.push({ id: o.id, x: W / 2 + f.x * W - w / 2, y: y - fs * .85, w, h: fs * 1.7 });
+    if (cap) { x.lineWidth = fs * .18; x.strokeStyle = 'rgba(0,0,0,.8)'; x.strokeText(T(o.name), W / 2, y); x.fillStyle = '#fff'; x.fillText(T(o.name), W / 2, y); }
+    else { x.fillStyle = '#5cd3c6'; x.beginPath(); x.roundRect(W / 2 - w / 2, y - fs * .85, w, fs * 1.7, fs * .35); x.fill(); x.fillStyle = '#0b1a18'; x.fillText(T(o.name), W / 2, y + fs * .05); }
+    x.restore();
+  }
+}
+function draw() {
+  if (!P) return;
+  paint(cx, cv.width, cv.height); selBox();
+  if (!$('#fs').hidden) { paint(cx2, cv2.width, cv2.height); $('#fsR').value = Math.round(t / total() * 1000); $('#fsTc').textContent = `${fmt1(t)} / ${fmt1(total())}`; }
+  $('#tc').innerHTML = `<b>${fmt1(t)}</b> / ${fmt1(total())}`;
+}
+
+/* preview selection: tap picks what's under the finger, drag moves it, corners or two fingers scale it, double-tap a text edits it */
+let BX = [];
+const tfOf = i => i.tf || (i.tf = { x: 0, y: 0, s: 1 });
+const canTf = i => i && (isVis(i.lane) || i.lane[0] === 't');
+function selBox() {
+  const b = $('#selbox'), it = P && P.items.find(i => i.id === sel), bx = BX.find(q => q.id === sel);
+  b.hidden = !(canTf(it) && bx); if (b.hidden) return;
+  const k = cv.getBoundingClientRect().width / cv.width;
+  Object.assign(b.style, { left: bx.x * k + 'px', top: bx.y * k + 'px', width: bx.w * k + 'px', height: bx.h * k + 'px' });
+}
+const fr = $('#frame'), fp = new Map(); let fg = null, lastTap = { id: 0, at: 0 };
+function hitAt(cxp, cyp) {
+  const r = cv.getBoundingClientRect(), k = cv.width / r.width, px = (cxp - r.left) * k, py = (cyp - r.top) * k;
+  for (let j = BX.length - 1; j >= 0; j--) { const q = BX[j]; if (px >= q.x && px <= q.x + q.w && py >= q.y && py <= q.y + q.h) return q.id; }
+  return null;
+}
+const fdist = () => { const [a, b] = [...fp.values()]; return Math.hypot(a.x - b.x, a.y - b.y); };
+fr.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  try { fr.setPointerCapture(e.pointerId); } catch {}
+  fp.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (playing) togglePlay();
+  const it = P.items.find(i => i.id === sel);
+  if (fp.size === 2) { if (canTf(it)) fg = { type: 'pinch', it, d0: fdist(), s0: tfOf(it).s, moved: true, snapped: fg && fg.snapped }; return; }
+  const h = e.target.closest('[data-h]'), sb = $('#selbox').getBoundingClientRect();
+  if (h && canTf(it)) { const cx0 = sb.left + sb.width / 2, cy0 = sb.top + sb.height / 2; fg = { type: 'scale', it, cx0, cy0, d0: Math.hypot(e.clientX - cx0, e.clientY - cy0) || 1, s0: tfOf(it).s }; return; }
+  // a handle sits half outside the box: catch it by distance as well
+  if (canTf(it) && !$('#selbox').hidden) for (const [hx, hy] of [[sb.left, sb.top], [sb.right, sb.top], [sb.left, sb.bottom], [sb.right, sb.bottom]]) if (Math.hypot(e.clientX - hx, e.clientY - hy) < 18) { const cx0 = sb.left + sb.width / 2, cy0 = sb.top + sb.height / 2; fg = { type: 'scale', it, cx0, cy0, d0: Math.hypot(e.clientX - cx0, e.clientY - cy0) || 1, s0: tfOf(it).s }; return; }
+  const id = hitAt(e.clientX, e.clientY);
+  fg = { type: 'move', id, x0: e.clientX, y0: e.clientY, moved: false };
+});
+fr.addEventListener('pointermove', e => {
+  if (!fp.has(e.pointerId) || !fg) return;
+  fp.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const once = () => { if (!fg.snapped) { snap(); fg.snapped = true; } };
+  if (fg.type === 'pinch') { if (fp.size === 2) { once(); tfOf(fg.it).s = Math.min(4, Math.max(.15, fg.s0 * fdist() / fg.d0)); draw(); } return; }
+  if (fg.type === 'scale') { once(); tfOf(fg.it).s = Math.min(4, Math.max(.15, fg.s0 * Math.hypot(e.clientX - fg.cx0, e.clientY - fg.cy0) / fg.d0)); fg.moved = true; draw(); return; }
+  if (!fg.moved && Math.hypot(e.clientX - fg.x0, e.clientY - fg.y0) < 5) return;
+  if (!fg.moved) { // a drag moves the item under the finger; it becomes the selection
+    fg.moved = true; if (fg.id == null) return;
+    if (fg.id !== sel) select(fg.id);
+    fg.it = P.items.find(i => i.id === fg.id); if (!canTf(fg.it)) return;
+    const f = tfOf(fg.it); fg.fx = f.x; fg.fy = f.y;
+  }
+  if (!fg.it || !canTf(fg.it)) return;
+  once();
+  const r = cv.getBoundingClientRect(), f = tfOf(fg.it);
+  f.x = fg.fx + (e.clientX - fg.x0) / r.width; f.y = fg.fy + (e.clientY - fg.y0) / r.height;
+  if (Math.abs(f.x) < .02) f.x = 0; if (Math.abs(f.y) < .02) f.y = 0; // magnet to the center
+  draw();
+});
+function fup(e) {
+  if (!fp.delete(e.pointerId) || !fg) return;
+  if (fg.type === 'pinch') { if (!fp.size) fg = null; return; }
+  if (fg.type === 'move' && !fg.moved) {
+    const now = performance.now(), it = P.items.find(i => i.id === fg.id);
+    if (it && it.lane[0] === 't' && it.kind !== 'sticker' && lastTap.id === it.id && now - lastTap.at < 320) { lastTap = { id: 0, at: 0 }; textSheet(it); }
+    else { lastTap = { id: fg.id, at: now }; if (fg.id !== sel) select(fg.id); }
+  }
+  fg = null;
+}
+fr.addEventListener('pointerup', fup); fr.addEventListener('pointercancel', fup);
+fr.addEventListener('contextmenu', e => e.preventDefault());
+
+/* playback */
+let last = 0;
+function loop(ts) {
+  if (!playing) return;
+  t += Math.min(.1, (ts - last) / 1000); last = ts;
+  if (t >= total()) { t = total(); togglePlay(); }
+  sc.scrollLeft = t * pps; syncVideos(); draw(); requestAnimationFrame(loop);
+}
+function syncVideos() {
+  if (!REAL || !P) return;
+  const live = new Set();
+  if (playing) for (const i of P.items) { const m = media(i.mid); if (!m || m.kind !== 'video' || i.freeze || !isVis(i.lane) || t < i.start || t >= i.start + dur(i)) continue;
+    live.add(m.el); const want = (i.off || 0) + (t - i.start) * i.speed; m.el.playbackRate = i.speed; m.el.muted = !i.vol; m.el.volume = Math.min(1, i.vol / 100);
+    if (m.el.paused) { m.el.currentTime = want; m.el.play().catch(() => {}); } else if (Math.abs(m.el.currentTime - want) > .3) m.el.currentTime = want; }
+  for (const m of LIB) if (m.el && m.kind === 'video' && !live.has(m.el) && !m.el.paused) m.el.pause();
+}
+function setPlay() { for (const b of [$('#cPlay'), $('#fsPlay')]) { b.innerHTML = `<svg class="i" viewBox="0 0 24 24" style="fill:currentColor;stroke:none">${I[playing ? 'pause' : 'play']}</svg>`; b.setAttribute('aria-label', playing ? 'إيقاف' : 'تشغيل'); } }
+function togglePlay() { playing = !playing; if (playing && t >= total() - .05) t = 0; setPlay(); syncVideos(); if (playing) { last = performance.now(); requestAnimationFrame(loop); } }
+$('#cPlay').onclick = togglePlay; $('#fsPlay').onclick = togglePlay;
+
+/* full screen: turns sideways while the phone is upright, like tilting it */
+function layoutFs() { const l = $('#land'), W = $('#app').clientWidth, H = $('#app').clientHeight, side = H > W; l.style.width = (side ? H : W) + 'px'; l.style.height = (side ? W : H) + 'px'; l.style.transform = `translate(-50%,-50%)${side ? ' rotate(90deg)' : ''}`; }
+$('#cFull').onclick = () => { $('#fs').hidden = false; layoutFs(); fitCanvas(); };
+$('#fsX').onclick = () => { $('#fs').hidden = true; draw(); };
+$('#fsR').oninput = e => { if (playing) togglePlay(); t = e.target.value / 1000 * total(); sc.scrollLeft = t * pps; draw(); };
+
+/* ---------- export ---------- */
+$('#eExport').onclick = () => {
+  if (playing) togglePlay(); closeSheet();
+  const v = $('#veil'), C = 2 * Math.PI * 66;
+  v.innerHTML = `<div class="alert glass" style="max-width:300px"><div class="ring"><svg viewBox="0 0 150 150"><circle cx="75" cy="75" r="66" stroke="rgba(255,255,255,.1)"/><circle id="rg" cx="75" cy="75" r="66" stroke="#5cd3c6" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C}"/></svg><b id="rp">0%</b></div><b>بنصدّر الفيديو</b><p>1080p · خلي ماكتو مفتوح لحد ما يخلص</p><div class="opts"><button class="no" id="exC">إلغاء</button></div></div>`;
+  v.hidden = false; v.onclick = null;
+  let p = 0; const iv = setInterval(() => {
+    p = Math.min(100, p + 2); $('#rp').textContent = p + '%'; $('#rg').style.strokeDashoffset = C * (1 - p / 100);
+    if (p >= 100) { clearInterval(iv); v.hidden = true; showDone(); }
+  }, 45);
+  $('#exC').onclick = () => { clearInterval(iv); v.hidden = true; toast('اتلغى التصدير'); };
+};
+function showDone() {
+  const keep = t; t = Math.min(1, total() / 3); paint(cx, cv.width, cv.height);
+  $('#vthumb').style.backgroundImage = `url(${cv.toDataURL('image/jpeg', .8)})`; t = keep; draw();
+  P.when = 'النهارده'; go('done');
+}
+$('#share').innerHTML = [['note', 'تيك توك'], ['cam', 'إنستجرام'], ['chat', 'واتساب'], ['people', 'فيسبوك'], ['dots', 'المزيد']].map(([i, n]) => `<button><i class="glass">${ico(i)}</i>${n}</button>`).join('');
+$('#share').onclick = e => { const b = e.target.closest('button'); if (b) toast('هيفتح ' + b.textContent.trim() + ' بالفيديو'); };
+$('#qa').innerHTML = [['add', 'مشروع جديد', 'new'], ['scissors', 'رجوع للمونتاج', 'back'], ['folder', 'مشاريعي', 'proj']].map(([i, n, k]) => `<button class="glass" data-k="${k}">${ico(i)}${n}</button>`).join('');
+$('#qa').onclick = e => { const b = e.target.closest('button'); if (!b) return; const k = b.dataset.k; if (k === 'new') { go('home'); startNew(); } else if (k === 'back') { go('editor'); render(); } else go('projects'); };
+$('#dnBack').onclick = () => { go('editor'); render(); };
+$('#dnDone').onclick = () => go('home');
+$('#eClose').onclick = () => { if (playing) togglePlay(); P.when = 'النهارده'; toast('اتحفظ في مشاريعك'); go('home'); };
+
+/* ---------- first-time coach marks ---------- */
+const COACH = [
+  { el: () => $('#tl'), hand: 'drag', at: [.3, .55], b: 'دوس مطوّل على أي كليب واسحبه', s: 'حرّكه في الوقت، أو طلّعه لفوق يبقى طبقة فوق الفيديو في مسار لوحده' },
+  { el: () => $('#tl'), hand: 'pinch', at: [.5, .5], b: 'صباعين على التايم لاين', s: 'افتحهم تكبّر، قفّلهم تصغّر' },
+  { el: () => $('#dock'), hand: 'swipe', at: [.5, .5], b: 'اسحب الأدوات يمين وشمال', s: 'فيه أدوات جديدة زي الكابشن التلقائي وفصل الأصوات' },
+  { el: () => $('#cSafe'), hand: 'pinch', at: [.5, .5], b: 'المنطقة الآمنة', s: 'شوف فين أزرار تيك توك وريلز هتغطي على الفيديو' }
+];
+let coached = false;
+function coach(n) {
+  const c = COACH[n], box = $('#coach');
+  if (!c) { box.hidden = true; store.set('maqto-coach', '1'); return; }
+  box.hidden = false;
+  const a = $('#app').getBoundingClientRect(), r = c.el().getBoundingClientRect(), pad = 6;
+  Object.assign($('#hole').style, { left: r.left - a.left - pad + 'px', top: r.top - a.top - pad + 'px', width: r.width + pad * 2 + 'px', height: r.height + pad * 2 + 'px' });
+  const h = $('#hand'); h.setAttribute('class', 'hand ' + c.hand);
+  h.style.left = r.left - a.left + r.width * c.at[0] - 12 + 'px'; h.style.top = r.top - a.top + r.height * c.at[1] - 8 + 'px';
+  const tip = $('#tip'), above = r.top - a.top > a.height / 2;
+  tip.innerHTML = `<b>${c.b}</b><span>${c.s}</span><small>${n + 1} من ${COACH.length} · دوس في أي حتة</small>`;
+  tip.style.top = above ? 'auto' : (r.bottom - a.top + 18) + 'px'; tip.style.bottom = above ? (a.bottom - r.top + 18) + 'px' : 'auto';
+  box.onclick = () => coach(n + 1);
+}
+
+/* ---------- misc ---------- */
+let tt; function toast(m) { const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 1800); }
+addEventListener('resize', () => { if (!$('#editor').hidden) { fitCanvas(); render(); } if (!$('#fs').hidden) { layoutFs(); fitCanvas(); } });
+document.fonts && document.fonts.ready.then(draw);
+go('home');
+
+/* ---------- language: Arabic source text, English swapped in on the fly ---------- */
+const EN = {
+  'قص': 'Split', 'نص': 'Text', 'تم': 'Done', 'نبض': 'Pulse', 'عرض': 'Offer', 'حذف': 'Delete', 'سهم': 'Arrow', 'ليل': 'Night', 'صوت': 'Audio', 'شيل': 'Remove', 'قلب': 'Heart', 'صور': 'Photos', 'مسح': 'Wipe', 'مثال': 'Example', 'نجمة': 'Star', 'صورة': 'Photo', 'حيوي': 'Vivid', 'ريلز': 'Reels', 'مربع': 'Square', 'مرآة': 'Mirror', 'بدون': 'None', 'وميض': 'Flash', 'بوست': 'Post', 'كلام': 'Speech', 'جديد': 'New', 'دافي': 'Warm', 'بارد': 'Cool', 'فلتر': 'Filter', 'طبقة': 'Overlay', 'تصدير': 'Export', 'إضافة': 'Add', 'الصوت': 'Volume', 'دوران': 'Spin', 'مشروع': 'Project', 'حركات': 'Animations', 'مختار': 'selected', 'اتحذف': 'Deleted', 'إغلاق': 'Close', 'تراجع': 'Undo', 'اتضاف': 'Added', 'تشغيل': 'Play', 'ماكتو': 'Maqto', 'تثبيت': 'Stabilize', 'تلاشي': 'Fade', 'فلاتر': 'Filters', 'اتطبق': 'Applied', 'تكبير': 'Zoom', 'شورتس': 'Shorts', 'فيديو': 'Video', 'إعادة': 'Redo', 'سينما': 'Cinema', 'دايرة': 'Circle', 'إيقاف': 'Pause', 'إلغاء': 'Cancel', 'الوقت': 'Time', 'هادية': 'Calm', 'تعديل': 'Edit', 'بيانو': 'Piano', 'تكرار': 'Duplicate', 'تنقية': 'Clean up', 'اتعمل': 'Created', 'إضاءة': 'Glow', 'هيفتح': 'Opens', 'واتساب': 'WhatsApp', 'اهتزاز': 'Shake', 'مؤثرات': 'SFX', 'فيسبوك': 'Facebook', 'المقاس': 'Ratio', 'انزلاق': 'Slide', 'المزيد': 'More', 'انتقال': 'Transition', 'ضبابية': 'Blur', 'حماسية': 'Upbeat', 'السرعة': 'Speed', 'يوتيوب': 'YouTube', 'عاطفية': 'Emotional', 'موسيقى': 'Music', 'الخلفية': 'Background', 'موبايلك': 'Your phone', 'استبدال': 'Replace', 'تأثيرات': 'Effects', 'خصم 30%': '30% off', 'تيك توك': 'TikTok', 'ستيكرات': 'Stickers', 'مشاريعي': 'My projects', 'إضافة نص': 'Add text', 'اتقص عند': 'Split at', 'انتقالات': 'Transitions', 'شارك على': 'Share to', 'إنستجرام': 'Instagram', 'فيديوهات': 'Videos', 'على الكل': 'on all', 'بالفيديو': 'with the video', 'النهارده': 'Today', 'إضافة صوت': 'Add audio', 'زووم بطيء': 'Slow zoom', 'حبوب فيلم': 'Film grain', 'من ملفاتك': 'From your files', 'تسجيل صوت': 'Record voice', 'فيلم قديم': 'Old film', 'لايف فوتو': 'Live Photos', 'أهلا بيكم': 'Welcome', 'إذن الصور': 'Photo access', 'فيديو جديد': 'New video', 'اتعدل النص': 'Text updated', 'إيقاع سريع': 'Fast beat', 'اتضاف النص': 'Text added', 'أبيض وأسود': 'Black & white', 'حركة بطيئة': 'Slow-mo', 'تسجيل صوتك': 'Record your voice', 'مشروع جديد': 'New project', 'إضافة كليب': 'Add clip', 'اتعمل نسخة': 'Duplicated', 'عدم السماح': "Don't allow", 'تعديل النص': 'Edit text', 'ملء الشاشة': 'Full screen', 'تعليق صوتي': 'Voiceover', 'حفظ والخروج': 'Save and exit', 'نصوص متحركة': 'Animated text', 'دخول من تحت': 'Slide in', 'دخول بتكبير': 'Zoom in', 'فصل الأصوات': 'Separate sounds', 'إعلان المحل': 'Shop ad', 'خطوات سريعة': 'Quick actions', 'رحلة الساحل': 'Beach trip', 'خروج بتلاشي': 'Fade out', 'اتضاف تأثير': 'Added effect', 'تنقية الصوت': 'Clean audio', 'آخر مشاريعك': 'Recent projects', 'مستوى الصوت': 'Volume', 'أدوات ماكتو': 'Maqto tools', 'كابشن تلقائي': 'Auto captions', 'فلاتر وألوان': 'Filters & color', 'الكليب اتثبت': 'Clip stabilized', 'موسيقى هادية': 'Calm music', 'رجوع للأدوات': 'Back to tools', 'تغيير المقاس': 'Change ratio', 'اتضاف الستيكر': 'Sticker added', 'تثبيت الفيديو': 'Stabilize video', 'دوس في أي حتة': 'Tap anywhere', 'اتلغى التصدير': 'Export canceled', 'في مسار لوحده': 'on its own lane', 'إزالة الخلفية': 'Remove background', 'رجوع للمونتاج': 'Back to editing', 'اكتب النص هنا': 'Type your text', 'المنطقة الآمنة': 'Safe zone', 'بنصدّر الفيديو': 'Exporting video', 'اتشال الانتقال': 'Transition removed', 'ضيف كليب الأول': 'Add a clip first', 'ماكتو للموبايل': 'Maqto mobile', 'تيك توك · ريلز': 'TikTok · Reels', 'معاينة الفيديو': 'Video preview', 'أو صوت من فيديو': 'or audio from a video', 'مفيش مشاريع لسه': 'No projects yet', 'حركة بطيئة ناعمة': 'Smooth slow-mo', 'اتنقل لمسار تاني': 'Moved to another lane', 'اختيار صور معينة': 'Select photos', 'اتحفظ في مشاريعك': 'Saved to your projects', 'النهارده هنوريكم': "Today we'll show you", 'أحسن عروض الموسم': "The season's best deals", 'بعد الكليب الحالي': 'after the current clip', 'اتغير مكان الكليب': 'Clip moved', 'اتحفظ على موبايلك': 'Saved to your phone', 'خروج من ملء الشاشة': 'Exit full screen', 'رجع للمسار الرئيسي': 'Back on the main track', 'الحقوا قبل ما تخلص': 'Hurry before it ends', 'هيتحطوا بالترتيب ده': 'added in this order', 'مونتاجك كله في إيدك': 'Your whole edit in your hand', 'بقى طبقة فوق الفيديو': 'Now an overlay on the video', 'اعمل كابشن من الكلام': 'Make captions from speech', 'تطبيق على كل الكليبات': 'Apply to all clips', 'كابشن على التايم لاين': 'captions on the timeline', 'كلام · موسيقى · مؤثرات': 'Speech · Music · SFX', 'صباعين على التايم لاين': 'Two fingers on the timeline', 'سجّل تعليق على الفيديو': 'Record a voiceover', 'اسحب الأدوات يمين وشمال': 'Swipe the tools sideways', 'بنفصل الصوت لـ 3 مسارات': 'Splitting audio into 3 tracks', 'الضوضاء اتشالت من الصوت': 'Noise removed', 'اتشالت الخلفية من الكليب': 'Background removed', 'السماح بالوصول لكل الصور': 'Allow access to all photos', 'اتضافت كطبقة فوق الفيديو': 'Added as an overlay', 'سمحت لماكتو بصور معينة بس': 'Maqto sees selected photos only', 'دلوقتي ماكتو شايف كل الصور': 'Maqto can now see all photos', 'افتحهم تكبّر، قفّلهم تصغّر': 'Spread to zoom in, pinch to zoom out', 'خلي ماكتو مفتوح لحد ما يخلص': 'Keep Maqto open until it finishes', 'دوس مطوّل على أي كليب واسحبه': 'Press and hold any clip, then drag', 'الخلفية: لون، ضبابية، أو صورة': 'Background: color, blur or image', 'المنطقة الآمنة للسوشيال ميديا': 'Social media safe zone', 'اتفصل لـ 3 مسارات تحت الفيديو': 'Split into 3 tracks under the video', 'حط الخط الأبيض جوه الكليب الأول': 'Put the white line inside the clip first', 'اختار فيديوهات أو صور من موبايلك': 'Pick videos or photos from your phone', 'ماكتو عايز يوصل لصورك وفيديوهاتك': 'Maqto wants to access your photos and videos', 'محتاج كليبين عشان تحط انتقال بينهم': 'You need two clips to add a transition', 'خلي النص والوش بعيد عن المناطق الحمرا': 'Keep text and faces out of the red areas', 'اختار الفيديو الأول وبعدين نطبق الأداة': "Pick a video first, then we'll apply the tool", 'لازم تسمح لماكتو بالصور عشان تختار فيديو': 'Allow photo access to pick a video', 'مشاريعك بتتحفظ هنا على موبايلك أول ما تبدأ': 'Your projects are saved here on your phone', 'بيشتغل على موبايلك من غير نت · عربي وإنجليزي': 'Runs on your phone offline · Arabic and English', 'شوف فين أزرار تيك توك وريلز هتغطي على الفيديو': 'See where TikTok and Reels buttons cover your video', 'دوس على الفيديوهات والصور اللي عايزها بالترتيب': 'Tap the videos and photos you want, in order', 'فيه أدوات جديدة زي الكابشن التلقائي وفصل الأصوات': 'New tools like auto captions and sound separation', 'كابشن تلقائي، فصل أصوات، انتقالات وفلاتر. مجانًا ومفتوح المصدر': 'Auto captions, sound separation, transitions and filters. Free and open source', 'حرّكه في الوقت، أو طلّعه لفوق يبقى طبقة فوق الفيديو في مسار لوحده': 'Move it in time, or lift it up to make an overlay on its own lane', 'عشان تختار اللي هتعمل عليه مونتاج. ماكتو مش بيرفع حاجة، كله بيفضل على موبايلك': 'So you can pick what to edit. Maqto uploads nothing; everything stays on your phone', 'من': 'of', 'حرّك المؤشر': 'Move the playhead', 'المغناطيس': 'Magnet', 'اللزق': 'Snapping', 'علامة': 'Marker', 'شيل اللي قبل': 'Delete left', 'شيل اللي بعد': 'Delete right', 'قص الإطار': 'Crop', 'لف': 'Rotate', 'تجميد': 'Freeze', 'تسجيل صوت': 'Record voice', 'بيسجل… اتضاف تعليق صوتي': 'Recording… voiceover added', 'اتشال اللي قبل الخط': 'Deleted left of the line', 'اتشال اللي بعد الخط': 'Deleted right of the line', 'رجع الإطار كامل': 'Full frame again', 'اتقلب زي المراية': 'Mirrored', 'اتلف': 'Rotated', 'اتجمد الكادر ثانيتين': 'Frame frozen for 2 s', 'اتشالت العلامة': 'Marker removed', 'اتحطت علامة عند': 'Marker at', 'المغناطيس شغال: المسارات بتقفل الفراغات': 'Magnet on: lanes close up gaps', 'المغناطيس مقفول': 'Magnet off', 'اللزق شغال: الكليب بيلزق في الأطراف والخط': 'Snapping on: clips stick to edges and the line', 'اللزق مقفول': 'Snapping off'
+};
+const AR_RE = /[؀-ۿ]/;
+const esc = k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const EN_RE = new RegExp('(?<![\\u0621-\\u064A])(' + Object.keys(EN).sort((a, b) => b.length - a.length).map(esc).join('|') + ')(?![\\u0621-\\u064A])', 'g');
+let lang = store.get('maqto-lang') === 'en' ? 'en' : 'ar';
+const T = str => lang === 'en' && AR_RE.test(str) ? str.replace(EN_RE, m => EN[m]).replace(/،/g, ',') : str;
+function trNode(n) {
+  if (n.nodeType === 3) {
+    if (n.parentElement && n.parentElement.closest('[data-notr]')) return;
+    // skip our own output, or the observer feeds itself forever
+    if (lang === 'en' && n.nodeValue !== n.__en && AR_RE.test(n.nodeValue)) { n.__ar = n.nodeValue; n.__en = T(n.nodeValue); if (n.__en !== n.nodeValue) n.nodeValue = n.__en; }
+    else if (lang === 'ar' && n.__ar) { const v = n.__ar; n.__ar = n.__en = null; if (n.nodeValue !== v) n.nodeValue = v; }
+    return;
+  }
+  if (n.nodeType !== 1) return;
+  for (const a of ['aria-label', 'placeholder']) {
+    const v = n.getAttribute(a), key = 'ar' + a.replace('-', '');
+    if (lang === 'en' && v && AR_RE.test(v)) { n.dataset[key] = v; n.setAttribute(a, T(v)); }
+    else if (lang === 'ar' && n.dataset[key]) { n.setAttribute(a, n.dataset[key]); delete n.dataset[key]; }
+  }
+}
+function trTree(root) {
+  trNode(root);
+  if (root.nodeType !== 1) return;
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  while (w.nextNode()) trNode(w.currentNode);
+}
+new MutationObserver(ms => { for (const m of ms) { if (m.type === 'characterData') trNode(m.target); else m.addedNodes.forEach(trTree); } })
+  .observe($('#app'), { childList: true, subtree: true, characterData: true });
+function setLang(l) {
+  lang = l; store.set('maqto-lang', l);
+  const app = $('#app'); app.dir = l === 'en' ? 'ltr' : 'rtl'; document.documentElement.lang = l;
+  $('#langBtn').textContent = l === 'en' ? 'عربي' : 'English';
+  trTree(app); draw();
+}
+$('#langBtn').onclick = () => setLang(lang === 'en' ? 'ar' : 'en');
+
+if (lang === 'en') setLang('en');
+</script>

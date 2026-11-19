@@ -123,7 +123,7 @@ fn separate(model: &std::path::Path, x: &[f32], progress: impl Fn(f64)) -> R<Vec
     let win: Vec<f64> = (0..N).map(|i| 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / N as f64).cos()).collect();
     let mut env = vec![0f64; (T - 1) * HOP + N];
     for t in 0..T { for i in 0..N { env[t * HOP + i] += win[i] * win[i]; } }
-    let rt = ort::init().build().map_err(err)?;
+    let rt = super::matte::ort_env()?;
     // CPU: CoreML refuses the graph ("generic_general_slice: Invalid values"); ~1 s of compute per 1 s of segment on an M-series
     let mut sess = ort::session::Session::builder(&rt).map_err(err)?
         .with_auto_device(ort::session::builder::AutoDevicePolicy::PreferCPU).map_err(err)?
@@ -174,6 +174,22 @@ pub async fn stems_make(app: AppHandle, path: String, start: f64, len: f64) -> R
             }
         }
         Ok(outs.iter().map(|p| p.to_string_lossy().into_owned()).collect())
+    }).await.map_err(err)?
+}
+
+/// iOS (no ffmpeg): the raw IPC body is mono 44.1 kHz f32le samples, the answer is the three stems back to back, same format.
+#[tauri::command]
+pub async fn stems_raw(app: AppHandle, request: tauri::ipc::Request<'_>) -> R<tauri::ipc::Response> {
+    let tauri::ipc::InvokeBody::Raw(b) = request.body() else { return Err("stems: expected raw samples".into()) };
+    let x: Vec<f32> = b.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    if x.is_empty() { return Err("stems: no audio".into()); }
+    STOP.store(false, Ordering::Relaxed);
+    tauri::async_runtime::spawn_blocking(move || {
+        let (n, border) = (x.len(), L - STEP);
+        let acc = separate(&model(&app)?, &x, |p| { let _ = app.emit("progress", json!({ "label": "stems", "p": p })); })?;
+        let mut out = Vec::with_capacity(3 * n * 4);
+        for s in &acc { for v in &s[border..border + n] { out.extend_from_slice(&(v / 3.0).to_le_bytes()); } }
+        Ok(tauri::ipc::Response::new(out))
     }).await.map_err(err)?
 }
 

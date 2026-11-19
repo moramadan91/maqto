@@ -1,0 +1,282 @@
+<title>ماكتو رأسي</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap">
+<style>
+/* Layout: preview on top, time flows DOWN a vertical timeline under a fixed playhead line; tools live in the thumb zone */
+:root {
+  --bg: #0e1013; --panel: #16191e; --raise: #1f242b; --line: rgba(255,255,255,.09);
+  --text: #eef2f6; --dim: rgba(238,242,246,.58); --faint: rgba(238,242,246,.3);
+  --accent: #5cd3c6; --ink: #0d1a19;
+  --video: 62,132,255; --audio: 74,210,110; --voice: 255,186,74; --tx: 168,112,255;
+  --f: 'Cairo', system-ui, -apple-system, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 var(--f); display: flex; flex-direction: column; overflow: hidden; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+
+header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; height: 52px; box-sizing: border-box; }
+header .name { flex: 1; min-width: 0; }
+header .name b { display: block; font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+header .name span { font-size: 11px; color: var(--dim); }
+.export { background: var(--accent); color: var(--ink); font-weight: 800; padding: 7px 16px; border-radius: 999px; font-size: 13px; }
+.ib { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; color: var(--dim); }
+.ib:active { background: var(--raise); }
+
+.preview { flex: 0 0 36%; min-height: 0; position: relative; }
+canvas { position: absolute; top: 6px; bottom: 6px; left: 50%; transform: translateX(-50%); height: calc(100% - 12px); width: auto; aspect-ratio: 9/16; max-width: calc(100% - 32px); border-radius: 10px; background: #000; display: block; }
+
+.ctrl { display: flex; align-items: center; gap: 4px; padding: 6px 10px; direction: rtl; }
+.tc { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--dim); direction: ltr; min-width: 112px; }
+.tc b { color: var(--text); font-weight: 700; }
+.play { width: 46px; height: 46px; border-radius: 50%; background: var(--text); color: var(--bg); display: grid; place-items: center; margin-inline: auto; }
+.play svg { fill: currentColor; stroke: none; width: 20px; height: 20px; }
+
+.tl { flex: 1; position: relative; min-height: 0; background: var(--panel); border-radius: 22px 22px 0 0; overflow: hidden; }
+.heads { position: absolute; inset: 0 0 auto; height: 28px; display: grid; grid-template-columns: 44px 1fr 46px 46px 46px; gap: 6px; padding-inline: 10px; align-items: center; font-size: 10.5px; color: var(--faint); z-index: 3; background: var(--panel); border-bottom: 1px solid var(--line); text-align: center; }
+.scroll { position: absolute; inset: 28px 0 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; }
+.grid { position: relative; display: grid; grid-template-columns: 44px 1fr 46px 46px 46px; gap: 6px; padding-inline: 10px; }
+.col { position: relative; }
+.ruler span { position: absolute; right: 0; left: 0; font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums; text-align: center; transform: translateY(-50%); }
+.ruler i { position: absolute; right: 30%; left: 30%; height: 1px; background: var(--line); }
+
+.clip { position: absolute; inset-inline: 0; border-radius: 10px; overflow: hidden; box-sizing: border-box; cursor: pointer; }
+.clip.sel { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 2; }
+.clip.sel::before, .clip.sel::after { content: ""; position: absolute; left: 50%; width: 28px; height: 4px; margin-left: -14px; border-radius: 2px; background: var(--accent); z-index: 2; }
+.clip.sel::before { top: 3px; } .clip.sel::after { bottom: 3px; }
+.clip.v { background-image: repeating-linear-gradient(180deg, transparent 0 calc(var(--pps) - 1px), rgba(0,0,0,.35) calc(var(--pps) - 1px) var(--pps)), linear-gradient(160deg, hsl(var(--h) 55% 42%), hsl(calc(var(--h) + 40) 60% 18%)); }
+.clip.v .lb { position: absolute; top: 8px; right: 10px; left: 10px; font-size: 12.5px; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
+.clip.v .du { position: absolute; bottom: 8px; left: 10px; font-size: 10.5px; background: rgba(0,0,0,.45); padding: 1px 7px; border-radius: 6px; font-variant-numeric: tabular-nums; }
+.clip.a { background: rgba(var(--c), .2); border: 1px solid rgba(var(--c), .45); }
+.clip.a svg { position: absolute; inset: 4px 3px; width: calc(100% - 6px); height: calc(100% - 8px); }
+.clip.a rect { fill: rgba(var(--c), .85); }
+.clip.t { background: rgba(var(--tx), .28); border: 1px solid rgba(var(--tx), .55); display: grid; place-items: center; }
+.clip.t span, .clip.a span { writing-mode: vertical-rl; font-size: 11px; font-weight: 700; white-space: nowrap; overflow: hidden; max-height: 100%; position: relative; }
+.clip.a span { position: absolute; top: 6px; left: 50%; transform: translateX(-50%); background: rgba(14,16,19,.65); padding: 4px 1px; border-radius: 6px; }
+
+.ph { position: absolute; left: 0; right: 0; top: 92px; height: 2px; background: var(--accent); z-index: 4; pointer-events: none; box-shadow: 0 0 0 1px rgba(14,16,19,.6); }
+.ph b { position: absolute; right: 8px; top: -11px; background: var(--accent); color: var(--ink); font-size: 11px; font-weight: 800; padding: 1px 7px; border-radius: 7px; font-variant-numeric: tabular-nums; }
+.hint { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 5; background: var(--raise); border: 1px solid var(--line); padding: 7px 14px; border-radius: 999px; font-size: 12px; color: var(--dim); white-space: nowrap; pointer-events: none; transition: opacity .3s; }
+.hint.off { opacity: 0; }
+
+.dock { display: flex; justify-content: space-around; padding: 8px 6px calc(8px + env(safe-area-inset-bottom, 0px)); background: var(--panel); border-top: 1px solid var(--line); min-height: 64px; box-sizing: border-box; }
+.dock button { display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11px; color: var(--dim); padding: 4px 6px; min-width: 52px; border-radius: 12px; }
+.dock button:active { background: var(--raise); }
+.dock .add { color: var(--accent); }
+.sheet { background: var(--raise); border-top: 1px solid var(--line); padding: 10px 14px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.sheet .top { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.sheet .top b { flex: 1; font-size: 13px; }
+.sheet .top .dot { width: 10px; height: 10px; border-radius: 3px; }
+.sheet .done { color: var(--accent); font-weight: 700; font-size: 13px; padding: 4px 8px; }
+.tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.tools button { background: var(--panel); border-radius: 16px; padding: 12px 4px 9px; display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
+.tools button:active { background: var(--bg); }
+.tools button.danger { color: #ff7b7b; }
+.toast { position: fixed; left: 50%; top: calc(60px + env(safe-area-inset-top, 0px)); transform: translate(-50%, -8px); background: var(--text); color: var(--bg); font-weight: 700; font-size: 13px; padding: 8px 16px; border-radius: 999px; opacity: 0; transition: opacity .2s, transform .2s; z-index: 20; pointer-events: none; white-space: nowrap; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) { .toast, .hint { transition: none; } }
+</style>
+
+<header dir="rtl">
+  <button class="ib" aria-label="رجوع"><svg class="i" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+  <div class="name"><b>إعلان المحل</b><span>9:16 · 1080p · 30 فريم</span></div>
+  <button class="export" id="export">تصدير</button>
+</header>
+
+<div class="preview"><canvas id="cv" aria-label="معاينة الفيديو"></canvas></div>
+
+<div class="ctrl">
+  <button class="ib" id="undo" aria-label="تراجع"><svg class="i" viewBox="0 0 24 24"><path d="M15 14l5-5-5-5M20 9H10a6 6 0 000 12h3"/></svg></button>
+  <button class="ib" id="redo" aria-label="إعادة"><svg class="i" viewBox="0 0 24 24"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 010 12h-3"/></svg></button>
+  <button class="play" id="play" aria-label="تشغيل"></button>
+  <div class="tc" id="tc"></div>
+</div>
+
+<div class="tl" id="tl">
+  <div class="heads" dir="rtl"><span>الوقت</span><span>فيديو</span><span>موسيقى</span><span>تعليق</span><span>نص</span></div>
+  <div class="scroll" id="sc"><div id="inner"><div class="grid" id="grid" dir="rtl"></div></div></div>
+  <div class="ph" id="ph"><b id="phT"></b></div>
+  <div class="hint" id="hint">اسحب لفوق وتحت عشان تمشي في الوقت · صباعين للزووم</div>
+</div>
+
+<nav class="dock" id="dock" dir="rtl"></nav>
+<div class="sheet" id="sheet" dir="rtl" hidden>
+  <div class="top"><span class="dot" id="sDot"></span><b id="sName"></b><button class="done" id="sDone">تم</button></div>
+  <div class="tools" id="tools"></div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+const I = {
+  play: '<path d="M7 4.5v15l13-7.5z"/>', pause: '<path d="M6 4h4v16H6zM14 4h4v16h-4z"/>',
+  add: '<path d="M12 5v14M5 12h14"/>', text: '<path d="M5 6h14M12 6v13M9 19h6"/>',
+  music: '<path d="M9 18V6l10-2v12"/><circle cx="6" cy="18" r="3"/><circle cx="16" cy="16" r="3"/>',
+  cc: '<rect x="3" y="5" width="18" height="14" rx="3"/><path d="M7 12h4M13 12h4M7 15.5h7"/>',
+  fx: '<circle cx="9" cy="9" r="5"/><circle cx="15" cy="9" r="5"/><circle cx="12" cy="15" r="5"/>',
+  ratio: '<rect x="7" y="3" width="10" height="18" rx="2"/>',
+  split: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.5 7.5L20 18M8.5 16.5L20 6"/>',
+  speed: '<path d="M4.5 17a8 8 0 1115 0"/><path d="M12 13l4-4"/>',
+  dup: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 012-2h10"/>',
+  del: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+  vol: '<path d="M4 10h4l5-4v12l-5-4H4z"/><path d="M17 9a4 4 0 010 6"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>'
+};
+const ico = n => `<svg class="i" viewBox="0 0 24 24">${I[n]}</svg>`;
+const $ = s => document.querySelector(s);
+
+// example project (sample content, not the user's)
+let items = [
+  { id: 1, kind: 'video', lane: 'v', name: 'لقطة الافتتاح', base: 4, h: 205 },
+  { id: 2, kind: 'video', lane: 'v', name: 'المنتج من قريب', base: 3.5, h: 28 },
+  { id: 3, kind: 'video', lane: 'v', name: 'الشارع بالليل', base: 5, h: 265 },
+  { id: 4, kind: 'video', lane: 'v', name: 'الختام واللوجو', base: 3, h: 165 },
+  { id: 5, kind: 'audio', lane: 'a1', name: 'موسيقى هادية', start: 0, base: 15.5, c: '--audio', vol: 100 },
+  { id: 6, kind: 'audio', lane: 'a2', name: 'تعليق صوتي', start: 1, base: 8, c: '--voice', vol: 100 },
+  { id: 7, kind: 'text', lane: 'tx', name: 'افتتاح الفرع الجديد', start: .5, base: 3 },
+  { id: 8, kind: 'text', lane: 'tx', name: 'خصم 30%', start: 8, base: 3.5 }
+].map(i => ({ speed: 1, start: 0, ...i }));
+let nextId = 9, sel = null, t = 0, playing = false, pps = 34, history = [], future = [];
+const TEXTS = ['افتتاح الفرع الجديد', 'خصم 30%', 'لفترة محدودة', 'اطلب دلوقتي'];
+const dur = i => i.base / i.speed;
+function pack() { let at = 0; for (const i of items.filter(i => i.lane === 'v')) { i.start = at; at += dur(i); } }
+const total = () => Math.max(...items.map(i => i.start + dur(i)), 1);
+const fmt = s => { s = Math.max(0, s); const m = Math.floor(s / 60); return `${String(m).padStart(2, '0')}:${(s - m * 60).toFixed(1).padStart(4, '0')}`; };
+const snap = () => { history.push(JSON.stringify(items)); future = []; };
+
+// seeded noise (mulberry32) for stable waveforms
+function rng(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let x = Math.imul(a ^ a >>> 15, 1 | a); x = x + Math.imul(x ^ x >>> 7, 61 | x) ^ x; return ((x ^ x >>> 14) >>> 0) / 4294967296; }; }
+function wave(it) {
+  const n = Math.max(4, Math.round(dur(it) * 7)), r = rng(it.id * 977), k = it.vol / 100;
+  let s = '';
+  for (let j = 0; j < n; j++) { const a = (.25 + .75 * r()) * (.35 + .65 * k); s += `<rect x="${50 - a * 48}" y="${j + .15}" width="${a * 96}" height=".55" rx=".2"/>`; }
+  return `<svg viewBox="0 0 100 ${n}" preserveAspectRatio="none">${s}</svg>`;
+}
+
+const PH = 64; // playhead distance from the top of the scrolling area
+function render() {
+  pack();
+  const T = total(), g = $('#grid'), sc = $('#sc');
+  g.style.height = T * pps + 'px';
+  g.style.setProperty('--pps', pps + 'px');
+  $('#inner').style.padding = `${PH}px 0 ${Math.max(0, sc.clientHeight - PH)}px`;
+  const step = pps < 20 ? 2 : 1;
+  let ruler = '';
+  for (let s = 0; s <= T; s += step) ruler += `<span style="top:${s * pps}px">${fmt(s).slice(1, 5)}</span>`;
+  const col = lane => items.filter(i => i.lane === lane).map(clip).join('');
+  g.innerHTML = `<div class="col ruler">${ruler}</div><div class="col">${col('v')}</div><div class="col">${col('a1')}</div><div class="col">${col('a2')}</div><div class="col">${col('tx')}</div>`;
+  sc.scrollTop = t * pps;
+  draw();
+}
+function clip(i) {
+  const pos = `top:${i.start * pps + 1}px;height:${Math.max(dur(i) * pps - 3, 14)}px`, s = i.id === sel ? ' sel' : '';
+  if (i.kind === 'video') return `<div class="clip v${s}" data-id="${i.id}" style="${pos};--h:${i.h}"><div class="lb">${i.name}</div><div class="du">${dur(i).toFixed(1)}s${i.speed !== 1 ? ' · ' + i.speed + 'x' : ''}</div></div>`;
+  if (i.kind === 'audio') return `<div class="clip a${s}" data-id="${i.id}" style="${pos};--c:var(${i.c})">${wave(i)}<span>${i.name}</span></div>`;
+  return `<div class="clip t${s}" data-id="${i.id}" style="${pos}"><span>${i.name}</span></div>`;
+}
+
+// preview: a drawn stand-in for the footage
+const cv = $('#cv'), cx = cv.getContext('2d');
+function fit() { const r = cv.getBoundingClientRect(), d = devicePixelRatio || 1; cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
+function draw() {
+  const W = cv.width, H = cv.height, v = items.find(i => i.lane === 'v' && t >= i.start && t < i.start + dur(i));
+  if (!v) { cx.fillStyle = '#000'; cx.fillRect(0, 0, W, H); }
+  else {
+    const p = (t - v.start) / dur(v), gr = cx.createLinearGradient(0, 0, W * (.4 + p), H);
+    gr.addColorStop(0, `hsl(${v.h} 55% ${34 + p * 10}%)`); gr.addColorStop(1, `hsl(${v.h + 40} 60% 12%)`);
+    cx.fillStyle = gr; cx.fillRect(0, 0, W, H);
+    cx.fillStyle = `hsl(${v.h + 180} 70% 70% / .22)`; cx.beginPath(); cx.arc(W * (.25 + .5 * p), H * .42, W * .3, 0, 7); cx.fill();
+    cx.fillStyle = 'rgba(0,0,0,.25)'; cx.fillRect(0, H * .72, W, H * .28);
+  }
+  for (const x of items.filter(i => i.kind === 'text' && t >= i.start && t < i.start + dur(i))) {
+    cx.font = `800 ${Math.round(W * .085)}px Cairo, system-ui`; cx.textAlign = 'center'; cx.direction = 'rtl';
+    const w = cx.measureText(x.name).width + W * .1, y = H * .62;
+    cx.fillStyle = '#5cd3c6'; cx.beginPath(); cx.roundRect(W / 2 - w / 2, y - W * .085, w, W * .14, W * .03); cx.fill();
+    cx.fillStyle = '#0d1a19'; cx.fillText(x.name, W / 2, y + W * .02);
+  }
+  $('#tc').innerHTML = `<b>${fmt(t)}</b> / ${fmt(total())}`;
+  $('#phT').textContent = fmt(t);
+}
+
+// scrolling IS scrubbing
+const sc = $('#sc');
+sc.addEventListener('scroll', () => { if (playing) return; t = Math.min(sc.scrollTop / pps, total()); draw(); });
+sc.addEventListener('pointerdown', () => { hideHint(); if (playing) toggle(); });
+let last = 0;
+function loop(ts) {
+  if (!playing) return;
+  t += Math.min(.1, (ts - last) / 1000); last = ts;
+  if (t >= total()) { t = total(); toggle(); }
+  sc.scrollTop = t * pps; draw();
+  requestAnimationFrame(loop);
+}
+function toggle() {
+  playing = !playing;
+  if (playing && t >= total() - .05) t = 0;
+  $('#play').innerHTML = `<svg viewBox="0 0 24 24">${I[playing ? 'pause' : 'play']}</svg>`;
+  $('#play').setAttribute('aria-label', playing ? 'إيقاف' : 'تشغيل');
+  if (playing) { last = performance.now(); requestAnimationFrame(loop); }
+}
+$('#play').onclick = toggle;
+
+// pinch to zoom the time scale
+let pinch = null;
+sc.addEventListener('touchstart', e => { if (e.touches.length === 2) pinch = { d: dist(e), p: pps }; }, { passive: true });
+sc.addEventListener('touchmove', e => { if (pinch && e.touches.length === 2) { pps = Math.min(120, Math.max(12, pinch.p * dist(e) / pinch.d)); render(); } }, { passive: true });
+sc.addEventListener('touchend', () => { pinch = null; });
+const dist = e => Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+sc.addEventListener('wheel', e => { if (e.ctrlKey) { e.preventDefault(); pps = Math.min(120, Math.max(12, pps * (e.deltaY < 0 ? 1.1 : .9))); render(); } }, { passive: false });
+
+// selection + contextual sheet
+$('#grid').addEventListener('click', e => { const c = e.target.closest('.clip'); select(c ? +c.dataset.id : null); });
+$('#sDone').onclick = () => select(null);
+const TOOLS = {
+  video: [['split', 'قص'], ['speed', 'سرعة'], ['dup', 'تكرار'], ['del', 'حذف']],
+  audio: [['split', 'قص'], ['vol', 'الصوت'], ['dup', 'تكرار'], ['del', 'حذف']],
+  text: [['edit', 'تعديل'], ['split', 'قص'], ['dup', 'تكرار'], ['del', 'حذف']]
+};
+function select(id) {
+  sel = id; const it = items.find(i => i.id === id);
+  $('#dock').hidden = !!it; $('#sheet').hidden = !it;
+  if (it) {
+    $('#sName').textContent = it.name;
+    $('#sDot').style.background = it.kind === 'video' ? `hsl(${it.h} 55% 50%)` : it.kind === 'audio' ? `rgb(var(${it.c}))` : 'rgb(var(--tx))';
+    $('#tools').innerHTML = TOOLS[it.kind].map(([k, l]) => `<button data-a="${k}"${k === 'del' ? ' class="danger"' : ''}>${ico(k)}${l}</button>`).join('');
+  }
+  render();
+}
+$('#tools').addEventListener('click', e => { const b = e.target.closest('button'); if (b) act(b.dataset.a); });
+function act(a) {
+  const it = items.find(i => i.id === sel); if (!it) return;
+  snap();
+  if (a === 'split') {
+    const at = t - it.start;
+    if (at < .2 || at > dur(it) - .2) { history.pop(); return toast('حرّك الخط جوه الكليب الأول'); }
+    const b = { ...it, id: nextId++, start: t, base: (dur(it) - at) * it.speed };
+    it.base = at * it.speed; items.splice(items.indexOf(it) + 1, 0, b);
+    toast('اتقص عند ' + fmt(t));
+  } else if (a === 'speed') { it.speed = { 1: 2, 2: .5, .5: 1 }[it.speed]; toast('السرعة ' + it.speed + 'x'); }
+  else if (a === 'vol') { it.vol = { 100: 50, 50: 0, 0: 100 }[it.vol]; toast('مستوى الصوت ' + it.vol + '%'); }
+  else if (a === 'edit') { it.name = TEXTS[(TEXTS.indexOf(it.name) + 1) % TEXTS.length]; $('#sName').textContent = it.name; toast('اتغير النص'); }
+  else if (a === 'dup') { const c = { ...it, id: nextId++, start: it.start + dur(it) }; items.splice(items.indexOf(it) + 1, 0, c); toast('اتعمل نسخة'); }
+  else if (a === 'del') { items = items.filter(i => i !== it); toast('اتحذف'); return select(null); }
+  render();
+}
+$('#undo').onclick = () => { if (!history.length) return toast('مفيش حاجة ترجعها'); future.push(JSON.stringify(items)); items = JSON.parse(history.pop()); select(null); toast('تراجع'); };
+$('#redo').onclick = () => { if (!future.length) return toast('مفيش حاجة تتعاد'); history.push(JSON.stringify(items)); items = JSON.parse(future.pop()); select(null); toast('إعادة'); };
+
+const DOCK = [['add', 'إضافة'], ['text', 'نص'], ['music', 'صوت'], ['cc', 'كابشن'], ['fx', 'فلاتر'], ['ratio', 'المقاس']];
+$('#dock').innerHTML = DOCK.map(([k, l]) => `<button data-k="${k}"${k === 'add' ? ' class="add"' : ''}>${ico(k)}${l}</button>`).join('');
+$('#dock').onclick = e => { const b = e.target.closest('button'); if (b) toast(b.textContent + ' · في التطبيق الحقيقي'); };
+$('#export').onclick = () => toast('التصدير في التطبيق الحقيقي');
+
+let tt; function toast(m) { const el = $('#toast'); el.textContent = m; el.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => el.classList.remove('on'), 1600); }
+function hideHint() { $('#hint').classList.add('off'); }
+
+$('#play').innerHTML = `<svg viewBox="0 0 24 24">${I.play}</svg>`;
+fit(); t = 2.2; render();
+addEventListener('resize', () => { fit(); render(); });
+document.fonts && document.fonts.ready.then(draw);
+</script>
