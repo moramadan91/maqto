@@ -21,7 +21,7 @@
   body { margin: 0; background: var(--bg); color: var(--ink); font: 400 17px/1.8 var(--text); -webkit-font-smoothing: antialiased; }
   .wrap { max-width: 720px; margin: 0 auto; padding: 0 20px; }
   header { display: flex; align-items: center; justify-content: space-between; padding: 22px 0; border-bottom: 1px solid var(--line); }
-  header a.home { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font: 800 20px var(--display); }
+  header a.home { display: flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; font: 800 20px/37.5px var(--display); } /* fixed = Cairo's normal line height, so the header doesn't jump when the font swaps in */
   header a.home img { width: 30px; height: 30px; }
   .langs a { color: var(--mute); text-decoration: none; font-size: 15px; padding: 8px 4px; }
   .langs a:hover, .langs a:focus-visible { color: var(--ink); }

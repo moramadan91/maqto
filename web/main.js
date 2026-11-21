@@ -417,7 +417,8 @@ function buildDock() {
   spans.forEach(([a, b], i) => {
     const s = secs[i], c = document.createElement('button');
     c.type = 'button'; c.className = 'dk-clip';
-    c.style.cssText = `left:calc(${a * 100}% + 2px);width:calc(${(b - a) * 100}% - 4px);background-image:url(${s.dataset.thumb})`;
+    const u = s.dataset.thumb, w = /\/s\d\.jpg$/.test(u) ? `;background-image:image-set(url(${u.replace('.jpg', '.webp')}) type('image/webp'),url(${u}) type('image/jpeg'))` : ''; // WebP where it exists, JPEG fallback
+    c.style.cssText = `left:calc(${a * 100}% + 2px);width:calc(${(b - a) * 100}% - 4px);background-image:url(${u})${w}`;
     c.innerHTML = `<span data-k="${s.dataset.clip}">${T[lang][s.dataset.clip]}</span>`;
     c.onclick = () => lenis.scrollTo(s, { offset: i ? -60 : 0 });
     dtrack.append(c);
