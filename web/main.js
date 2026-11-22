@@ -358,6 +358,13 @@ const reels = $$('.reel').map(reel => {
     if (pips) $$('button', pips).forEach((b, i) => b.classList.toggle('on', i <= c));
   };
   reel.addEventListener('scroll', ends, { passive: true });
+  // a sideways swipe belongs to the slider only: keep its small up/down jitter away from Lenis, so the page doesn't float
+  let side = 0;
+  reel.addEventListener('wheel', e => {
+    const now = e.timeStamp;
+    if (Math.abs(e.deltaX) > Math.abs(e.deltaY)) side = now;
+    if (now - side < 200) e.stopPropagation();
+  }, { passive: true });
   addEventListener('resize', ends);
   let sx = 0, sl = 0, si = 0, moved = false;
   reel.addEventListener('pointerdown', e => {
