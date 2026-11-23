@@ -208,23 +208,37 @@ function chainKey(it) {
 const pxOk = new Map(), pxPath = new Map();
 function pxKey(it) {
   const m = media(it);
-  return JSON.stringify([m.path, num(it.in, 0), it.dur, it.curve, !!it.pitch, P.fps, smoothSlow(it) && num(it.speed, 1), smoothSlow(it) && rifeFor(it)]);
+  return JSON.stringify([m.path, G.toneMap(m), num(it.in, 0), it.dur, it.curve, !!it.pitch, P.fps, smoothSlow(it) && num(it.speed, 1), smoothSlow(it) && rifeFor(it)]);
 }
 // smooth slow-mo previews from the proxy too: the export's motion-interpolated frames, made once
 const smoothSlow = it => !!it.smooth && (S.hasCurve(it) ? it.curve.pts.some(p => p[1] < 1) : num(it.speed, 1) < 1);
 // AI in-between frames (RIFE): a high-frame-rate copy of the clip's source range, made once per range
 let rifeTool = false;
 inv('rife_ready').then(v => (rifeTool = v), () => {});
-const rifeOk = new Map(), rifePath = new Map();
+const rifeOk = new Map(), rifePath = new Map(), rifeSources = new Map();
 const rifeFactor = it => clamp(Math.ceil(1 / Math.max(0.125, S.hasCurve(it) ? Math.min(...it.curve.pts.map(p => p[1])) : num(it.speed, 1))), 2, 8);
-const rifeKey = it => JSON.stringify([media(it).path, +num(it.in, 0).toFixed(3), +S.srcLen(it).toFixed(3), rifeFactor(it)]);
+const rifeKey = it => JSON.stringify([media(it).path, G.toneMap(media(it)), +num(it.in, 0).toFixed(3), +S.srcLen(it).toFixed(3), rifeFactor(it)]);
+async function makeRife(it) {
+  const m = media(it), filter = G.toneMap(m), len = S.srcLen(it), factor = rifeFactor(it);
+  let path = m.path, start = num(it.in, 0);
+  if (filter) {
+    // Prepare only the source range. RIFE's RGB PNGs cannot carry the video's HLG/PQ metadata.
+    const args = ['-y', '-ss', start.toFixed(3), '-t', len.toFixed(3), '-i', path, '-map', '0:v:0', '-vf', filter,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '0', '-fps_mode', 'passthrough', ...G.SDR_TAGS, '__OUT__'];
+    const key = JSON.stringify(args);
+    if (!rifeSources.has(key)) rifeSources.set(key, inv('proxy_render', { args }).finally(() => rifeSources.delete(key)));
+    path = await rifeSources.get(key);
+    start = 0;
+  }
+  return inv('rife_make', { path, start, len, factor, job: it.id });
+}
 // path of the AI copy, '' while it is being made, null when not used (tool missing, not slow, failed)
 function rifeFor(it) {
   if (!rifeTool || !smoothSlow(it)) return null;
   const k = rifeKey(it);
   if (rifePath.has(k)) return rifePath.get(k);
   if (!rifeOk.has(k)) {
-    rifeOk.set(k, inv('rife_make', { path: media(it).path, start: num(it.in, 0), len: S.srcLen(it), factor: rifeFactor(it), job: it.id })
+    rifeOk.set(k, makeRife(it)
       .then(p => { rifePath.set(k, p); needsDraw = true; pxPaint(it.id); return p; }, e => { rifePath.set(k, null); toast(cleanErr(e)); return null; }));
   }
   return '';
@@ -271,7 +285,8 @@ function proxyFor(it) {
     if (now - w.at < 400) return null; // still being edited: start once the curve stops changing
     const rf = smoothSlow(it) ? rifeFor(it) : null;
     if (rf === '') { if (!pxProg.has(it.id) || pxProg.get(it.id).key !== key) { pxProg.set(it.id, { key, p: 0 }); pxPaint(it.id); } return null; } // AI frames first
-    const m0 = media(it), m = { ...m0, path: mediaProxy(m0) || m0.path }, k = Math.min(1, 960 / Math.max(m.w, m.h)), ev = v => Math.max(2, Math.round(v * k / 2) * 2);
+    const m0 = media(it), px = mediaProxy(m0), m = px ? { ...m0, path: px, hdr: rf ? m0.hdr : false } : m0;
+    const k = Math.min(1, 960 / Math.max(m.w, m.h)), ev = v => Math.max(2, Math.round(v * k / 2) * 2);
     const q = { w: ev(m.w), h: ev(m.h), fps: P.fps, media: { m }, tracks: [{ id: 'v', kind: 'video' }],
       items: [{ id: 'x', track: 'v', media: 'm', start: 0, dur: it.dur, in: num(it.in, 0), curve: it.curve, speed: it.speed, smooth: it.smooth, pitch: it.pitch, fit: 'cover' }] };
     let args;
@@ -303,7 +318,7 @@ function pxPaint(id) {
   }
 }
 TA.event.listen('pxprog', e => { const g = pxProg.get(e.payload.job); if (g) { g.p = e.payload.p; pxPaint(e.payload.job); } });
-const mpx = new Map(); // media path -> proxy path, '' while it is being made, null if it failed
+const mpx = new Map(); // source and tone-map filter -> proxy path, '' while it is being made, null if it failed
 const sparse = new Map(); // media path -> its keyframes are far apart (true/false, a promise while checking)
 function mediaProxy(m) {
   if (m.kind !== 'video' || m.fill || m.adj || lsGet('kadr.proxy', true) === false) return null;
@@ -311,14 +326,15 @@ function mediaProxy(m) {
   // far keyframes make every seek and cut slow (scrubbing freezes): those get a proxy too, at full size
   if (!big && !sparse.has(m.path)) sparse.set(m.path, inv('sparse_keys', { path: m.path }).then(v => { sparse.set(m.path, v); if (v) needsDraw = true; }, () => sparse.set(m.path, false)));
   if (!big && sparse.get(m.path) !== true) return null;
-  if (!mpx.has(m.path)) {
-    mpx.set(m.path, '');
+  const filter = G.toneMap(m), key = JSON.stringify([m.path, filter]);
+  if (!mpx.has(key)) {
+    mpx.set(key, '');
     const k = Math.min(1, 960 / Math.max(m.w, m.h)), ev = v => Math.max(2, Math.round(v * k / 2) * 2);
-    inv('proxy_render', { args: ['-y', '-v', 'error', '-i', m.path, '-map', '0:v:0', '-map', '0:a:0?', '-vf', `scale=${ev(m.w)}:${ev(m.h)}`,
-      ...G.ENCODERS.proxy(), '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '__OUT__'] })
-      .then(p => { mpx.set(m.path, p); needsDraw = true; }, () => mpx.set(m.path, null));
+    inv('proxy_render', { args: ['-y', '-v', 'error', '-i', m.path, '-map', '0:v:0', '-map', '0:a:0?', '-vf', `${filter ? filter + ',' : ''}scale=${ev(m.w)}:${ev(m.h)}`,
+      ...G.ENCODERS.proxy(), ...G.SDR_TAGS, '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', '__OUT__'] })
+      .then(p => { mpx.set(key, p); needsDraw = true; }, () => mpx.set(key, null));
   }
-  return mpx.get(m.path) || null;
+  return mpx.get(key) || null;
 }
 function elFor(it) {
   const m = media(it), rp = proxyFor(it), px = rp || mediaProxy(m), url = px ? urlOf({ path: px }) : urlOf(m), key = chainKey(it);
@@ -3400,7 +3416,7 @@ async function runTrack(f, src, box) {
   const W = Math.max(8, Math.round(L.cw * sc / 2) * 2), H = Math.max(8, Math.round(L.ch * sc / 2) * 2), kx = W / L.cw, ky = H / L.ch;
   const lo = Math.max(f.start, src.start), hi = Math.min(f.start + f.dur, src.start + src.dur), t0 = clamp(t, lo, hi - 1 / FPS);
   // shortcut: whole range is held in memory (W*H bytes per frame); stream it if clips get very long.
-  const vf = [];
+  const vf = [G.toneMap(m)].filter(Boolean);
   if (C.any) vf.push(`scale=${m.w}:${m.h}`, `crop=${C.w}:${C.h}:${C.x}:${C.y}`);
   if (src.flipH) vf.push('hflip');
   if (src.flipV) vf.push('vflip');
@@ -4054,7 +4070,7 @@ async function stabilize(it) {
   if (stabBusy.has(from)) return;
   stabBusy.add(from); inspector();
   try {
-    const path = await inv('video_stab', { path: m.path, level: lvl });
+    const path = await inv('video_stab', { path: m.path, level: lvl, toneMap: G.toneMap(m) || null });
     const [id] = addToBin(await inv('probe', { paths: [path] }));
     if (!id) throw new Error('probe');
     P.media[id].name = m.name.replace(/\.[^.]+$/, '') + ' · ' + tr('stabTag');
@@ -4069,13 +4085,18 @@ function addToBin(res) {
   const added = [];
   for (const m of res.ok) {
     const have = Object.entries(P.media).find(([, x]) => x.path === m.path && x.kind === m.kind);
-    if (have) { added.push(have[0]); continue; }
+    if (have) {
+      if (m.kind === 'video' && typeof have[1].hdr !== 'boolean') {
+        for (const key of ['hdr', 'trc', 'primaries', 'matrix']) if (key in m) have[1][key] = m[key];
+      }
+      added.push(have[0]); continue;
+    }
     const id = uid();
     P.media[id] = { ...m, added: Date.now() };
+    dirty = true;
     added.push(id);
   }
   if (res.bad.length) toast(tr('unsupported') + ': ' + res.bad.join(' · '));
-  dirty = true;
   renderBin();
   return added;
 }
@@ -4663,8 +4684,9 @@ async function framesAt(m, at) {
   const s0 = Math.min(...at), span = Math.max(...at) - s0, sc = Math.min(1, 1280 / Math.max(m.w, m.h));
   const w = Math.max(2, Math.round(m.w * sc / 2) * 2), h = Math.max(2, Math.round(m.h * sc / 2) * 2);
   const rate = span > 1e-3 ? clamp(at.length / span, 1, 120) : 30, st = Math.max(0, s0 - 0.2); // start early: a seek right at the end of a file returns nothing
+  const vf = [G.toneMap(m), `fps=${rate.toFixed(3)}`, `scale=${w}:${h}`].filter(Boolean);
   const buf = new Uint8Array(await inv('gray_frames', { args: ['-v', 'error', '-ss', st.toFixed(3), '-i', m.path, '-an', '-t', String(s0 - st + span + 2 / rate),
-    '-vf', `fps=${rate.toFixed(3)},scale=${w}:${h}`, '-pix_fmt', 'rgba', '-f', 'rawvideo', 'pipe:1'] }));
+    '-vf', vf.join(','), '-pix_fmt', 'rgba', '-f', 'rawvideo', 'pipe:1'] }));
   const N = Math.floor(buf.length / (w * h * 4));
   if (!N) throw new Error(tr('trk_noVideo'));
   const cache = new Map();

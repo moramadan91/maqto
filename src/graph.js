@@ -25,9 +25,20 @@
     hevc: q => ['-c:v', 'libx265', '-preset', 'medium', '-crf', String({ low: 26, rec: 20, high: 16 }[q] ?? 20), '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1'],
     h264_hw: q => ['-c:v', 'h264_videotoolbox', '-q:v', String({ low: 50, rec: 65, high: 80 }[q] ?? 65), '-pix_fmt', 'yuv420p'],
     hevc_hw: q => ['-c:v', 'hevc_videotoolbox', '-q:v', String({ low: 50, rec: 65, high: 80 }[q] ?? 65), '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1'],
-    prores: () => ['-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le'],
+    prores: () => ['-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le',
+      '-bsf:v', 'prores_metadata=color_primaries=bt709:color_trc=bt709:colorspace=bt709'], // tag frame headers as well as the MOV container
     proxy: () => ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-g', '12', '-pix_fmt', 'yuv420p'], // preview only: quick to make, quick to seek
   };
+  const SDR_TAGS = ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv'];
+
+  function toneMap(m) {
+    if (m.kind !== 'video' || !m.hdr) return '';
+    const input = (m.trc === null ? ':tin=bt2020-10' : '') + (m.primaries === null ? ':pin=bt2020' : '') + (m.matrix === null ? ':min=bt2020nc' : '');
+    // BT.2020 with an SDR transfer needs gamut conversion at the original brightness.
+    const wideGamutSdr = m.trc !== undefined && m.trc !== 'arib-std-b67' && m.trc !== 'smpte2084';
+    const curve = wideGamutSdr ? 'mobius:peak=1' : 'hable';
+    return `zscale=t=linear:npl=100${input},format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=${curve}:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p`;
+  }
 
   // Source time -> clip time. A curve becomes a piecewise-linear setpts over source seconds.
   function timeChain(it, fps, ai) {
@@ -127,7 +138,10 @@
         // animated scale: lay out at the largest scale, then shrink per frame
         const smax = (kf && kf.scale ? Math.max(...kf.scale.map(q => q[1])) : num(it.scale, 1)) * (LP && LP.smax || 1);
         const L = S.layout({ ...it, scale: smax }, m, W, H);
-        const ch = timeChain(it, fps, !!(o.rife && o.rife[it.id]));
+        const ai = !!(o.rife && o.rife[it.id]);
+        // RIFE's PNG frames are already tone-mapped. Its RGB-to-YUV encode uses the default BT.601 matrix.
+        const color = ai ? (m.hdr ? 'zscale=min=170m:m=709' : '') : toneMap(m);
+        const ch = timeChain(it, fps, ai);
         const TI = S.transIn(p, it0), TO = S.transOut(p, it0), d3 = v => (+v).toFixed(4);
         if (TO && !S.GLT.includes(TO.id)) ch.push(`tpad=stop_mode=clone:stop_duration=${f3(TO.d)}`); // hold the last frame under the next clip's transition
         let vin = `${k}:v`;
@@ -135,9 +149,9 @@
         if (mt) { // remove background: the AI matte (same timing as the source) becomes alpha before crop and scale
           const mi = n++;
           args.push('-ss', f3(num(it.in, 0)), '-t', f3(S.srcLen(it)), '-i', mt);
-          fc.push(`[${k}:v]${ch.join(',')},scale=${m.w}:${m.h},format=yuva420p[bg${j}]`, `[${mi}:v]${ch.join(',')},scale=${m.w}:${m.h},format=gray[bgm${j}]`, `[bg${j}][bgm${j}]alphamerge[bgo${j}]`);
+          fc.push(`[${k}:v]${color ? color + ',' : ''}${ch.join(',')},scale=${m.w}:${m.h},format=yuva420p[bg${j}]`, `[${mi}:v]${ch.join(',')},scale=${m.w}:${m.h},format=gray[bgm${j}]`, `[bg${j}][bgm${j}]alphamerge[bgo${j}]`);
           vin = `bgo${j}`; ch.length = 0; ch.push('null');
-        }
+        } else if (color) ch.unshift(color);
         if (it.logo && it.logo.on) { const b = S.logoBox(it.logo, m); ch.push(`delogo=x=${b.x}:y=${b.y}:w=${b.w}:h=${b.h}`); }
         if (S.hasKey(it)) { const K = it.chroma; ch.push('format=yuva444p', `chromakey=color=${String(K.color || '#00ff00').replace('#', '0x')}:similarity=${num(K.sim, 0.3).toFixed(3)}:blend=${num(K.blend, 0.1).toFixed(3)}`); }
         if (C.any) ch.push(`scale=${m.w}:${m.h}`, `crop=${C.w}:${C.h}:${C.x}:${C.y}`);
@@ -271,7 +285,7 @@
       args.push('-map', '[aout]', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-t', f3(T), o.out);
     } else {
       args.push('-map', '[vout]', '-map', '[aout]', ...(ENCODERS[o.codec] || ENCODERS.h264)(o.quality),
-        '-r', String(fps), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart',
+        ...SDR_TAGS, '-r', String(fps), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart',
         '-t', f3(T), '-progress', 'pipe:1', o.out);
     }
     return { args, duration: T };
@@ -285,7 +299,7 @@
     return L.join('\n') + '\n';
   }
 
-  const api = { buildArgs, concatText, atempo, ENCODERS };
+  const api = { buildArgs, concatText, atempo, ENCODERS, SDR_TAGS, toneMap };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MaqtoGraph = api;
 })(this);

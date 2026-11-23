@@ -64,10 +64,25 @@ assert.strictEqual(S.projectDur(grouped), S.projectDur(p));
 assert.deepStrictEqual(buildArgs(grouped, { out: clip }), buildArgs(p, { out: clip }));
 
 const out = path.join(dir, 'out.mp4');
+{
+  const hdr = { ...p, media: { ...p.media, m1: { ...p.media.m1, hdr: true, trc: 'arib-std-b67', primaries: 'bt2020', matrix: 'bt2020nc' } } };
+  const filters = (project, opts = {}) => {
+    const { args } = buildArgs(project, { out, ...opts });
+    return args[args.indexOf('-filter_complex') + 1];
+  };
+  assert.ok(!filters(p).includes('tonemap='));
+  assert.ok(filters(hdr).includes('[0:v]zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap='));
+  assert.ok(filters(hdr, { codec: 'proxy' }).includes('tonemap='));
+  const matte = filters(hdr, { mattes: { i1: clip } });
+  assert.ok(matte.includes('tonemap=') && !matte.split(';').find(f => f.endsWith('[bgm0]')).includes('tonemap='));
+  const rife = filters({ ...hdr, items: [hdr.items[0]] }, { rife: { i1: clip } });
+  assert.ok(rife.includes('[0:v]zscale=min=170m:m=709,') && !rife.includes('tonemap='));
+}
 run(ffmpeg, buildArgs(p, { out, textList }).args);
 const pr = JSON.parse(run(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', out]));
 const v = pr.streams.find(s => s.codec_type === 'video');
 assert.strictEqual(v.width, 1080); assert.strictEqual(v.height, 1920); assert.strictEqual(v.pix_fmt, 'yuv420p');
+assert.deepStrictEqual([v.color_primaries, v.color_transfer, v.color_space, v.color_range], ['bt709', 'bt709', 'bt709', 'tv']);
 assert.ok(pr.streams.some(s => s.codec_type === 'audio'));
 assert.ok(Math.abs(+pr.format.duration - 3.5) < 0.1, 'duration ' + pr.format.duration);
 
@@ -84,7 +99,9 @@ assert.ok(fs.statSync(wav).size > 16000 * 2 * 3);
 p.items[2].rotate = 30;
 const mov = path.join(dir, 'out.mov');
 run(ffmpeg, buildArgs(p, { out: mov, textList, codec: 'prores', quality: 'high' }).args);
-assert.strictEqual(JSON.parse(run(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_streams', mov])).streams.find(s => s.codec_type === 'video').codec_name, 'prores');
+const prores = JSON.parse(run(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_streams', mov])).streams.find(s => s.codec_type === 'video');
+assert.strictEqual(prores.codec_name, 'prores');
+assert.deepStrictEqual([prores.color_primaries, prores.color_transfer, prores.color_space, prores.color_range], ['bt709', 'bt709', 'bt709', 'tv']);
 const mp3 = path.join(dir, 'out.mp3');
 run(ffmpeg, buildArgs(p, { out: mp3, audioExport: 'mp3' }).args);
 const a3 = JSON.parse(run(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', mp3]));

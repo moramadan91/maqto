@@ -135,8 +135,19 @@ fn probe_one(p: &str) -> R<Value> {
         .and_then(|(a, b)| Some(a.parse::<f64>().ok()? / b.parse::<f64>().ok().filter(|b| *b > 0.0)?)).unwrap_or(0.0);
     let kind = if is_img { "image" } else if v.is_some() { "video" } else { "audio" };
     let name = Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    Ok(json!({ "path": p, "name": name, "kind": kind, "dur": if is_img { Value::Null } else { json!(dur) },
-        "w": w, "h": h, "fps": fps, "hasAudio": a.is_some() && !is_img }))
+    let mut media = json!({ "path": p, "name": name, "kind": kind, "dur": if is_img { Value::Null } else { json!(dur) },
+        "w": w, "h": h, "fps": fps, "hasAudio": a.is_some() && !is_img });
+    if let Some(v) = v.filter(|_| !is_img) {
+        let hdr = v["color_transfer"] == "arib-std-b67" || v["color_transfer"] == "smpte2084" || v["color_primaries"] == "bt2020";
+        media["hdr"] = json!(hdr);
+        if hdr {
+            for (key, stream_key) in [("trc", "color_transfer"), ("primaries", "color_primaries"), ("matrix", "color_space")] {
+                let value = v[stream_key].as_str().filter(|s| !matches!(*s, "unknown" | "unspecified"));
+                media[key] = json!(value);
+            }
+        }
+    }
+    Ok(media)
 }
 
 #[tauri::command]
@@ -166,19 +177,30 @@ fn save_project(path: String, json: String) -> R<()> {
 }
 
 #[tauri::command]
-fn open_project(srv: State<Arc<MediaServer>>, path: String) -> R<Value> {
+async fn open_project(srv: State<'_, Arc<MediaServer>>, path: String) -> R<Value> {
     if !(path.ends_with(".maqto") || path.ends_with(".kadr")) { return Err("project files end with .maqto".into()); }
-    let mut p: Value = serde_json::from_str(&std::fs::read_to_string(&path).map_err(err)?).map_err(err)?;
-    let mut missing = vec![];
-    if let Some(m) = p["media"].as_object_mut() {
-        for v in m.values() {
-            if let Some(f) = v["path"].as_str() {
+    let srv = srv.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut p: Value = serde_json::from_str(&std::fs::read_to_string(&path).map_err(err)?).map_err(err)?;
+        let mut missing = vec![];
+        if let Some(m) = p["media"].as_object_mut() {
+            for v in m.values_mut() {
+                let Some(f) = v["path"].as_str() else { continue };
                 if f.is_empty() { continue; } // fill layers have no file
-                if Path::new(f).exists() { srv.allow(f); } else { missing.push(v["name"].clone()); }
+                if Path::new(f).exists() {
+                    srv.allow(f);
+                    if v["kind"] == "video" && !v["hdr"].is_boolean() {
+                        if let Ok(probed) = probe_one(f) {
+                            for key in ["hdr", "trc", "primaries", "matrix"] {
+                                if let Some(value) = probed.get(key) { v[key] = value.clone(); }
+                            }
+                        }
+                    }
+                } else { missing.push(v["name"].clone()); }
             }
         }
-    }
-    Ok(json!({ "project": p.take(), "missing": missing }))
+        Ok(json!({ "project": p, "missing": missing }))
+    }).await.map_err(err)?
 }
 
 #[tauri::command]
@@ -508,12 +530,14 @@ async fn audio_fx(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: String
 /// Stabilize (vidstab, two passes) the whole source once per file and strength into a cached copy
 /// that then stands in for the original in both the preview and the export.
 #[tauri::command]
-async fn video_stab(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: String, level: u32) -> R<String> {
+async fn video_stab(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: String, level: u32, tone_map: Option<String>) -> R<String> {
     use std::hash::{Hash, Hasher};
     let (shk, smooth) = match level { 1 => (4, 10), 3 => (10, 45), _ => (7, 25) };
     let meta = std::fs::metadata(&path).map_err(err)?;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     (&path, meta.len(), meta.modified().ok(), shk, smooth).hash(&mut h);
+    let tone_map = tone_map.filter(|s| !s.is_empty());
+    if let Some(filter) = &tone_map { filter.hash(&mut h); }
     let key = format!("{:016x}", h.finish());
     let dir = app.path().app_data_dir().map_err(err)?.join("stab");
     std::fs::create_dir_all(&dir).map_err(err)?;
@@ -528,11 +552,15 @@ async fn video_stab(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: Stri
                 if r.status.success() { Ok(()) } else { Err(tail(&String::from_utf8_lossy(&r.stderr))) }
             };
             let s = |x: &str| x.to_string();
-            run(vec![s("-hide_banner"), s("-y"), s("-i"), path.clone(), s("-vf"), format!("vidstabdetect=shakiness={shk}:accuracy=15:result={trf}"), s("-f"), s("null"), s("-")])?;
+            let prefix = tone_map.as_ref().map(|f| format!("{f},")).unwrap_or_default();
+            run(vec![s("-hide_banner"), s("-y"), s("-i"), path.clone(), s("-vf"), format!("{prefix}vidstabdetect=shakiness={shk}:accuracy=15:result={trf}"), s("-f"), s("null"), s("-")])?;
             let tmp = o.with_extension("part.mp4");
-            run(vec![s("-hide_banner"), s("-y"), s("-i"), path.clone(), s("-vf"), format!("vidstabtransform=input={trf}:smoothing={smooth}:optzoom=1:interpol=bicubic,unsharp=5:5:0.6:3:3:0.3"),
+            let mut args = vec![s("-hide_banner"), s("-y"), s("-i"), path.clone(), s("-vf"), format!("{prefix}vidstabtransform=input={trf}:smoothing={smooth}:optzoom=1:interpol=bicubic,unsharp=5:5:0.6:3:3:0.3"),
                 s("-c:v"), s("libx264"), s("-preset"), s("medium"), s("-crf"), s("16"), s("-pix_fmt"), s("yuv420p"), s("-c:a"), s("aac"), s("-b:a"), s("256k"),
-                s("-movflags"), s("+faststart"), tmp.to_string_lossy().into_owned()])?;
+                s("-movflags"), s("+faststart")];
+            if tone_map.is_some() { args.extend(["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"].map(s)); }
+            args.push(tmp.to_string_lossy().into_owned());
+            run(args)?;
             let _ = std::fs::remove_file(d.join(&trf));
             std::fs::rename(&tmp, &o).map_err(err)
         }).await.map_err(err)??;
