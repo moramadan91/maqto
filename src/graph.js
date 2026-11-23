@@ -16,7 +16,8 @@
 
   function audible(p, it) {
     const m = it.media && p.media[it.media];
-    return !!m && !it.muted && num(it.volume, 1) > 0 && (m.kind === 'audio' || (m.kind === 'video' && m.hasAudio));
+    return !!m && !it.muted && (it.kf?.volume?.length || num(it.volume, 1) > 0) &&
+      (m.kind === 'audio' || (m.kind === 'video' && m.hasAudio));
   }
 
   const ENCODERS = {
@@ -109,7 +110,7 @@
           return;
         }
         const k = input(it0), m = p.media[it0.media], it = S.bakeVa(it0, W, H), g = S.grade(it), C = S.srcCrop(it, m);
-        const kf = S.hasKf(it) ? it.kf : null, LP = it._loop ? S.VA_LOOP[it._loop] : null, sm = !it._lin;
+        const kf = S.hasKf(it, S.VIS_KF) ? it.kf : null, LP = it._loop ? S.VA_LOOP[it._loop] : null, sm = !it._lin;
         const LK = { scale: 's', rotate: 'r', x: 'dx', y: 'dy' };
         const has = f => !!(kf && kf[f] && kf[f].length) || !!(LP && LP.e[LK[f]]);
         const dyn = kf || LP;
@@ -250,7 +251,9 @@
         fc.push(`${seg.join('')}concat=n=${K}:v=0:a=1[cv${j}]`);
         src = `cv${j}`; ch.length = 0;
       } else ch.push(...tempo(it, num(it.speed, 1)));
-      if (v !== 1) ch.push(`volume=${v}`);
+      const keys = it.kf?.volume;
+      if (keys?.length) ch.push(`volume='${S.pwExpr(keys, 0, true)}':eval=frame`);
+      else if (v !== 1) ch.push(`volume=${v}`);
       if (fi > 0) ch.push(`afade=t=in:st=0:d=${f3(fi)}`);
       if (fo > 0) ch.push(`afade=t=out:st=${f3(it.dur - fo)}:d=${f3(fo)}`);
       ch.push(`adelay=${Math.round(it.start * 1000)}:all=1`);

@@ -98,6 +98,14 @@ const kfi = { kf: { x: [[0, -300], [1.9, 300]], opacity: [[0, 1], [1.9, 0.3]] } 
 assert.strictEqual(S.kfVal(kfi.kf.x, 0.95), 0);
 assert.strictEqual(S.animAt(kfi, 3).x, 300);
 assert.ok(/gte\(t,1\.0000\)/.test(S.pwExpr(kfi.kf.x, 1, true)));
+const volumeKeys = [[0, 1], [2, 0.4]];
+assert.strictEqual(S.kfVal(volumeKeys, 0.5), 0.90625);
+const sound = { ...p.items[3], volume: 0, kf: { volume: volumeKeys } };
+const keyedWav = buildArgs({ ...p, items: [sound] }, { out: path.join(dir, 'keyed.wav'), audioOnly: true }).args;
+assert.ok(keyedWav[keyedWav.indexOf('-filter_complex') + 1].includes(`volume='${S.pwExpr(volumeKeys, 0, true)}':eval=frame`));
+run(ffmpeg, keyedWav);
+S.shiftTimes(sound, 0.5);
+assert.strictEqual(S.volumeAt(sound, 0), 0.90625);
 delete p.items[2].trk;
 Object.assign(p.items[2], { rotate: 0, x: 0, y: -400, kf: { x: [[0, -300], [1.9, 300]], scale: [[0, 0.2], [1.9, 0.35]], rotate: [[0, 0], [1.9, 45]], opacity: [[0, 1], [1.9, 0.5]] } });
 const kmov = path.join(dir, 'kf.mp4');

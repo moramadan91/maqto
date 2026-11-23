@@ -836,8 +836,8 @@
     return p && p.length ? pwExpr(p.map(q => [q[0], q[axis + 1] * size]), it.start, false) : '0';
   }
 
-  // Keyframes: it.kf = { x|y|scale|rotate|opacity: [[lt, v], ...] } sorted by lt, smoothstep between keys.
-  const KF = ['x', 'y', 'scale', 'rotate', 'opacity'];
+  // Keyframes: it.kf = { x|y|scale|rotate|opacity|volume: [[lt, v], ...] } sorted by lt, smoothstep between keys.
+  const VIS_KF = ['x', 'y', 'scale', 'rotate', 'opacity'], KF = [...VIS_KF, 'volume'];
   function kfVal(p, lt) {
     if (lt <= p[0][0]) return p[0][1];
     for (let i = 1; i < p.length; i++) if (lt <= p[i][0]) {
@@ -846,7 +846,8 @@
     }
     return p[p.length - 1][1];
   }
-  const hasKf = it => !!(it.kf && KF.some(k => it.kf[k] && it.kf[k].length));
+  const volumeAt = (it, lt) => it.kf?.volume?.length ? kfVal(it.kf.volume, lt) : num(it.volume, 1);
+  const hasKf = (it, props = KF) => !!(it.kf && props.some(k => it.kf[k] && it.kf[k].length));
   function animAt(it, lt) { // item with its keyframed props resolved at local time lt
     if (!hasKf(it)) return it;
     const o = { ...it };
@@ -975,11 +976,11 @@
     const span = (a, b, st) => { for (let x = a; x < b; x += st) ts.add(+x.toFixed(4)); ts.add(+b.toFixed(4)); };
     if (vaIn(it)) span(0, inD, 1 / 30);
     if (vaOut(it)) span(dur - outD, dur, 1 / 30);
-    if (hasKf(it)) for (const k of KF) if (it.kf[k]) { const p = it.kf[k]; for (let i = 0; i < p.length; i++) { ts.add(p[i][0]); if (i) span(p[i - 1][0], p[i][0], 0.1); } }
+    if (hasKf(it, VIS_KF)) for (const k of VIS_KF) if (it.kf[k]) { const p = it.kf[k]; for (let i = 0; i < p.length; i++) { ts.add(p[i][0]); if (i) span(p[i - 1][0], p[i][0], 0.1); } }
     const times = [...ts].filter(x => x >= 0 && x <= dur).sort((a, b) => a - b);
     const rows = times.map(x => withVa(animAt(it, x), x, W, H, false));
-    o.kf = {};
-    for (const k of KF) {
+    o.kf = it.kf?.volume?.length ? { volume: it.kf.volume } : {};
+    for (const k of VIS_KF) {
       const v = rows.map(r => num(r[k], k === 'scale' || k === 'opacity' ? 1 : 0));
       if (v.some(x => Math.abs(x - v[0]) > 1e-6)) o.kf[k] = times.map((x, i) => [x, +v[i].toFixed(5)]);
     }
@@ -1759,7 +1760,7 @@
     return [];
   }
 
-  const api = { FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, fxKey, projectDur, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, KF, kfVal, hasKf, animAt, shiftTimes };
+  const api = { FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, fxKey, projectDur, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, hasKf, animAt, shiftTimes };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MaqtoShared = api;
 })(this);

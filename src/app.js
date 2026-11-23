@@ -441,6 +441,21 @@ function dnEl(it) {
 function gcEls() {
   for (const [id, el] of els) if (!item(id.split('|')[0])) { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); els.delete(id); }
 }
+function playMedia(el) {
+  if (el._play || performance.now() < el._retryPlay) return;
+  const p = el._play = el.play();
+  const done = e => {
+    if (el._play !== p) return;
+    el._play = null;
+    if (e && e.name !== 'AbortError') el._retryPlay = performance.now() + 250;
+  };
+  p.then(() => done(), done);
+}
+function pauseMedia(el) {
+  el._play = null;
+  el._retryPlay = 0;
+  if (!el.paused) el.pause();
+}
 function syncMedia() {
   // One controller per element: the active piece, else the next one coming up.
   const ctl = new Map();
@@ -450,17 +465,18 @@ function syncMedia() {
     const k = chainKey(it), c = ctl.get(k);
     if (!c || (!active(c, t) && (active(it, t) || (it.start > t && (c.start <= t || it.start < c.start))))) ctl.set(k, it);
   }
+  try { waSync(); } catch (e) { console.error(e); } // sound must never stop the playback loop
   const driven = new Set();
+  const drive = (el, it, silent) => { driven.add(el); driveEl(el, it, silent); };
   for (const it of ctl.values()) {
     if (S.fxKey(it) && !dnOk.has(fxId(it))) ensureDn(it).catch(() => {});
     const dn = dnLive(it);
-    driveEl(elFor(it), it, dn);
-    if (matteFor(it)) driveEl(matteEl(it), it, true);
-    if (dn) { const d = dnEl(it); driven.add(d); driveEl(d, it, false); }
+    drive(elFor(it), it, dn);
+    if (matteFor(it)) drive(matteEl(it), it, true);
+    if (dn) drive(dnEl(it), it, false);
   }
-  for (const [k, e] of els) if (k.endsWith('|dn') && !driven.has(e) && !e.paused) e.pause();
+  for (const el of els.values()) if (!driven.has(el)) pauseMedia(el);
   driveTails();
-  try { waSync(); } catch (e) { console.error(e); } // sound must never stop the playback loop
 }
 // Clip sound through Web Audio: each source's sound track is pulled out once (audio_fx 'x'), decoded,
 // and started sample-exact at its cut. A <video> that starts its own sound blocks WebKit's page for
@@ -469,9 +485,15 @@ const AC = window.AudioContext ? new AudioContext({ latencyHint: 'interactive' }
 const waLat = () => (AC.outputLatency || 0) + (AC.baseLatency || 0); // seconds between start() and the speaker
 // Decoded sound per source path, kept outside the project: undo snapshots and saves copy P as JSON.
 const waBuf = new Map(), waReady = new Map(), waLive = new Map();
-const waOk = it => !!AC && !S.fxKey(it) && !S.hasCurve(it) && (num(it.speed, 1) === 1 || !!it.pitch);
+const hasSound = m => !!m && (m.kind === 'audio' || (m.kind === 'video' && m.hasAudio));
+const waOk = it => hasSound(media(it)) && !S.fxKey(it) && !S.hasCurve(it) && (num(it.speed, 1) === 1 || !!it.pitch);
 const waOf = m => (m && waReady.get(m.path)) || null;
-const waUse = it => waOk(it) && !!waOf(media(it)) && AC.state === 'running'; // a suspended context would be silent: players keep their sound
+let waTime = 0, waAt = 0;
+const waRunning = (now = lastTick) => AC?.state === 'running' && now - waAt < 250;
+AC?.addEventListener('statechange', () => {
+  inv('dev_log', { msg: 'audio context ' + AC.state }).catch(() => {});
+  if (AC.state !== 'running') waStopAll();
+});
 function waLoad(mid) {
   const m = P.media[mid];
   if (!m || waBuf.has(m.path) || num(m.dur, 0) > 900) return; // shortcut: very long sources keep element audio (memory)
@@ -481,33 +503,41 @@ function waLoad(mid) {
     .then(B => { waReady.set(path, B); }, e => inv('dev_log', { msg: 'wa failed ' + e })));
 }
 function waStop(id) { const n = waLive.get(id); if (!n) return; try { n.src.stop(); } catch {} n.src.disconnect(); n.g.disconnect(); waLive.delete(id); }
+function waStopAll() { for (const id of waLive.keys()) waStop(id); }
 function waSync() {
-  if (!AC) return;
+  if (!waRunning() || !playing || clockHeld()) return waStopAll();
   const want = new Set();
-  if (playing && !clock.wait) for (const it of P.items) {
-    const m = media(it);
-    if (!m || m.kind === 'image' || m.fill || m.adj || it.muted || !waOk(it)) continue;
+  for (const it of P.items) {
+    if (it.muted || !waOk(it)) continue;
     waLoad(it.media);
     // play ahead by the output delay, so each word reaches the speaker on its frame (and its caption)
-    const B = waOf(m), lt = t - it.start + waLat();
-    if (!B || lt < -0.3 || lt >= it.dur) continue; // starts up to 0.3 s ahead, scheduled on the audio clock
-    want.add(it.id);
-    const sp = num(it.speed, 1);
+    const B = waOf(media(it)), local = t - it.start, lt = local + waLat();
+    if (!B || lt < -0.3 || local >= it.dur) continue; // starts up to 0.3 s ahead, scheduled on the audio clock
+    const sp = num(it.speed, 1), in0 = num(it.in, 0), now = AC.currentTime;
+    const from = Math.max(0, lt), off = in0 + from * sp;
     let n = waLive.get(it.id);
-    // off by more than 0.12 s (seek, trim, held clock) or new speed: start again from here
-    if (n && (n.sp !== sp || (lt > 0.2 && Math.abs(AC.currentTime - n.t0 - lt) > 0.12))) { waStop(it.id); n = null; }
+    // Let the audio clock advance before correcting drift again.
+    if (n && (n.sp !== sp || n.in0 !== in0 || n.dur !== it.dur || n.src.buffer !== B ||
+        (now - n.at > 0.25 && lt > 0.2 && Math.abs(now - n.t0 - lt) > 0.12))) { waStop(it.id); n = null; }
     if (!n) {
-      if (AC.state === 'suspended') AC.resume();
-      const src = AC.createBufferSource(), g = AC.createGain(), from = Math.max(0, lt);
-      src.buffer = B; src.playbackRate.value = sp; src.connect(g).connect(AC.destination);
-      const when = AC.currentTime + Math.max(0, -lt), off = num(it.in, 0) + from * sp;
-      if (off >= B.duration) continue;
-      src.start(when, off);
-      waLive.set(it.id, n = { src, g, sp, t0: when - from });
+      if (lt >= it.dur || off >= B.duration) continue;
+      const src = AC.createBufferSource(), g = AC.createGain(), when = now + Math.max(0, -lt);
+      const len = (it.dur - from) * sp;
+      src.buffer = B; src.playbackRate.value = sp;
+      g.gain.value = 0;
+      src.start(when, off, len);
+      src.connect(g).connect(AC.destination);
+      waLive.set(it.id, n = { src, g, sp, in0, dur: it.dur, at: now, t0: when - from });
+      if (off + len > B.duration) src.onended = () => { if (waLive.get(it.id)?.src === src) waStop(it.id); };
+      // Mute the fallback before opening the gain, even if another player stalls this frame.
+      const el = local >= 0 && els.get(chainKey(it));
+      if (el && !el.muted) el.muted = true;
     }
-    n.g.gain.value = clamp(num(it.volume, 1) * S.audioFade(it, Math.max(0, lt)), 0, 1);
+    want.add(it.id);
+    const x = clamp(lt, 0, it.dur);
+    n.g.gain.value = clamp(S.volumeAt(it, x) * S.audioFade(it, x), 0, 2);
   }
-  for (const id of [...waLive.keys()]) if (!want.has(id)) waStop(id);
+  for (const id of waLive.keys()) if (!want.has(id)) waStop(id);
 }
 // Under a shader transition the outgoing clip keeps playing from its source past its out-point (both
 // clips move, as in CapCut), on an element of its own; with no source left it holds its last frame.
@@ -536,13 +566,13 @@ function driveEdge(key, it, s0, s1, src, live) {
   const el = tailEl(key, it), sp = rateOf(it), want = src(clamp(t, s0, s1));
   if (playing && t >= s0 && t < s1) {
     if (Math.abs(el.playbackRate - sp) > 1e-3) el.playbackRate = sp;
-    if (el.paused) { if (Math.abs(el.currentTime - want) > 0.1) el.currentTime = want; el.play().catch(() => {}); }
+    if (el.paused) { if (Math.abs(el.currentTime - want) > 0.1) el.currentTime = want; playMedia(el); }
     else if (Math.abs(el.currentTime - want) > 0.25 * Math.max(1, sp)) el.currentTime = want;
   } else if (playing && t < s0 && t > s0 - 0.8) { // warm the decoder up just before, crawling from the start
     if (el.playbackRate !== 0.0625) el.playbackRate = 0.0625;
-    if (el.paused) { if (!el.seeking && Math.abs(el.currentTime - want) > 0.05) el.currentTime = want; el.play().catch(() => {}); }
+    if (el.paused) { if (!el.seeking && Math.abs(el.currentTime - want) > 0.05) el.currentTime = want; playMedia(el); }
   } else {
-    if (!el.paused) el.pause();
+    pauseMedia(el);
     if (!el.seeking && Math.abs(el.currentTime - want) > 0.5 / P.fps) el.currentTime = want;
   }
 }
@@ -577,35 +607,38 @@ function driveEl(el, it, silent) {
     const warm = !on && playing && it.start > t && it.start - t < 0.8;
     // Fast parts (over 3x) can't be decoded in real time: hold the element paused and jump to the
     // wanted frame whenever the last jump has landed (frame skipping keeps the picture in sync).
-    const fast = on && playing && !clock.wait && sp > 3; // held at a cut: the clip on screen waits too
+    const held = clockHeld(), fast = on && playing && !held && sp > 3;
     // Speed curves change the rate every frame; WebKit stutters on each playbackRate write, so step it.
-    const rate = warm ? 0.0625 : el._px ? 1 : S.hasCurve(it) ? +Math.pow(1.15, Math.round(Math.log(sp) / Math.log(1.15))).toFixed(3) : sp, mute = silent || !!it.muted || fast || waUse(it) || (!on && !warm); // warming: unmuted at volume 0, so the sound path is already open at the cut
+    const wa = waLive.has(it.id);
+    const rate = warm ? 0.0625 : el._px ? 1 : S.hasCurve(it) ? +Math.pow(1.15, Math.round(Math.log(sp) / Math.log(1.15))).toFixed(3) : sp, mute = silent || !!it.muted || fast || wa || (!on && !warm); // warming: unmuted at volume 0, so the sound path is already open at the cut
     if (Math.abs(el.playbackRate - rate) > 1e-3) el.playbackRate = rate;
     if (el.muted !== mute) el.muted = mute;
-    const vol = on ? clamp(num(it.volume, 1) * S.audioFade(it, t - it.start), 0, 1) : 0;
+    const vol = on ? clamp(S.volumeAt(it, lt) * S.audioFade(it, lt), 0, 1) : 0;
     if (Math.abs(el.volume - vol) > 0.005) el.volume = vol;
     el._hold = fast;
-    if (fast) {
-      if (!el.paused) el.pause();
+    if (wa && el.tagName === 'AUDIO') {
+      pauseMedia(el);
+    } else if (fast) {
+      pauseMedia(el);
       // a jump that hasn't landed in 250 ms is overtaken by a fresh one
       const now = performance.now();
       if ((!el.seeking || now - (el._seekAt || 0) > 250) && Math.abs(el.currentTime - want) > 1 / P.fps) {
         el._seekAt = now;
         if (el.fastSeek && sp > 6) el.fastSeek(want); else el.currentTime = want;
       }
-    } else if (on && playing && (!clock.wait || clock.seekHold)) {
+    } else if (on && playing && (!held || clock.seekHold)) {
       // the file often ends a few ms before its clip does: hold the last frame, no restart (play() costs ~80 ms in WebKit)
-      const atEnd = el.ended || (isFinite(el.duration) && want >= el.duration - 0.06);
+      const atEnd = isFinite(el.duration) ? want >= el.duration - 0.06 : el.ended;
       if (el._first && el._live === undefined) { // the cut: wait for its first fresh frame (at most 400 ms)
         el._live = false; el._liveAt = performance.now();
         if (el.requestVideoFrameCallback) el.requestVideoFrameCallback(() => { el._live = true; needsDraw = true; }); else el._live = true;
       }
       if (atEnd) {}
-      else if (el.paused) { if (Math.abs(el.currentTime - want) > 0.15) el.currentTime = want; el.play().catch(() => {}); }
+      else if (el.paused) { if (Math.abs(el.currentTime - want) > 0.15) el.currentTime = want; playMedia(el); }
       else if (Math.abs(el.currentTime - want) > 0.3 * Math.max(1, sp)) el.currentTime = want; // faster clips drift more between frames
     } else if (warm) {
       const in0 = el._px ? 0 : num(it.in, 0);
-      if (el.paused) { el._first = null; el._live = undefined; if (!el.seeking && Math.abs(el.currentTime - in0) > 0.05) el.currentTime = in0; el.play().catch(() => {}); }
+      if (el.paused) { el._first = null; el._live = undefined; if (!el.seeking && Math.abs(el.currentTime - in0) > 0.05) el.currentTime = in0; playMedia(el); }
       // Keep its first frame before the cut: WebKit blocks ~100-200 ms on the first draws of a video that
       // has just started; the preview shows this copy until the player hands over a fresh frame.
       else if (!el._first && el.readyState >= 2 && el.tagName === 'VIDEO' && el.videoWidth) {
@@ -614,7 +647,7 @@ function driveEl(el, it, silent) {
         c.getContext('2d').drawImage(el, 0, 0);
       }
     } else {
-      if (!el.paused) el.pause();
+      pauseMedia(el);
       // while dragging: nearest keyframe (fast, smooth); once it stops the exact frame follows
       if (on && !el.seeking && Math.abs(el.currentTime - want) > 0.5 / P.fps) { if (scrubbing && el.fastSeek && Math.abs(el.currentTime - want) > 1) el.fastSeek(want); else el.currentTime = want; }
       // Preroll: park the next clip on its first frame so the cut starts without a seek.
@@ -1552,17 +1585,18 @@ function loop(now) {
   requestAnimationFrame(loop); // first: an error in this frame must not freeze playback
   chainKeys.clear();
   if (playing) {
+    if (AC && AC.currentTime !== waTime) { waTime = AC.currentTime; waAt = now; }
     // The playing clip is the clock (no seeks fighting the decoder); wall time only if it stalls > 0.8 s.
     // Clock: the clip sound being heard (captions then follow the voice), else the playing video.
     // One far from t is stale (a seek just moved t), not a clock.
-    const tc0 = (clock.wait ? null : waClock()) ?? clockTime(), tc = tc0 !== null && Math.abs(tc0 - t) < 0.3 ? tc0 : null;
+    const tc0 = (clockHeld(now) ? null : waClock(now)) ?? clockTime(), tc = tc0 !== null && Math.abs(tc0 - t) < 0.3 ? tc0 : null;
     if (tc !== null && tc !== clock.tc) { clock.tc = tc; clock.at = now; }
     const tn = tc !== null && now - clock.at < 800 ? Math.max(t, tc) : t + (now - lastTick) / 1000;
     // At a cut, hold the clock (and the last picture) until the next clip's decoder runs, at most 1 s:
     // running on would skip its first frames and words, then seek again to catch up.
     const cw = cutWait(t, tn);
     if (cw) { if (!clock.wait) clock.wait = now; clock.seekHold = cw === 2; } else { if (clock.wait) inv('dev_log', { msg: `cut wait ${Math.round(now - clock.wait)}ms at t=${t.toFixed(2)}` }); clock.wait = 0; }
-    if (!clock.wait || now - clock.wait > 1000) t = tn;
+    if (!clockHeld(now)) t = tn;
     if (t >= total()) { t = total(); setPlaying(false); }
     needsDraw = true;
     follow();
@@ -1583,6 +1617,7 @@ function loop(now) {
   if (now - (loop.tw || 0) > 300) { loop.tw = now; warmTrans(); }
 }
 const clock = { tc: null, at: 0 };
+const clockHeld = (now = lastTick) => !!clock.wait && now - clock.wait < 1000;
 // A clip on screen whose player is seeking, or one starting in (t0, t1] / under 1 s ago still buffering.
 // Running on during a seek makes the player chase the clock (seek, land late, seek again): frozen picture.
 // 1: a cut (players held paused), 2: a playing player seeking (it keeps playing, only the clock waits).
@@ -1591,15 +1626,15 @@ function cutWait(t0, t1) {
   for (const it of P.items) {
     if (it.start > t1 || it.start + it.dur <= t1 || it.hidden) continue;
     const fresh = it.start > t0 - 1, m = media(it), el = m && m.kind !== 'image' && els.get(chainKey(it));
-    if (!el) continue;
+    if (!el || (m.kind === 'audio' && waLive.has(it.id) && waRunning())) continue;
     if (fresh && (el.seeking || el.readyState < 3)) return 1;
     if (!fresh && el.seeking && !el.paused && rateOf(it) <= 3) r = 2; // fast parts skip frames by seeking on purpose
   }
   return r;
 }
 // Timeline time of the clip sound now reaching the speaker.
-function waClock() {
-  if (!AC) return null;
+function waClock(now) {
+  if (!waRunning(now)) return null;
   for (const it of P.items) { const n = waLive.get(it.id); if (n && active(it, t)) return it.start + AC.currentTime - n.t0 - waLat(); }
   return null;
 }
@@ -1616,15 +1651,23 @@ function clockTime() {
 }
 function setPlaying(v) {
   clock.wait = 0;
+  clock.tc = null;
   if (v) { animPreview = null; stopBinPrev(); }
   playing = v && total() > 0;
-  if (playing && t >= total() - 0.01) t = 0;
+  if (playing) {
+    if (t >= total() - 0.01) seek(0);
+    waAt = performance.now();
+    if (AC && (AC.state === 'suspended' || AC.state === 'interrupted')) AC.resume().catch(() => {});
+  } else {
+    waStopAll();
+    for (const el of els.values()) pauseMedia(el);
+    for (const el of tailEls.values()) pauseMedia(el);
+  }
   const b = $('#bPlay');
   b.dataset.i = playing ? 'pause' : 'play';
   b.innerHTML = icon(b.dataset.i);
-  if (!playing) for (const el of els.values()) el.pause();
 }
-function seek(v) { animPreview = null; t = clamp(v, 0, Math.max(total(), 0)); needsDraw = true; for (const id of [...waLive.keys()]) waStop(id); } // stops at the end of the last clip
+function seek(v) { animPreview = null; t = clamp(v, 0, Math.max(total(), 0)); needsDraw = true; clock.wait = 0; clock.tc = null; waStopAll(); }
 function updatePlayhead() {
   const end = total();
   if (t > end) t = end; // a clip removed or shortened under the playhead
@@ -1632,6 +1675,13 @@ function updatePlayhead() {
   $('#endln').style.left = end * pps + 'px'; // the end of the last clip: the playhead stops here
   $('#endln').classList.toggle('on', !!end && scrubbing && (end - t) * pps < 60); // only while dragging the playhead near the end
   $('#tc').textContent = fmt(t);
+  for (const grip of $('#rows').querySelectorAll('[data-vkf]')) {
+    const it = item(grip.dataset.vkf);
+    if (!it) continue;
+    const vol = clamp(S.volumeAt(it, kfLt(it)), 0, 2);
+    grip.style.top = volGripTop(vol);
+    grip.title = Math.round(vol * 100) + '%';
+  }
 }
 function follow() {
   const sc = $('#scroll'), x = t * pps;
@@ -1712,32 +1762,37 @@ function peaksOf(it) {
 }
 // Clip time 0..dur on x (seconds, stretched by the lane zoom), loudness 0..1 on y; volume and fades shape both
 // the wave and the volume line. The line's grip (.vl) drags the volume up and down.
+const volGripTop = v => `calc(${(1 - v / 2) * 100}% - 4px)`;
 function waveHtml(it) {
-  const pk = peaksOf(it), vol = num(it.volume, 1), fi = num(it.fadeIn, 0), fo = num(it.fadeOut, 0), dur = it.dur, sp = num(it.speed, 1);
-  const env = x => Math.min(1, fi > 0 ? x / fi : 1, fo > 0 ? (dur - x) / fo : 1);
-  const vy = 1 - vol / 2; // volume 0..200% -> bottom..top; 100% sits halfway
+  const pk = media(it).kind === 'audio' && peaksOf(it), keys = it.kf?.volume, dur = it.dur, sp = num(it.speed, 1);
+  const fi = Math.max(num(it.fadeIn, 0), num(it.afIn, 0)), fo = Math.max(num(it.fadeOut, 0), num(it.afOut, 0));
+  const vol = x => clamp(S.volumeAt(it, x), 0, 2), env = x => S.audioFade(it, x);
   let wave = '';
   if (pk) {
     const n = Math.min(1500, Math.max(2, Math.round(dur * PK))), top = [], bot = [];
     for (let k = 0; k <= n; k++) {
-      const x = dur * k / n, a = (pk[Math.floor((num(it.in, 0) + x * sp) * PK)] || 0) * Math.min(1, 0.35 + 0.65 * vol) * env(x) * 0.46; // quiet clips stay readable
+      const x = dur * k / n, a = (pk[Math.floor((num(it.in, 0) + x * sp) * PK)] || 0) * Math.min(1, 0.35 + 0.65 * vol(x)) * env(x) * 0.46; // quiet clips stay readable
       top.push(`${x.toFixed(3)} ${(0.5 - a).toFixed(3)}`); bot.unshift(`${x.toFixed(3)} ${(0.5 + a).toFixed(3)}`);
     }
     wave = `<path d="M${top.join('L')}L${bot.join('L')}Z" class="wv"/>`;
   }
-  const line = `<polyline class="vln" points="0 1 ${fi} ${vy} ${dur - fo} ${vy} ${dur} 1"/>`;
-  return `<svg class="wf" viewBox="0 0 ${dur} 1" preserveAspectRatio="none">${wave}${line}</svg><div class="vl" style="top:calc(${vy * 100}% - 4px)" title="${Math.round(vol * 100)}%"></div>`;
+  const knots = fi + fo > dur ? [dur * fi / (fi + fo)] : [fi, dur - fo];
+  const xs = [...new Set([0, dur, ...knots, ...(keys || []).map(q => q[0])])].filter(x => x >= 0 && x <= dur).sort((a, b) => a - b);
+  const line = `<polyline class="vln" points="${xs.map(x => `${x} ${1 - vol(x) * env(x) / 2}`).join(' ')}"/>`;
+  const v = vol(kfLt(it));
+  return `<svg class="wf" viewBox="0 0 ${dur} 1" preserveAspectRatio="none">${wave}${line}</svg><div class="vl"${keys?.length ? ` data-vkf="${it.id}"` : ''} style="top:${volGripTop(v)}" title="${Math.round(v * 100)}%"></div>`;
 }
 function volDrag(e, it) {
   e.stopPropagation();
-  const y0 = e.clientY, v0 = num(it.volume, 1);
+  const y0 = e.clientY, lt = kfLt(it), v0 = clamp(S.volumeAt(it, lt), 0, 2);
   let changed = false;
   const mv = ev => {
     if (!changed) { snapshot(); changed = true; }
-    it.volume = Math.round(clamp(v0 + (y0 - ev.clientY) / 100, 0, 2) * 100) / 100; // 1% a pixel: the lane is too short to map its height
+    const v = Math.round(clamp(v0 + (y0 - ev.clientY) / 100, 0, 2) * 100) / 100; // 1% a pixel: the lane is too short to map its height
+    if (it.kf?.volume?.length) kfSet(it, 'volume', lt, v); else it.volume = v;
     const live = $(`.clip[data-id="${it.id}"]`), h = live && live.querySelector('.wf');
     if (h) { const tmp = document.createElement('div'); tmp.innerHTML = waveHtml(it); h.replaceWith(tmp.firstChild); live.querySelector('.vl').replaceWith(tmp.firstChild); }
-    toast(tr('volume') + ' ' + Math.round(it.volume * 100) + '%');
+    toast(tr('volume') + ' ' + Math.round(v * 100) + '%');
     dirty = true; needsDraw = true;
   };
   window.addEventListener('pointermove', mv);
@@ -1750,7 +1805,7 @@ function renderTimeline() {
   $('#rows').style.width = $('#ruler').style.width = `calc(${width / pps}px * var(--pps))`;
   $('#heads').innerHTML = TS.map(x => `<div class="head${x.locked ? ' locked' : ''}" data-track="${x.id}" title="${tr('dragTrack')}"><i style="background:${TRACK_COLOR[x.kind]}"></i><em>${esc(trackLabel(x))}</em>${laneBtns(x)}</div>`).join('');
   $('#rows').innerHTML = TS.map(x => `<div class="row${x.id === 'v1' ? ' main' : ''}${x.locked ? ' locked' : ''}" data-track="${x.id}">${
-    P.items.filter(i => i.track === x.id).map(it => `<div class="clip k-${kindOf(it)}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))"><div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}${kindOf(it) === 'audio' ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div></div>`).join('') + trBoxes(x.id)
+    P.items.filter(i => i.track === x.id).map(it => `<div class="clip k-${kindOf(it)}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))"><div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}${kindOf(it) === 'audio' || (it.kf?.volume?.length && hasSound(media(it))) ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div></div>`).join('') + trBoxes(x.id)
   }</div>`).join('');
   laneGap();
   renderRuler(width);
@@ -2277,31 +2332,32 @@ function inspTabsFor(it) {
 }
 
 /* ---------- keyframes ---------- */
-const KF_DEF = it => ({ x: isText(it) ? 0.5 : 0, y: isText(it) ? 0.5 : 0, scale: 1, rotate: 0, opacity: 1 });
+const KF_DEF = it => ({ x: isText(it) ? 0.5 : 0, y: isText(it) ? 0.5 : 0, scale: 1, rotate: 0, opacity: 1, volume: 1 });
 const kfLt = it => clamp(t - it.start, 0, it.dur);
 const kfTol = () => 0.5 / P.fps;
-const kfTimes = it => it.kf ? [...new Set(S.KF.flatMap(k => (it.kf[k] || []).map(q => q[0])))].sort((a, b) => a - b) : [];
-const kfHere = it => kfTimes(it).some(x => Math.abs(x - kfLt(it)) < kfTol());
+const kfTimes = (it, props = S.KF) => it.kf ? [...new Set(props.flatMap(k => (it.kf[k] || []).map(q => q[0])))].sort((a, b) => a - b) : [];
+const kfProps = group => group === 'volume' ? ['volume'] : S.VIS_KF;
+const kfHere = (it, group) => kfTimes(it, kfProps(group)).some(x => Math.abs(x - kfLt(it)) < kfTol());
 function kfSet(it, k, lt, v) {
   it.kf ??= {};
   const p = (it.kf[k] ??= []), i = p.findIndex(q => Math.abs(q[0] - lt) < kfTol());
   if (i >= 0) p[i][1] = v; else { p.push([+lt.toFixed(4), v]); p.sort((a, b) => a[0] - b[0]); }
 }
-// Add a key for every animatable property at the playhead, or remove the key that is there.
-function kfToggle(it) {
+// Toggle the group's keys at the playhead.
+function kfToggle(it, group) {
   snapshot();
-  const lt = kfLt(it);
-  if (kfHere(it)) {
-    for (const k of S.KF) if (it.kf[k]) { it.kf[k] = it.kf[k].filter(q => Math.abs(q[0] - lt) >= kfTol()); if (!it.kf[k].length) delete it.kf[k]; }
+  const lt = kfLt(it), props = kfProps(group);
+  if (kfHere(it, group)) {
+    for (const k of props) if (it.kf[k]) { it.kf[k] = it.kf[k].filter(q => Math.abs(q[0] - lt) >= kfTol()); if (!it.kf[k].length) delete it.kf[k]; }
     if (!S.hasKf(it)) delete it.kf;
   } else {
     const a = S.animAt(it, lt), d = KF_DEF(it);
-    for (const k of S.KF) kfSet(it, k, lt, num(a[k], d[k]));
+    for (const k of props) kfSet(it, k, lt, num(a[k], d[k]));
   }
   refresh();
 }
-function kfJump(it, dir) {
-  const lt = kfLt(it), ts = kfTimes(it);
+function kfJump(it, dir, group) {
+  const lt = kfLt(it), ts = kfTimes(it, kfProps(group));
   const n = dir > 0 ? ts.find(x => x > lt + kfTol()) : [...ts].reverse().find(x => x < lt - kfTol());
   if (n != null) { seek(it.start + n); syncKfUI(true); }
 }
@@ -2312,7 +2368,7 @@ function syncKfUI(force) {
   if (!it || editing || (!force && t === kfSyncT)) return;
   kfSyncT = t;
   const b = document.querySelector('#inspBody [data-kf="tog"]');
-  if (b) b.classList.toggle('on', kfHere(it));
+  if (b) b.classList.toggle('on', kfHere(it, b.parentElement.dataset.kfGroup));
   if (!S.hasKf(it)) return;
   const a = S.animAt(it, kfLt(it)), d = KF_DEF(it);
   for (const k of S.KF) {
@@ -2322,8 +2378,8 @@ function syncKfUI(force) {
     setShow(k, v);
   }
 }
-const kfBar = it => `<div class="kfbar" dir="ltr"><button class="ib" data-kf="prev" title="${tr('kf_prev')}">${icon('chevron-left')}</button>` +
-  `<button class="kfb${kfHere(it) ? ' on' : ''}" data-kf="tog" title="${tr('kf_tip')}">${icon('diamond')}<span>${tr('keyframe')}</span></button>` +
+const kfBar = (it, group = 'visual') => `<div class="kfbar" data-kf-group="${group}" dir="ltr"><button class="ib" data-kf="prev" title="${tr('kf_prev')}">${icon('chevron-left')}</button>` +
+  `<button class="kfb${kfHere(it, group) ? ' on' : ''}" data-kf="tog" title="${tr(group === 'volume' ? 'kf_volume' : 'kf_tip')}">${icon('diamond')}<span>${tr('keyframe')}</span></button>` +
   `<button class="ib" data-kf="next" title="${tr('kf_next')}">${icon('chevron-right')}</button></div>`;
 const trkBtns = it => grp('tracking', `<button class="wide" id="trkGo">${icon('crosshair')} ${tr(it.trk ? 'trk_redo' : 'trk_go')}</button>` + (it.trk ? `<button class="wide" id="trkClear">${tr('trk_clear')}</button>` : ''));
 // Eyedropper: the next click on the preview takes that pixel's colour into the chosen colour box.
@@ -2499,7 +2555,8 @@ function inspector() {
       `<p class="hint">${tr('logoHint')}</p>`));
   } else if (inspTab === 'tAudio') {
     if (media(it).kind === 'audio') h.push(`<div class="f hint" style="direction:ltr;text-align:start">${esc(media(it).name)}</div>`, timing);
-    h.push(fld.range('volume', 'volume', 0, 2, 0.01, it, 1), `<div class="inl">${fld.check('muted', 'mute', it)}</div>`);
+    h.push(fld.range('volume', 'volume', 0, 2, 0.01, { volume: S.volumeAt(it, kfLt(it)) }, 1),
+      hasSound(media(it)) ? kfBar(it, 'volume') : '', `<div class="inl">${fld.check('muted', 'mute', it)}</div>`);
     if (media(it).kind !== 'audio') h.push(`<div class="row2">${fld.range('afIn', 'fadeIn', 0, 5, 0.05, it)}${fld.range('afOut', 'fadeOut', 0, 5, 0.05, it)}</div>`);
     h.push(grp('dnSec', `<div class="inl">${fld.check('norm', 'normalize', it)}</div><p class="hint">${tr('normHint')}</p>` +
       `<div class="inl">${fld.check('denoise', 'denoise', it)}</div><p class="hint">${tr('denoiseHint')}</p>` +
@@ -2875,7 +2932,7 @@ $('#inspBody').addEventListener('click', e => {
   const it = sel && item(sel);
   if (!it) return;
   const kb = e.target.closest('[data-kf]');
-  if (kb) { const a = kb.dataset.kf; return a === 'tog' ? kfToggle(it) : kfJump(it, a === 'next' ? 1 : -1); }
+  if (kb) { const a = kb.dataset.kf, group = kb.parentElement.dataset.kfGroup; return a === 'tog' ? kfToggle(it, group) : kfJump(it, a === 'next' ? 1 : -1, group); }
   const ac = e.target.closest('[data-acat]');
   if (ac) { animCat = ac.dataset.acat; return inspector(); }
   const sub = e.target.closest('[data-asub]');
@@ -4886,7 +4943,7 @@ async function writeMasks(Q, work) {
     const m = media(it0);
     if (!m || m.kind === 'audio' || !S.hasMask(it0)) continue;
     // same box the export cuts the clip to (largest keyframed scale)
-    const it = S.bakeVa(it0, Q.w, Q.h), kf = S.hasKf(it) ? it.kf : null, LP = it._loop ? S.VA_LOOP[it._loop] : null;
+    const it = S.bakeVa(it0, Q.w, Q.h), kf = S.hasKf(it, S.VIS_KF) ? it.kf : null, LP = it._loop ? S.VA_LOOP[it._loop] : null;
     const smax = (kf && kf.scale ? Math.max(...kf.scale.map(q => q[1])) : num(it.scale, 1)) * (LP && LP.smax || 1);
     const L = S.layout({ ...it, scale: smax }, m, Q.w, Q.h), w = Math.max(2, Math.round(L.cw)), h = Math.max(2, Math.round(L.ch));
     const c = document.createElement('canvas'); c.width = w; c.height = h;
@@ -5155,7 +5212,7 @@ const MCP_TOOLS = [
   ['import_media', 'Add files (absolute paths: video, audio, images) to the media bin. Returns their media ids. add=true also puts each on the timeline, back to back.', { paths: { type: 'array', items: { type: 'string' } }, add: { type: 'boolean' } }, ['paths']],
   ['add_items', 'Add items to the timeline. Each needs type: "text" {text, start, dur, style_id?, style?{...fields}, x?, y? (0..1 of frame, default 0.5), anim?, out?, loop?} | "clip" {media (id), start?, dur?, track?, in?, speed?, x?, y? (px from centre), scale?} | "layer" {kind: solid|gradient|shadow|vignette, start, dur, fill?{c1,c2,a1,a2,...}} | "effect" {fx: id from catalog.fx OR preset: id from catalog.filters, start, dur}. Any extra field is set on the item as is. Returns the new item ids.', { items: { type: 'array', items: { type: 'object' } } }, ['items']],
   ['update_items', 'Change items. set: fields to assign (objects such as style, fill, fx are merged; null removes a field). Transition into a clip: set {trans: {id, dur, dir (0-3: turns a shader transition 90° each), ease (lin|smooth|hit|soft|bounce|short)}}. Timing: start, dur (seconds).', { updates: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, set: { type: 'object' } }, required: ['id', 'set'] } } }, ['updates']],
-  ['set_keyframes', 'Animate x, y, scale, rotate or opacity of an item: keys are [time from the item start in seconds, value]; replaces that prop\'s keys ([] clears). Values use the item\'s units (text x/y 0..1; clip x/y px from centre; scale 1 = 100%; rotate degrees; opacity 0..1).', { id: { type: 'string' }, props: { type: 'object', description: '{ "scale": [[0,0.8],[0.5,1]], "opacity": [[0,0],[0.3,1]] }' } }, ['id', 'props']],
+  ['set_keyframes', 'Animate x, y, scale, rotate, opacity or volume of an item: keys are [time from the item start in seconds, value]; replaces that prop\'s keys ([] clears). Values use the item\'s units (text x/y 0..1; clip x/y px from centre; scale 1 = 100%; rotate degrees; opacity 0..1; volume 0..2, 1 = 100%, for audio and video with sound).', { id: { type: 'string' }, props: { type: 'object', description: '{ "scale": [[0,0.8],[0.5,1]], "volume": [[0,1],[5,0.4]] }' } }, ['id', 'props']],
   ['delete_items', 'Remove items by id.', { ids: { type: 'array', items: { type: 'string' } } }, ['ids']],
   ['preview', 'Move the playhead to time (seconds) and return the rendered frame as an image. Use it to check your work.', { time: { type: 'number' } }, ['time']],
   ['play', 'Play from a time (seconds) on the user\'s screen; stop: true pauses.', { from: { type: 'number' }, stop: { type: 'boolean' } }],
