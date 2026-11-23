@@ -750,6 +750,13 @@
 
   const projectDur = p => p.items.reduce((m, i) => Math.max(m, i.start + i.dur), 0);
 
+  function groupSpan(items) {
+    if (!items.length) return null;
+    let start = Infinity, end = -Infinity;
+    for (const it of items) { start = Math.min(start, it.start); end = Math.max(end, it.start + it.dur); }
+    return { start, dur: end - start };
+  }
+
   // Same project at k times the resolution (export at 2K/4K). Pixel offsets and text sizes scale; fractions don't.
   function scaleProject(p, k) {
     const q = JSON.parse(JSON.stringify(p));
@@ -1760,7 +1767,7 @@
     return [];
   }
 
-  const api = { FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, fxKey, projectDur, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, hasKf, animAt, shiftTimes };
+  const api = { FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, fxKey, projectDur, groupSpan, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, hasKf, animAt, shiftTimes };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MaqtoShared = api;
 })(this);

@@ -147,7 +147,7 @@ function paintIcons(root = document) {
 /* ---------- project & history ---------- */
 function newProject() {
   return {
-    version: 2, w: 1080, h: 1920, fps: 30, media: {}, items: [], markers: [],
+    version: 2, w: 1080, h: 1920, fps: 30, media: {}, items: [], markers: [], groups: {},
     tracks: [
       { id: 'c1', kind: 'text' }, { id: 't1', kind: 'text' }, { id: 'v2', kind: 'video' },
       { id: 'v1', kind: 'video' }, { id: 'a1', kind: 'audio' }, { id: 'a2', kind: 'audio' },
@@ -156,7 +156,7 @@ function newProject() {
 }
 let P = newProject(), projectPath = null, dirty = false;
 const msel = new Set(); // timeline multi-selection (always includes sel when used)
-let sel = null, t = 0, playing = false, pps = 60, lastTick = 0, needsDraw = true, cancelled = false;
+let openGrp = null, sel = null, t = 0, playing = false, pps = 60, lastTick = 0, needsDraw = true, cancelled = false;
 let tool = 'select', magnet = true, snapOn = true, inspTab = null, libTab = 'media';
 const undoStack = [], redoStack = [];
 
@@ -182,7 +182,6 @@ function restore(from, to) {
   if (!from.length) return;
   to.push(JSON.stringify(P));
   P = JSON.parse(from.pop());
-  if (sel && !item(sel)) sel = null;
   dirty = true;
   syncSettings();
   refresh();
@@ -1696,20 +1695,61 @@ function clipLabel(it) {
   const m = media(it);
   return off + icon(m.adj ? 'zap' : m.fill ? 'paint-bucket' : m.kind === 'audio' ? 'music' : m.kind === 'image' ? 'image' : 'film') + esc(m.name) + (num(it.speed, 1) !== 1 ? `  ×${+num(it.speed, 1).toFixed(2)}` : '');
 }
-// Lanes on screen: only the ones holding a clip, plus the main lane (and a lane a drag just made).
+const groupInfo = id => id && Object.hasOwn(P.groups || {}, id) ? P.groups[id] : undefined;
+const inTimeline = it => (groupInfo(it.grp) ? it.grp : null) === openGrp;
+const timelineItems = () => P.items.filter(inTimeline);
+const groupItems = id => P.items.filter(i => i.grp === id);
+function addTimelineItem(it, group = openGrp) {
+  if (groupInfo(group)) it.grp = group;
+  P.items.push(it);
+}
+function groupBlocks() {
+  const members = new Map();
+  for (const it of P.items) if (it.grp && groupInfo(it.grp)) {
+    if (!members.has(it.grp)) members.set(it.grp, []);
+    members.get(it.grp).push(it);
+  }
+  return [...members].map(([id, its]) => {
+    const span = S.groupSpan(its), { name } = groupInfo(id);
+    const tracks = new Set(its.map(i => i.track));
+    return { id, name, ...span, track: P.tracks.find(x => tracks.has(x.id))?.id, compound: true };
+  });
+}
+const timelineClips = () => openGrp ? timelineItems() : [...timelineItems(), ...groupBlocks()];
 const laneKeep = new Set();
-const shownTracks = () => P.tracks.filter(x => x.id === 'v1' || laneKeep.has(x.id) || P.items.some(i => i.track === x.id));
+const shownTracks = (clips = timelineClips()) => {
+  const used = new Set(clips.map(i => i.track));
+  return P.tracks.filter(x => used.has(x.id) || laneKeep.has(x.id) ||
+    (!openGrp && x.id === 'v1' && !P.items.some(i => i.track === 'v1')));
+};
+const laneItems = id => P.items.filter(i => i.track === id && (!openGrp || inTimeline(i)));
+const groupCrumb = $('#tl').insertBefore(Object.assign(document.createElement('nav'), { className: 'groupCrumb', hidden: true }), $('#tl .tlbody'));
+groupCrumb.onclick = e => { if (e.target.closest('button')) showGroup(null); };
+function showGroup(id) {
+  if (id && !groupInfo(id)) return;
+  const back = openGrp;
+  openGrp = id;
+  focusZone = 'tl';
+  select(id ? null : back);
+  renderTimeline();
+  if (id) {
+    const span = S.groupSpan(groupItems(id));
+    if (!active(span, t)) seek(span.start);
+    const sc = $('#scroll');
+    if (span.start * pps < sc.scrollLeft || span.start * pps >= sc.scrollLeft + sc.clientWidth) sc.scrollLeft = span.start * pps;
+  }
+}
 // Lane buttons: hide (every clip on it), lock (no moving or trimming), mute (sound of its clips).
 function laneBtns(x) {
-  const its = P.items.filter(i => i.track === x.id), off = its.length && its.every(i => i.hidden), mute = its.length && its.every(i => i.muted);
+  const its = laneItems(x.id), off = its.length && its.every(i => i.hidden), mute = its.length && its.every(i => i.muted);
   const snd = x.kind !== 'text' && its.some(i => media(i) && (media(i).kind === 'audio' || media(i).kind === 'video') && !media(i).adj);
   return `<span class="lb">${snd ? `<b data-lk="mute" class="${mute ? 'on' : ''}" title="${tr('laneMute')}">${icon(mute ? 'volume-x' : 'volume-2')}</b>` : ''}` +
     `<b data-lk="lock" class="${x.locked ? 'on' : ''}" title="${tr('laneLock')}">${icon(x.locked ? 'lock' : 'lock-open')}</b>` +
     `<b data-lk="hide" class="${off ? 'on' : ''}" title="${tr('laneHide')}">${icon(off ? 'eye-off' : 'eye')}</b></span>`;
 }
 // Shader transitions sit centred on the cut as a see-through box; drag its edges to change the length.
-function trBoxes(tid) {
-  return P.items.filter(b => b.track === tid && b.trans && S.GLT.includes(b.trans.id)).map(b => {
+function trBoxes(its) {
+  return its.filter(b => b.trans && S.GLT.includes(b.trans.id)).map(b => {
     const T = S.transIn(P, b);
     return T ? `<b class="trn trbox" data-trn="${b.id}" title="${tr('tr_' + T.id)}" style="left:calc(${b.start - T.d / 2}px * var(--pps));width:calc(${T.d}px * var(--pps))"><i class="e l"></i>${icon('arrow-right-left')}<i class="e r"></i></b>` : '';
   }).join('');
@@ -1800,13 +1840,28 @@ function volDrag(e, it) {
 }
 
 function renderTimeline() {
-  const width = (Math.max(total(), t) + 30) * pps, TS = shownTracks();
+  const width = (Math.max(total(), t) + 30) * pps, clips = timelineClips(), TS = shownTracks(clips);
+  groupCrumb.hidden = !openGrp;
+  $('#tl').classList.toggle('inside-group', !!openGrp);
+  if (openGrp) {
+    const html = `<button type="button">${esc(tr('mainTimeline'))}</button>${icon(LANG === 'ar' ? 'chevron-left' : 'chevron-right')}<span aria-current="location">${esc(groupInfo(openGrp).name)}</span>`;
+    if (groupCrumb.innerHTML !== html) groupCrumb.innerHTML = html;
+  }
   ppsVar();
   $('#rows').style.width = $('#ruler').style.width = `calc(${width / pps}px * var(--pps))`;
   $('#heads').innerHTML = TS.map(x => `<div class="head${x.locked ? ' locked' : ''}" data-track="${x.id}" title="${tr('dragTrack')}"><i style="background:${TRACK_COLOR[x.kind]}"></i><em>${esc(trackLabel(x))}</em>${laneBtns(x)}</div>`).join('');
-  $('#rows').innerHTML = TS.map(x => `<div class="row${x.id === 'v1' ? ' main' : ''}${x.locked ? ' locked' : ''}" data-track="${x.id}">${
-    P.items.filter(i => i.track === x.id).map(it => `<div class="clip k-${kindOf(it)}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))"><div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}${kindOf(it) === 'audio' || (it.kf?.volume?.length && hasSound(media(it))) ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div></div>`).join('') + trBoxes(x.id)
-  }</div>`).join('');
+  $('#rows').innerHTML = TS.map(x => {
+    const row = clips.filter(i => i.track === x.id);
+    const blocks = row.map(it => {
+      const kind = it.compound ? 'group' : kindOf(it);
+      const body = it.compound ? `<span>${icon('layers')}${esc(it.name)}</span>` :
+        `<div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}
+        ${kind === 'audio' || (it.kf?.volume?.length && hasSound(media(it))) ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>
+        ${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div>`;
+      return `<div class="clip k-${kind}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))">${body}</div>`;
+    }).join('');
+    return `<div class="row${x.id === 'v1' ? ' main' : ''}${x.locked ? ' locked' : ''}" data-track="${x.id}">${blocks}${trBoxes(row)}</div>`;
+  }).join('');
   laneGap();
   renderRuler(width);
   $('#tdur').textContent = fmt(total());
@@ -1818,7 +1873,7 @@ function renderTimeline() {
 $('#heads').addEventListener('click', e => {
   const b = e.target.closest('[data-lk]');
   if (!b) return;
-  const x = P.tracks.find(q => q.id === b.closest('.head').dataset.track), its = P.items.filter(i => i.track === x.id), k = b.dataset.lk;
+  const x = P.tracks.find(q => q.id === b.closest('.head').dataset.track), its = laneItems(x.id), k = b.dataset.lk;
   snapshot();
   if (k === 'lock') x.locked = !x.locked || undefined;
   else { const f = k === 'hide' ? 'hidden' : 'muted', v = !its.every(i => i[f]); for (const i of its) i[f] = v || undefined; }
@@ -1862,29 +1917,43 @@ function snap1(v, pts) {
   for (const p of pts) if (Math.abs(p - v) < d) { d = Math.abs(p - v); best = p; }
   return best;
 }
+function snapMove(start, dur, pts) {
+  const left = snap1(start, pts), end = start + dur, right = snap1(end, pts);
+  if (right === end || (left !== start && Math.abs(left - start) <= Math.abs(right - end))) return left;
+  return right - dur;
+}
 function sourceBound(it) {
   const m = media(it);
   return m && m.kind !== 'image' && m.dur ? m : null;
 }
-// Magnetic main track: clips on v1 sit end to end from 0, in start order.
-function pack() { packLane('v1'); }
-// Magnet on, every video/audio lane packs like the main one once you drop a clip on it (text lanes stay free).
-// Only lanes a drag touches pack, so sounds placed by time elsewhere (assistant, older projects) keep their spot.
+// Compound members keep their offsets when an outside edit ripples a lane.
+const pack = () => { if (!openGrp) packLane('v1'); };
 const magLane = id => magnet && (P.tracks.find(x => x.id === id) || {}).kind !== 'text';
-function packLane(id) {
-  if (!magLane(id)) return;
-  let at = 0;
-  for (const it of P.items.filter(i => i.track === id).sort((a, b) => a.start - b.start)) { it.start = at; at += it.dur; }
+const byStart = (a, b) => a.start - b.start;
+function laneObstacles(id, except) {
+  const items = P.items.filter(i => i.track === id && !inTimeline(i) && (!except || i.grp !== except));
+  const blocks = openGrp ? [] : groupBlocks().filter(i => i.track === id && i.id !== except);
+  return [...items, ...blocks].sort(byStart);
 }
-
+function clearStart(at, dur, fixed) {
+  for (const q of fixed) if (q.start < at + dur - 1e-6 && at < q.start + q.dur - 1e-6) at = q.start + q.dur;
+  return at;
+}
+function packLane(id, origin) {
+  if (!magLane(id)) return;
+  const its = timelineItems().filter(i => i.track === id).sort(byStart), fixed = laneObstacles(id);
+  let at = origin ?? (openGrp ? its[0]?.start ?? 0 : 0);
+  for (const it of its) { it.start = clearStart(at, it.dur, fixed); at = it.start + it.dur; }
+}
 $('#rows').addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const c = e.target.closest('.clip');
   if (!c) { tlMarquee(e); return; }
   const it = item(c.dataset.id);
+  if (e.metaKey || e.ctrlKey || e.shiftKey) { toggleSel(c.dataset.id); return; }
+  if (!it) return compoundMove(e, groupBlocks().find(b => b.id === c.dataset.id));
   if (tool === 'blade') { seek(snap1(timeAt(e.clientX), snapPoints(null))); select(it.id); splitAt(); return; }
-  if (e.metaKey || e.ctrlKey || e.shiftKey) { toggleSel(it.id); return; }
-  if (msel.size > 1 && msel.has(it.id) && !e.target.classList.contains('h')) return groupMove(e, it);
+  if (msel.size > 1 && msel.has(it.id) && !e.target.classList.contains('h')) return selectedGroups().length ? compoundMove(e, it) : groupMove(e, it);
   select(it.id);
   if ((P.tracks.find(x => x.id === it.track) || {}).locked) return;
   if (e.target.classList.contains('vl')) return volDrag(e, it);
@@ -1896,10 +1965,7 @@ $('#rows').addEventListener('pointerdown', e => {
     const d = (ev.clientX - x0) / pps;
     if (!changed) { if (Math.abs(ev.clientX - x0) < 3) return; snapshot(); changed = true; }
     if (mode === 'move') {
-      let s = Math.max(0, o.start + d);
-      const a = snap1(s, pts), b = snap1(s + o.dur, pts) - o.dur;
-      s = Math.abs(a - s) <= Math.abs(b - s) ? a : b;
-      it.start = Math.max(0, s);
+      it.start = Math.max(0, snapMove(Math.max(0, o.start + d), o.dur, pts));
       const tk = it.track;
       dropLane(it, ev.clientY, lane);
       if (magnet) settle(it, lane);
@@ -1924,10 +1990,10 @@ $('#rows').addEventListener('pointerdown', e => {
     renderTimeline();
     needsDraw = true;
   };
-  const lane = { nt: null, from: it.track };
+  const lane = { nt: null, from: it.track, origin: openGrp ? Math.min(...timelineItems().filter(i => i.track === it.track).map(i => i.start)) : 0 };
   const onUp = () => {
     window.removeEventListener('pointermove', onMove);
-    if (changed) { if (lane.gap != null && magLane(it.track)) it.start = lane.gap; packLane(it.track); if (lane.from !== it.track) packLane(lane.from); dropLaneEnd(lane); refresh(); }
+    if (changed) { if (lane.gap != null && magLane(it.track)) it.start = lane.gap; packLane(it.track, lane.from === it.track ? lane.origin : undefined); if (lane.from !== it.track) packLane(lane.from, lane.origin); dropLaneEnd(lane); refresh(); }
   };
   window.addEventListener('pointermove', onMove);
   window.addEventListener('pointerup', onUp, { once: true });
@@ -1941,7 +2007,7 @@ function dropLane(it, clientY, lane) {
   const TS = shownTracks(), r = $('#rows').getBoundingClientRect(), i = Math.floor((clientY - r.top) / ROW), x = TS[i], kind = laneKind(it);
   if (x && x === lane.nt) return;
   const free = x && x.id !== 'c1' && !x.locked && compatible(it, x.id) && (magLane(x.id) || x.id === it.track ||
-    !P.items.some(q => q !== it && q.track === x.id && q.start < it.start + it.dur - 1e-6 && it.start < q.start + q.dur - 1e-6));
+    ![...P.items, ...(!openGrp ? groupBlocks() : [])].some(q => q !== it && q.track === x.id && q.start < it.start + it.dur - 1e-6 && it.start < q.start + q.dur - 1e-6));
   if (free) { it.track = x.id; return; }
   if (i >= TS.length && kind !== 'audio') return; // below the last lane: only sounds get a new lane there
   if (lane.nt) { P.tracks.splice(P.tracks.indexOf(lane.nt), 1); TS.splice(TS.indexOf(lane.nt), 1); }
@@ -1953,25 +2019,80 @@ function dropLane(it, clientY, lane) {
 }
 // Magnet on: on the main lane the other clips close up around a gap where the dragged clip will land;
 // on other lanes the clip stops against its neighbour instead of sliding over it.
-function settle(it, lane) {
+function settle(it, lane, clearGroup) {
   lane.gap = null;
-  const others = P.items.filter(q => q !== it && q.track === it.track).sort((a, b) => a.start - b.start);
-  if (magLane(it.track)) {
-    const idx = others.filter(q => q.start + q.dur / 2 < it.start).length;
-    let at = 0;
-    others.forEach((q, i) => {
-      if (i === idx) { lane.gap = at; at += it.dur; }
-      if (q.start !== at) { q.start = at; const el = $(`.clip[data-id="${q.id}"]`); if (el) el.style.left = at * pps + 'px'; }
-      at += q.dur;
-    });
-    if (lane.gap == null) lane.gap = at;
+  const fixed = laneObstacles(it.track, it.compound ? it.id : undefined);
+  const others = timelineItems().filter(q => q !== it && q.track === it.track).sort(byStart);
+  if (clearGroup && (!others.length || !magLane(it.track))) {
+    it.start = clearGroup(it.start, [...others, ...fixed].sort(byStart));
     return;
   }
+  if (magLane(it.track)) {
+    const idx = others.filter(q => q.start + q.dur / 2 < it.start).length;
+    const row = [...others.slice(0, idx), it, ...others.slice(idx)];
+    let at = openGrp && lane.from !== it.track ? Math.min(it.start, others[0]?.start ?? it.start) : lane.origin;
+    for (const q of row) {
+      const start = q === it && clearGroup ? clearGroup(at, fixed) : clearStart(at, q.dur, fixed);
+      if (q === it) lane.gap = start;
+      else if (q.start !== start) {
+        q.start = start;
+        const el = $(`.clip[data-id="${q.id}"]`);
+        if (el) el.style.left = start * pps + 'px';
+      }
+      at = start + q.dur;
+    }
+    return;
+  }
+  const occupied = [...others, ...fixed].sort(byStart);
   for (let k = 0; k < 4; k++) {
-    const q = others.find(q => q.start < it.start + it.dur - 1e-6 && it.start < q.start + q.dur - 1e-6);
+    const q = occupied.find(q => q.start < it.start + it.dur - 1e-6 && it.start < q.start + q.dur - 1e-6);
     if (!q) return;
     it.start = it.start + it.dur / 2 < q.start + q.dur / 2 && q.start >= it.dur ? q.start - it.dur : q.start + q.dur;
   }
+}
+function compoundMove(e, lead) {
+  if (!lead) return;
+  if (!isSel(lead.id)) select(lead.id);
+  const its = selectedItems(), tracks = new Set(its.map(i => i.track));
+  if (P.tracks.some(x => x.locked && tracks.has(x.id)) || tool === 'blade') { select(lead.id); return; }
+  const saved = new Map(its.map(i => [i, i.start])), start = S.groupSpan(its).start;
+  const ids = new Set(its.map(i => i.id));
+  const outside = P.items.filter(i => !ids.has(i.id));
+  const pts = [0, t, ...(P.markers || []), ...outside.flatMap(i => [i.start, i.start + i.dur])];
+  const blocks = timelineClips().filter(i => isSel(i.id)), x0 = e.clientX, start0 = lead.start;
+  const lane = { origin: 0 };
+  const otherLanes = its.filter(i => i.track !== lead.track).map(i => ({
+    offset: i.start - start0, dur: i.dur, fixed: outside.filter(q => q.track === i.track).sort(byStart),
+  }));
+  // A gap must fit the block and every member on its original track.
+  const clearGroup = (at, fixed) => {
+    let next = at;
+    do {
+      at = next;
+      next = clearStart(at, lead.dur, fixed);
+      for (const i of otherLanes) next = Math.max(next, clearStart(at + i.offset, i.dur, i.fixed) - i.offset);
+    } while (next > at + 1e-6);
+    return next;
+  };
+  let changed = false;
+  const mv = ev => {
+    if (!changed) { if (Math.abs(ev.clientX - x0) < 3) return; snapshot(); changed = true; }
+    const s = snapMove(start0 + (ev.clientX - x0) / pps, lead.dur, pts);
+    let d = Math.max(-start, s - start0);
+    if (magnet && blocks.length === 1) {
+      const block = { ...lead, start: start0 + d };
+      settle(block, lane, clearGroup);
+      d = (lane.gap ?? block.start) - start0;
+    }
+    for (const [i, at] of saved) i.start = at + d;
+    for (const block of blocks) {
+      const el = $(`.clip[data-id="${block.id}"]`);
+      if (el) el.style.left = ((saved.get(block) ?? block.start) + d) * pps + 'px';
+    }
+    needsDraw = true;
+  };
+  window.addEventListener('pointermove', mv);
+  window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); if (changed) refresh(); else select(lead.id); }, { once: true });
 }
 // After the drag: lanes left empty by it go away (the built-in ones stay).
 function dropLaneEnd(lane) {
@@ -1984,7 +2105,7 @@ function groupMove(e, lead) {
   if (sel !== lead.id) { sel = lead.id; inspTab = null; inspector(); paintSel(); }
   const group = selIds().map(item).filter(Boolean), o = new Map(group.map(i => [i.id, i.start])), x0 = e.clientX, y0 = e.clientY;
   const minStart = Math.min(...group.map(i => i.start)), ids = new Set(group.map(i => i.id));
-  const others = P.items.filter(i => !ids.has(i.id));
+  const others = [...P.items, ...(!openGrp ? groupBlocks() : [])].filter(i => !ids.has(i.id));
   const spts = [0, t, ...(P.markers || []), ...others.flatMap(i => [i.start, i.start + i.dur])];
   const TS = shownTracks(), row0 = new Map(group.map(i => [i.id, TS.findIndex(x => x.id === i.track)]));
   const pinned = TS.filter(x => !laneKeep.has(x.id)).map(x => x.id); // lanes keep their rows while dragging
@@ -1998,10 +2119,8 @@ function groupMove(e, lead) {
   });
   const mv = ev => {
     if (!changed) { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 3) return; snapshot(); changed = true; }
-    let d = (ev.clientX - x0) / pps;
-    const s = o.get(lead.id) + d, a = snap1(s, spts), b = snap1(s + lead.dur, spts) - lead.dur;
-    d += (Math.abs(a - s) <= Math.abs(b - s) ? a : b) - s;
-    d = Math.max(d, -minStart);
+    const start = o.get(lead.id), s = snapMove(start + (ev.clientX - x0) / pps, lead.dur, spts);
+    const d = Math.max(s - start, -minStart);
     for (const i of group) i.start = o.get(i.id) + d;
     const k = Math.round((ev.clientY - y0) / ROW);
     if (k !== dr && fits(k)) dr = k;
@@ -2013,11 +2132,11 @@ function groupMove(e, lead) {
     needsDraw = true;
   };
   window.addEventListener('pointermove', mv);
-  window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); pinned.forEach(id => laneKeep.delete(id)); if (changed) refresh(); else select(lead.id); }, { once: true }); // plain click picks just this clip
+  window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); pinned.forEach(id => laneKeep.delete(id)); if (changed) { if (group.some(i => i.track === 'v1' || TS[row0.get(i.id)]?.id === 'v1')) pack(); refresh(); } else select(lead.id); }, { once: true }); // plain click picks just this clip
 }
 $('#rows').addEventListener('pointermove', e => {
   let bl = $('.bladeline');
-  if (tool !== 'blade' || !e.target.closest('.clip')) { if (bl) bl.remove(); return; }
+  if (tool !== 'blade' || !e.target.closest('.clip:not(.k-group)')) { if (bl) bl.remove(); return; }
   if (!bl) { bl = document.createElement('div'); bl.className = 'bladeline'; $('#scroll').appendChild(bl); }
   bl.style.left = timeAt(e.clientX) * pps + 'px';
 });
@@ -2153,13 +2272,16 @@ function addMedia(mid, trackId, start) {
   const m = P.media[mid];
   const probe = { media: mid };
   if (!trackId || !compatible(probe, trackId)) trackId = m.kind === 'audio' ? 'a1' : 'v1';
-  if (start == null) start = P.items.filter(i => i.track === trackId).reduce((a, i) => Math.max(a, i.start + i.dur), 0);
+  if (start == null) {
+    const row = openGrp ? timelineItems() : [...P.items, ...groupBlocks()];
+    start = row.filter(i => i.track === trackId).reduce((a, i) => Math.max(a, i.start + i.dur), openGrp ? S.groupSpan(row).start : 0);
+  }
   snapshot();
   const it = { id: uid(), track: trackId, media: mid, start, dur: m.kind === 'image' ? 5 : m.dur, in: 0, speed: 1, volume: 1 };
   if (m.kind !== 'audio') Object.assign(it, { fit: 'contain', scale: 1, x: 0, y: 0, opacity: 1, preset: 'none', brightness: 1, contrast: 1, saturation: 1, temp: 0 });
-  P.items.push(it);
-  sel = it.id;
-  inspTab = null;
+  addTimelineItem(it);
+  if (it.track === 'v1') pack();
+  setSelection([it.id]);
   refresh();
   return it;
 }
@@ -2177,22 +2299,22 @@ function addText(styleId) {
   snapshot();
   const st = presetStyle(styleId);
   const it = { id: uid(), type: 'text', ...textSlot(3), dur: 3, text: tr('defaultText'), style: st, x: 0.5, y: 0.5, anim: 'pop', out: 'fade' };
-  P.items.push(it);
-  sel = it.id;
-  inspTab = null;
+  addTimelineItem(it);
+  setSelection([it.id]);
   refresh();
 }
 
 function targetsAtPlayhead() {
   const ss = selIds().map(item).filter(i => i && active(i, t)); // every selected layer under the playhead
-  return ss.length ? ss : P.items.filter(i => active(i, t));
+  return ss.length ? ss : selectedGroups().length ? [] : timelineItems().filter(i => active(i, t));
 }
 function splitAt(all) {
   const min = 1 / P.fps;
-  const ok = (all ? P.items.filter(i => active(i, t)) : targetsAtPlayhead()).filter(it => t - it.start > min && it.start + it.dur - t > min);
+  const ok = (all ? timelineItems().filter(i => active(i, t)) : targetsAtPlayhead()).filter(it => t - it.start > min && it.start + it.dur - t > min);
   if (!ok.length) return toast(tr('cutHint'));
   snapshot();
   splitItems(ok);
+  if (ok.some(i => i.track === 'v1')) pack();
   refresh();
 }
 function splitItems(ok) {
@@ -2229,32 +2351,56 @@ function trimTo(side) {
     it.start = t;
     it.dur -= cut;
   }
-  if (side === 'left' && magnet && ok.some(i => i.track === 'v1')) { pack(); const s = item(sel); if (s) seek(s.start); }
+  if (magnet && !openGrp && ok.some(i => i.track === 'v1')) { pack(); const s = item(sel); if (s && side === 'left') seek(s.start); }
   refresh();
 }
-function removeSel() {
-  const ids = new Set(selIds());
+const selectedGroups = () => openGrp ? [] : selIds().filter(groupInfo);
+const canGroup = () => !openGrp && selIds().length >= 2 && !selectedGroups().length;
+const selectedItems = () => {
+  const ids = new Set(selIds()), groups = new Set(selectedGroups());
+  return P.items.filter(i => ids.has(i.id) || groups.has(i.grp));
+};
+function groupSel() {
+  if (!canGroup()) return;
+  const its = selectedItems(), names = new Set(Object.values(P.groups).map(g => g.name));
+  let n = 1;
+  while (names.has(tr('groupName', { n }))) n++;
+  snapshot();
+  const id = 'g' + uid();
+  P.groups[id] = { name: tr('groupName', { n }) };
+  for (const i of its) i.grp = id;
+  setSelection([id]);
+  refresh();
+}
+function ungroupSel() {
+  const ids = new Set(selectedGroups());
   if (!ids.size) return;
   snapshot();
-  P.items = P.items.filter(i => !ids.has(i.id));
-  sel = null; msel.clear();
+  const members = [];
+  for (const it of P.items) if (ids.has(it.grp)) { delete it.grp; members.push(it.id); }
+  for (const id of ids) delete P.groups[id];
+  setSelection([...selIds().filter(id => !ids.has(id)), ...members]);
   refresh();
 }
-function duplicateSel() {
-  const its = selIds().map(item).filter(Boolean);
-  if (!its.length) return;
+async function renameGroup(id) {
+  const group = groupInfo(id), name = await askText(tr('rename'), group.name);
+  if (!name || name === group.name || group !== groupInfo(id)) return;
   snapshot();
-  const end = Math.max(...its.map(i => i.start + i.dur)), t0 = Math.min(...its.map(i => i.start)), ids = [];
-  for (const it of its) { // a group repeats right after itself, same spacing
-    const b = JSON.parse(JSON.stringify(it));
-    b.id = uid();
-    b.start = its.length > 1 ? end + it.start - t0 : it.start + it.dur - (it.track === 'v1' && magnet ? 0.0001 : 0);
-    if (its.length > 1) b.track = freeLaneAbove(b);
-    P.items.push(b);
-    ids.push(b.id);
-  }
-  sel = ids[0]; msel.clear();
-  if (ids.length > 1) ids.forEach(x => msel.add(x));
+  group.name = name;
+  refresh();
+}
+function setSelection(ids) {
+  sel = ids[0] || null; msel.clear(); inspTab = null;
+  if (ids.length > 1) ids.forEach(id => msel.add(id));
+}
+function removeSel() {
+  const its = new Set(selectedItems());
+  if (!its.size) return;
+  const compound = selectedGroups().length;
+  snapshot();
+  P.items = P.items.filter(i => !its.has(i));
+  setSelection([]);
+  if (!compound && !openGrp && [...its].some(i => i.track === 'v1')) pack();
   refresh();
 }
 function addMarker() {
@@ -2274,9 +2420,12 @@ function mirrorSel() {
 let binSig = '';
 function refresh() {
   if (MEDIA_BASE) ensureFonts();
-  for (const id of msel) if (!item(id)) msel.delete(id);
-  if (msel.size < 2) msel.clear();
-  pack();
+  P.groups ??= {};
+  const used = new Set(P.items.map(i => i.grp));
+  for (const id of Object.keys(P.groups)) if (!used.has(id)) delete P.groups[id];
+  if (openGrp && !groupInfo(openGrp)) openGrp = null;
+  const visible = new Set(timelineClips().map(i => i.id));
+  if (selIds().some(id => !visible.has(id))) setSelection(selIds().filter(id => visible.has(id)));
   for (const [k, m] of Object.entries(P.media)) if ((m.fill || m.adj) && !P.items.some(i => i.media === k)) delete P.media[k];
   // library redraws only when its files or their "in use" marks change (thumbnails are <video> elements)
   const sig = Object.keys(P.media).join() + '|' + [...new Set(P.items.map(i => i.media))].join();
@@ -3018,10 +3167,10 @@ function inBox(b, x, y) {
 // Topmost thing under the pointer: texts above clips, upper tracks above lower ones.
 function hitAt(x, y) {
   const tx = visibleTexts(P, t);
-  for (let i = tx.length - 1; i >= 0; i--) { const b = textBoxes.get(tx[i].id); if (b && inBox(b, x, y)) return tx[i]; }
+  for (let i = tx.length - 1; i >= 0; i--) { const b = textBoxes.get(tx[i].id); if (b && inTimeline(tx[i]) && inBox(b, x, y)) return tx[i]; }
   const order = renderOrder(P, 'video');
   for (let i = order.length - 1; i >= 0; i--)
-    for (const it of [...P.items].reverse()) if (it.track === order[i] && !isText(it) && !it.hidden && active(it, t) && media(it).kind !== 'audio' && !media(it).adj && inBox(visBox(it, t - it.start), x, y)) return it;
+    for (const it of [...P.items].reverse()) if (it.track === order[i] && inTimeline(it) && !isText(it) && !it.hidden && active(it, t) && media(it).kind !== 'audio' && !media(it).adj && inBox(visBox(it, t - it.start), x, y)) return it;
   return null;
 }
 // Multi-selection: a plain outline on each picked layer showing on the preview (no handles).
@@ -3551,8 +3700,9 @@ async function deleteMedia(ids) {
   if (uses && !(await TA.dialog.ask(tr('delUsed', { n: uses }), { kind: 'warning' }))) return;
   snapshot();
   for (const id of ids) delete P.media[id];
+  const main = P.items.some(i => !i.grp && i.track === 'v1' && ids.includes(i.media));
   P.items = P.items.filter(i => !ids.includes(i.media));
-  if (sel && !item(sel)) sel = null;
+  if (main) pack();
   binSel.clear();
   refresh();
 }
@@ -3591,12 +3741,20 @@ $('#rows').addEventListener('pointerdown', () => (focusZone = 'tl'), true);
 $('#scroll').addEventListener('pointerdown', e => { if (e.target === $('#scroll') && e.button === 0) { focusZone = 'tl'; tlMarquee(e); } });
 $('#rows').addEventListener('contextmenu', e => {
   e.preventDefault();
+  focusZone = 'tl';
   const c = e.target.closest('.clip');
   if (!c) return ctxMenu(e, [['k_paste', pasteClip], ['marker', addMarker]]);
-  select(c.dataset.id);
-  const it = item(c.dataset.id), vid = !isText(it) && media(it).kind === 'video';
-  ctxMenu(e, [['split', () => splitAt()], ['k_copy', copySel], ['k_cut', cutSel], ['k_paste', pasteClip], ['dup', duplicateSel],
-    vid && ['freeze', freezeFrame], vid && media(it).hasAudio && ['extractAudio', extractAudio], !isText(it) && (media(it).kind === 'audio' || media(it).hasAudio) && ['stems', separateSounds], !isText(it) && media(it).kind !== 'audio' && ['rotate90', rotateSel], (isText(it) || media(it).kind !== 'audio') && [it.hidden ? 'showLayer' : 'hideLayer', toggleHidden], ['-'], ['del', removeSel, 'danger']]);
+  const id = c.dataset.id;
+  if (!isSel(id)) select(id);
+  const it = item(id), m = media(it), vid = m?.kind === 'video', group = groupInfo(id);
+  ctxMenu(e, [canGroup() && ['groupClips', groupSel], selectedGroups().length && ['ungroupClips', ungroupSel],
+    group && ['openGroup', () => showGroup(id)], group && ['rename', () => renameGroup(id)],
+    it && ['split', () => splitAt()], ['k_copy', copySel], ['k_cut', cutSel], ['k_paste', pasteClip], ['dup', duplicateSel],
+    vid && ['freeze', freezeFrame], vid && m.hasAudio && ['extractAudio', extractAudio], (m?.kind === 'audio' || m?.hasAudio) && ['stems', separateSounds], m && m.kind !== 'audio' && ['rotate90', rotateSel], it && m?.kind !== 'audio' && [it.hidden ? 'showLayer' : 'hideLayer', toggleHidden], ['-'], ['del', removeSel, 'danger']]);
+});
+$('#rows').addEventListener('dblclick', e => {
+  const c = e.target.closest('.k-group');
+  if (c && !e.metaKey && !e.ctrlKey && !e.shiftKey) showGroup(c.dataset.id);
 });
 
 // The clip's sound as its own clip on a free audio lane under it (same file, same timing); the video goes silent.
@@ -3614,7 +3772,7 @@ function extractAudio() {
   if (it.afOut) a.fadeOut = it.afOut;
   if (it.pitch != null) a.pitch = it.pitch;
   it.muted = true;
-  P.items.push(a);
+  addTimelineItem(a);
   sel = a.id; msel.clear(); inspTab = null;
   dirty = true; refresh(); renderBin();
 }
@@ -3634,7 +3792,9 @@ async function separateSounds() {
     progress(tr('p_stems'), 0);
     const paths = await inv('stems_make', { path: m.path, start: num(it.in, 0), len: S.srcLen(it) });
     hideModal();
-    const mids = addToBin(await inv('probe', { paths }));
+    const files = await inv('probe', { paths });
+    if (item(it.id) !== it) return;
+    const mids = addToBin(files);
     if (mids.length !== 3) return;
     snapshot();
     const end = it.start + it.dur, free = x => !P.items.some(i => i.track === x.id && i.start < end - 1e-6 && it.start < i.start + i.dur - 1e-6);
@@ -3648,7 +3808,7 @@ async function separateSounds() {
       if (fi) a.fadeIn = fi;
       if (fo) a.fadeOut = fo;
       if (it.pitch != null) a.pitch = it.pitch;
-      P.items.push(a);
+      addTimelineItem(a, it.grp || null);
     });
     it.muted = true;
     sel = null; msel.clear(); inspTab = null;
@@ -3659,7 +3819,7 @@ async function separateSounds() {
 /* ---------- apply to all captions ---------- */
 // On: a look change on one auto caption (style, animation, place) is copied to every caption; off: each on its own.
 const capAllRow = () => `<label class="wide capall"><input type="checkbox" id="capAll"${lsGet('kadr.capAll', true) ? ' checked' : ''}><span>${tr('applyAll')}</span></label>`;
-const CAP_OWN = new Set(['id', 'type', 'track', 'start', 'dur', 'text', 'words', 'kf', 'hidden']);
+const CAP_OWN = new Set(['id', 'type', 'track', 'grp', 'start', 'dur', 'text', 'words', 'kf', 'hidden']);
 function capSync() {
   const it = sel && item(sel);
   if (!it || it.track !== 'c1' || !lsGet('kadr.capAll', true)) return;
@@ -3689,7 +3849,8 @@ function toggleHidden() {
 // The cut a transition goes on: the selected clip if a clip ends right where it starts, else the
 // clip right after the selected one, else the main-track cut nearest the playhead.
 function transTarget() {
-  const ok = b => b && !isText(b) && media(b) && media(b).kind !== 'audio' && !b.hidden && S.transIn(P, { ...b, trans: { id: 'fade' } });
+  if (selectedGroups().length) return null;
+  const ok = b => b && inTimeline(b) && !isText(b) && media(b) && media(b).kind !== 'audio' && !b.hidden && S.transIn(P, { ...b, trans: { id: 'fade' } });
   const cur = sel && item(sel);
   if (ok(cur)) return cur;
   if (cur) { const nx = P.items.find(i => i.track === cur.track && i.id !== cur.id && Math.abs(i.start - cur.start - cur.dur) < 0.5 / P.fps); if (ok(nx)) return nx; }
@@ -3848,7 +4009,7 @@ $('#sfxImport').addEventListener('click', async () => {
 async function freezeFrame() {
   const cur = sel && item(sel);
   const it = cur && !isText(cur) && media(cur).kind === 'video' && active(cur, t) ? cur
-    : P.items.find(i => i.track === 'v1' && active(i, t) && media(i).kind === 'video');
+    : !selectedGroups().length && timelineItems().find(i => i.track === 'v1' && active(i, t) && media(i).kind === 'video');
   if (!it) return toast(tr('freezeHint'));
   setPlaying(false);
   const el = elFor(it), want = num(it.in, 0) + S.srcAt(it, t - it.start);
@@ -3871,10 +4032,11 @@ async function freezeFrame() {
   const fr = JSON.parse(JSON.stringify(it));
   Object.assign(fr, { id: uid(), media: mid, start: t, dur: len, in: 0, speed: 1, fadeIn: 0, fadeOut: 0, volume: 0 });
   delete fr.words;
-  if (it.track === 'v1' && magnet) fr.start = t - 1e-4; // sorts before the second half when the main track packs
-  else for (const x of P.items) if (x.track === it.track && x.start >= t - 1e-6) x.start += len;
+  if (it.track === 'v1' && magnet && !openGrp) fr.start = t - 1e-4; // sorts before the second half when the main track packs
+  else for (const x of timelineItems()) if (x.track === it.track && x.start >= t - 1e-6) x.start += len;
   P.items.push(fr);
-  sel = fr.id;
+  if (fr.track === 'v1') pack();
+  setSelection([fr.id]);
   refresh();
 }
 function rotateSel() {
@@ -4285,7 +4447,7 @@ $('#iconList').addEventListener('click', e => {
     style: { ...presetStyle('plain'), size: Math.round(Math.min(P.w, P.h) * 0.3), color: '#ffffff', strokeW: 0, iconW: 2 }, x: 0.5, y: 0.5, anim: 'pop', out: 'fade' };
   if (b.dataset.loop) it.loop = b.dataset.loop;
   if (b.dataset.draw) { it.draw = b.dataset.draw; it.anim = 'none'; }
-  P.items.push(it);
+  addTimelineItem(it);
   sel = it.id; inspTab = null; dirty = true;
   refresh();
 });
@@ -4331,7 +4493,7 @@ $('#stickerList').addEventListener('click', e => {
   snapshot();
   const it = { id: uid(), type: 'text', ...textSlot(3), dur: 3, text: b.dataset.st, style: { ...presetStyle('plain'), size: Math.round(Math.min(P.w, P.h) * 0.22) }, x: 0.5, y: 0.5, anim: 'pop', out: 'fade', sticker: true };
   if (b.dataset.loop) it.loop = b.dataset.loop;
-  P.items.push(it);
+  addTimelineItem(it);
   sel = it.id; inspTab = 'tAnim'; dirty = true;
   refresh();
 });
@@ -4653,7 +4815,7 @@ async function newProj(welcome) {
     else [w, h] = dimsFor(ratio);
     hideModal();
     P = Object.assign(newProject(), { w, h, fps: +$('#npFps').value, res: +$('#npRes').value, name: $('#npName').value.trim() || tr('untitled') });
-    projectPath = null; sel = null; t = 0; dirty = false;
+    projectPath = null; openGrp = null; setSelection([]); t = 0; dirty = false;
     lastAuto = JSON.stringify(P); clearRecovery();
     undoStack.length = redoStack.length = 0;
     binSel.clear();
@@ -4796,8 +4958,9 @@ async function autoCaptions() {
   // only the clips picked on the timeline: their sound alone is transcribed, captions elsewhere stay
   const pick = selIds().map(item).filter(i => { const m = i && media(i); return m && !i.muted && (m.kind === 'audio' || m.hasAudio); });
   if (!pick.length) return toast(tr(P.items.some(i => media(i)) ? 'capPick' : 'needAudio'));
+  const group = openGrp;
   const inPick = c => pick.some(i => c.start + c.dur / 2 >= i.start && c.start + c.dur / 2 < i.start + i.dur);
-  const old = P.items.filter(i => i.track === 'c1' && inPick(i));
+  const old = timelineItems().filter(i => i.track === 'c1' && inPick(i));
   if (old.length && !(await TA.dialog.ask(tr('replaceCaps'), { kind: 'warning' }))) return;
   setPlaying(false);
   cancelled = false;
@@ -4819,6 +4982,7 @@ async function autoCaptions() {
     hideModal();
     const words = S.parseWhisper(JSON.parse(json));
     if (!words.length) return toast(tr('noSpeech'));
+    if (pick.some(i => item(i.id) !== i)) return;
     snapshot();
     const prev = old[0] || P.items.find(i => i.track === 'c1');
     const style = prev && isText(prev) ? prev.style : textDefaults(true);
@@ -4827,11 +4991,11 @@ async function autoCaptions() {
     groups.forEach((g, i) => {
       const next = groups[i + 1];
       const end = next && next.start - g.end < 0.5 ? next.start : g.end + 0.25;
-      P.items.push({
+      addTimelineItem({
         id: uid(), type: 'text', track: 'c1', start: g.start, dur: Math.max(0.2, end - g.start), text: g.text,
         words: g.words.map(w => ({ w: w.w, s: w.s - g.start, e: w.e - g.start })),
         style: { ...style }, x: 0.5, y: 0.72, anim: 'pop', out: 'none',
-      });
+      }, group);
     });
     refresh();
     toast(tr('capsDone', { n: groups.length }));
@@ -4973,7 +5137,7 @@ async function restoreRecovery() {
     const r = await inv('open_project', { path: await inv('recovery_path') });
     P = Object.assign(newProject(), r.project);
   } catch { clearRecovery(); return false; }
-  projectPath = null; sel = null; t = 0; dirty = true;
+  projectPath = null; openGrp = null; setSelection([]); t = 0; dirty = true;
   lastAuto = JSON.stringify(P);
   undoStack.length = redoStack.length = 0;
   syncSettings();
@@ -4994,7 +5158,7 @@ async function openPath(f, asked) {
   P = Object.assign(newProject(), r.project);
   projectPath = f;
   recent.add(f);
-  sel = null; t = 0; dirty = false;
+  openGrp = null; setSelection([]); t = 0; dirty = false;
   lastAuto = JSON.stringify(P); clearRecovery();
   undoStack.length = redoStack.length = 0;
   syncSettings();
@@ -5041,7 +5205,7 @@ $('#bCrop').onclick = () => {
   $('#cropGrp').scrollIntoView({ behavior: 'smooth' });
 };
 $('#bRec').onclick = toggleRecord;
-$('#bMagnet').onclick = () => { magnet = !magnet; $('#bMagnet').classList.toggle('on', magnet); if (magnet) { snapshot(); refresh(); } };
+$('#bMagnet').onclick = () => { magnet = !magnet; $('#bMagnet').classList.toggle('on', magnet); if (magnet) { snapshot(); if (openGrp) { for (const x of shownTracks()) packLane(x.id); } else pack(); refresh(); } };
 $('#bSnap').onclick = () => { snapOn = !snapOn; $('#bSnap').classList.toggle('on', snapOn); };
 $('#bZoomIn').onclick = () => setZoom(pps * 1.4);
 $('#bZoomOut').onclick = () => setZoom(pps / 1.4);
@@ -5051,7 +5215,16 @@ $('#bLang').onclick = () => { LANG = LANG === 'ar' ? 'en' : 'ar'; applyLang(); r
 /* ---------- keyboard: CapCut-style keymap. One table drives the keys, the tooltips and the shortcuts sheet ---------- */
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
 let clipBoard = null;
-function copySel() { const its = selIds().map(item).filter(Boolean); if (its.length) clipBoard = JSON.parse(JSON.stringify(its)); }
+function selectionCopy() {
+  const groups = Object.fromEntries(selectedGroups().map(id => [id, groupInfo(id)]));
+  const items = selectedItems();
+  const media = Object.fromEntries(items.filter(i => i.media).map(i => [i.media, P.media[i.media]]));
+  return { groups, items, media, tracks: P.tracks };
+}
+function copySel() {
+  const data = selectionCopy();
+  if (data.items.length) clipBoard = JSON.parse(JSON.stringify(data));
+}
 function cutSel() { copySel(); removeSel(); }
 // A pasted clip never lands on top of another: nearest free lane of its kind above its own, else a new lane right above it.
 // A new empty lane for a dropped file: sounds go under the others, pictures on top (`top`) or just over the main lane.
@@ -5061,37 +5234,76 @@ function newLaneFor(mid, top) {
   else P.tracks.splice(top ? 0 : Math.max(0, P.tracks.findIndex(t => t.id === 'v1')), 0, x);
   return x.id;
 }
-function freeLaneAbove(b) {
-  const free = id => !P.items.some(i => i.track === id && i.start < b.start + b.dur - 1e-6 && b.start < i.start + i.dur - 1e-6);
-  if (free(b.track)) return b.track;
-  const own = P.tracks.find(x => x.id === b.track), kind = own ? own.kind : 'video', at = own ? P.tracks.indexOf(own) : 0;
-  const up = P.tracks.slice(0, at).reverse().find(x => x.kind === kind && x.id !== 'c1' && !x.locked && free(x.id));
+function freeLaneAbove(clips, source, placed, keepLanes = false) {
+  const track = clips[0].track, own = P.tracks.find(x => x.id === track), kind = own?.kind || source?.kind || laneKind(clips[0]);
+  const occupied = [...P.items, ...placed, ...(!openGrp ? groupBlocks() : [])];
+  const free = x => !x.locked && !occupied.some(i => i.track === x.id && clips.some(b => i.start < b.start + b.dur - 1e-6 && b.start < i.start + i.dur - 1e-6));
+  if (own && free(own)) return track;
+  const at = own ? P.tracks.indexOf(own) : 0;
+  const up = !keepLanes && P.tracks.slice(0, at).reverse().find(x => x.kind === kind && x.id !== 'c1' && free(x));
   if (up) return up.id;
   const x = { id: kind[0] + uid(), kind };
-  P.tracks.splice(at, 0, x);
+  P.tracks.splice(own ? at : kind === 'audio' ? P.tracks.length : 0, 0, x);
   return x.id;
 }
-// Copied layers paste together at the playhead, keeping their timing against each other.
-function pasteClip() {
-  const src = (clipBoard || []).filter(x => !x.media || P.media[x.media]);
-  if (!src.length) return;
+function insertCopies(data, at, duplicate) {
+  if (!data?.items.length) return;
   snapshot();
-  const t0 = Math.min(...src.map(x => x.start)), ids = [];
-  for (const x of src) {
-    const b = { ...JSON.parse(JSON.stringify(x)), id: uid(), start: t + x.start - t0 };
-    const c = src.length === 1 && b.track === 'v1' && magnet && P.items.find(i => i.track === 'v1' && active(i, t));
-    if (c) b.start = t - c.start > c.dur / 2 ? c.start + c.dur - 1e-4 : c.start - 1e-4; // land on the nearest cut
-    else b.track = freeLaneAbove(b);
-    P.items.push(b);
-    ids.push(b.id);
+  const { start } = S.groupSpan(data.items), ids = new Set(), groups = new Map(), tracks = new Map(), placed = [];
+  const clips = JSON.parse(JSON.stringify(data.items));
+  const single = clips.length === 1 && !Object.keys(data.groups).length;
+  for (const b of clips) {
+    b.id = uid();
+    b.start = at + (b.start - start);
+    if (b.media && !P.media[b.media] && data.media[b.media]) P.media[b.media] = JSON.parse(JSON.stringify(data.media[b.media]));
+    if (!openGrp && data.groups[b.grp]) {
+      if (!groups.has(b.grp)) {
+        const id = 'g' + uid();
+        P.groups[id] = { ...data.groups[b.grp] };
+        groups.set(b.grp, id);
+      }
+      const key = b.grp + '/' + b.track;
+      if (!tracks.has(key)) tracks.set(key, []);
+      tracks.get(key).push(b);
+    }
   }
-  sel = ids[0]; msel.clear();
-  if (ids.length > 1) ids.forEach(x => msel.add(x));
+  // Allocate each copied group lane once, preserving its members' relative placement.
+  for (const row of tracks.values()) {
+    const track = freeLaneAbove(row, data.tracks.find(x => x.id === row[0].track), placed, true);
+    for (const b of row) {
+      b.track = track; b.grp = groups.get(b.grp);
+      placed.push(b);
+      ids.add(b.grp);
+    }
+  }
+  let packMain = false;
+  for (const b of clips) {
+    if (ids.has(b.grp)) continue;
+    delete b.grp;
+    const c = !openGrp && single && b.track === 'v1' && magnet && timelineItems().find(i => i.track === 'v1' && active(i, t));
+    if (duplicate && single && P.tracks.some(x => x.id === b.track && !x.locked)) {
+      if (!openGrp && b.track === 'v1' && magnet) b.start -= 1e-4;
+    } else if (c) b.start = t - c.start > c.dur / 2 ? c.start + c.dur - 1e-4 : c.start - 1e-4;
+    else b.track = freeLaneAbove([b], data.tracks.find(x => x.id === b.track), placed);
+    if (openGrp) b.grp = openGrp;
+    placed.push(b);
+    ids.add(b.id);
+    packMain ||= b.track === 'v1';
+  }
+  P.items = P.items.concat(clips);
+  if (packMain) pack();
+  setSelection([...ids]);
   refresh();
 }
+function pasteClip() { insertCopies(clipBoard, t, false); }
+function duplicateSel() {
+  const data = selectionCopy(), span = S.groupSpan(data.items);
+  if (span) insertCopies(data, span.start + span.dur, true);
+}
 function selectStep(dir) {
-  const cur = sel && item(sel), track = cur ? cur.track : 'v1';
-  const row = P.items.filter(i => i.track === track).sort((a, b) => a.start - b.start);
+  const clips = timelineClips(), cur = clips.find(i => i.id === sel), tracks = shownTracks(clips);
+  const track = cur?.track || tracks.find(x => x.id === 'v1')?.id || tracks[0]?.id;
+  const row = clips.filter(i => i.track === track).sort(byStart);
   const k = cur ? row.indexOf(cur) + dir : dir < 0 ? row.findLastIndex(i => i.start < t) : row.findIndex(i => i.start + i.dur > t);
   if (row[k]) { select(row[k].id); seek(row[k].start); }
 }
@@ -5108,8 +5320,13 @@ const KEYMAP = [
   ['g_edit', [
     [['mod+z'], 'undo', () => restore(undoStack, redoStack)], [['mod+shift+z', 'mod+y'], 'redo', () => restore(redoStack, undoStack)],
     [['mod+c'], 'k_copy', copySel], [['mod+x'], 'k_cut', cutSel], [['mod+v'], 'k_paste', pasteClip],
-    [['mod+d'], 'dup', duplicateSel], [['delete'], 'del', () => (focusZone === 'bin' && binSel.size ? deleteMedia(picked()) : removeSel())], [['esc'], 'k_deselect', () => { select(null); binSel.clear(); paintBinSel(); }], [['mod+a'], 'k_selAllMedia', () => {
-      if (focusZone === 'tl' && P.items.length) { msel.clear(); P.items.forEach(i => msel.add(i.id)); if (!isSel(sel)) sel = P.items[0].id; if (msel.size < 2) msel.clear(); paintSel(); inspector(); return; }
+    [['mod+d'], 'dup', duplicateSel], [['mod+g'], 'groupClips', groupSel], [['mod+shift+g'], 'ungroupClips', ungroupSel],
+    [['delete'], 'del', () => (focusZone === 'bin' && binSel.size ? deleteMedia(picked()) : removeSel())], [['esc'], 'k_deselect', () => { if (openGrp) return showGroup(null); select(null); binSel.clear(); paintBinSel(); }], [['mod+a'], 'k_selAllMedia', () => {
+      const ids = focusZone === 'tl' ? timelineClips().map(i => i.id) : [];
+      if (ids.length) {
+        setSelection(ids.includes(sel) ? [sel, ...ids.filter(id => id !== sel)] : ids);
+        paintSel(); inspector(); return;
+      }
       binOrder().forEach(x => binSel.add(x)); paintBinSel(); focusZone = 'bin';
     }]]],
   ['g_timeline', [
@@ -5238,13 +5455,13 @@ const mcpPic = async time => {
   return c.toDataURL('image/jpeg', 0.82).split(',')[1];
 };
 const MCP = {
-  get_project: () => ({ w: P.w, h: P.h, fps: P.fps, name: P.name, duration: +total().toFixed(3), playhead: +t.toFixed(3), tracks: P.tracks,
+  get_project: () => ({ w: P.w, h: P.h, fps: P.fps, name: P.name, duration: +total().toFixed(3), playhead: +t.toFixed(3), tracks: P.tracks, groups: P.groups,
     media: Object.fromEntries(Object.entries(P.media).map(([id, m]) => [id, { kind: m.kind, name: m.name, dur: m.dur, w: m.w, h: m.h, path: m.path, fill: m.fill, adj: m.adj }])), items: P.items }),
   catalog: () => ({ text_styles: TEXT_STYLES.map(s => s.id), text_style_fields: textDefaults(), text_anim_in: ANIM_IN, text_anim_out: ANIM_OUT, text_anim_loop: ANIM_LOOP,
     clip_anim_in: Object.keys(S.VA_IN), clip_anim_out: Object.keys(S.VA_OUT), clip_anim_loop: Object.keys(S.VA_LOOP),
     transitions: [...S.TRANS, ...S.GLT], fx: S.FX, filters: Object.keys(S.PRESETS), layers: LAYERS, blends: ['normal', ...Object.keys(BLENDS)],
     keyframe_props: S.KF, ratios: Object.keys(ASPECTS) }),
-  new_project: a => { snapshot(); P = newProject(); if (ASPECTS[a.ratio]) [P.w, P.h] = ASPECTS[a.ratio]; sel = null; projectPath = null; t = 0; syncSettings(); return { w: P.w, h: P.h }; },
+  new_project: a => { snapshot(); P = newProject(); if (ASPECTS[a.ratio]) [P.w, P.h] = ASPECTS[a.ratio]; openGrp = null; setSelection([]); projectPath = null; t = 0; syncSettings(); return { w: P.w, h: P.h }; },
   set_project: a => {
     if (a.ratio) { if (!ASPECTS[a.ratio]) throw new Error('ratio must be one of ' + Object.keys(ASPECTS).join(', ')); [P.w, P.h] = ASPECTS[a.ratio]; }
     if (a.fps) P.fps = clamp(Math.round(a.fps), 12, 120);
@@ -5262,7 +5479,7 @@ const MCP = {
     if (type === 'text') {
       const d = num(dur, 3), slot = atT(start, () => textSlot(d));
       it = { id: uid(), type: 'text', ...slot, dur: d, text: String(x.text ?? ''), style: { ...presetStyle(style_id), ...(style || {}) }, x: 0.5, y: 0.5, anim: 'fade', out: 'fade' };
-      P.items.push(it);
+      addTimelineItem(it);
     } else if (type === 'clip') {
       if (!P.media[mid]) throw new Error('unknown media id ' + mid + ' (import_media first)');
       it = addMedia(mid, track, start == null ? null : +start);
@@ -5292,7 +5509,7 @@ const MCP = {
     if (!S.hasKf(it)) delete it.kf;
     return it.id;
   },
-  delete_items: a => { const ids = new Set(a.ids); P.items = P.items.filter(i => !ids.has(i.id)); if (sel && !item(sel)) sel = null; return a.ids; },
+  delete_items: a => { const ids = new Set(a.ids); P.items = P.items.filter(i => !ids.has(i.id)); return a.ids; },
   play: a => { if (a.stop) setPlaying(false); else { if (a.from != null) seek(+a.from); setPlaying(true); } return { playing }; },
   undo: a => { restore(a.redo ? redoStack : undoStack, a.redo ? undoStack : redoStack); return { undo: undoStack.length, redo: redoStack.length }; },
   export: async a => { setPlaying(false); await doExport({ k: 1, fps: a.fps || P.fps, codec: 'h264', video: a.path, quality: 'rec' }); return { path: a.path, exists: await inv('path_exists', { path: a.path }) }; },

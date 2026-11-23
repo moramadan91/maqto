@@ -130,6 +130,12 @@ main { display: grid; grid-template-columns: var(--libW, 290px) minmax(0, 1fr) v
 
 /* timeline */
 #tl { display: grid; grid-template-rows: 44px minmax(0, 1fr); min-height: 0; overflow: hidden; }
+#tl.inside-group { grid-template-rows: 44px 30px minmax(0, 1fr); }
+.groupCrumb:not([hidden]) { display: flex; align-items: center; gap: 4px; padding: 0 10px; border-bottom: 1px solid var(--stroke); font-size: 12px; }
+.groupCrumb button { padding: 2px 6px; background: transparent; border-color: transparent; color: var(--accent); }
+.groupCrumb button:hover { background: var(--glass-hi); }
+.groupCrumb svg.ic { width: 13px; height: 13px; color: var(--dim); }
+.groupCrumb span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tools { display: flex; align-items: center; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--stroke); }
 .seg { display: inline-flex; background: var(--well); border-radius: 10px; padding: 2px; }
 #zoom { width: 110px; }
@@ -159,6 +165,7 @@ main { display: grid; grid-template-columns: var(--libW, 290px) minmax(0, 1fr) v
   border: 1px solid rgba(255, 255, 255, .22); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25);
 }
 .clip.k-image { --c: var(--image); } .clip.k-audio { --c: var(--audio); } .clip.k-text { --c: var(--text-c); }
+.clip.k-group { --c: 230, 156, 68; background: repeating-linear-gradient(135deg, rgba(var(--c), .48) 0 7px, rgba(var(--c), .37) 7px 14px), #382717; }
 .clip .wf { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .clip .wf .wv { fill: rgba(255, 255, 255, .38); }
 .clip .wf .vln { fill: none; stroke: #ffd36a; stroke-width: 1.2; vector-effect: non-scaling-stroke; }
@@ -170,7 +177,7 @@ main { display: grid; grid-template-columns: var(--libW, 290px) minmax(0, 1fr) v
 .clip .h { position: absolute; top: 0; bottom: 0; width: 8px; cursor: ew-resize; }
 .clip .h.l { left: 0; } .clip .h.r { right: 0; }
 .clip.sel .h { background: rgba(92, 211, 198, .55); }
-.blade .clip, .blade .clip .h { cursor: crosshair; }
+.blade .clip:not(.k-group), .blade .clip .h { cursor: crosshair; }
 .endln { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255, 90, 90, .3); pointer-events: none; z-index: 4; opacity: 0; transition: opacity .15s; }
 .endln.on { opacity: 1; }
 .ph { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; pointer-events: none; z-index: 5; }

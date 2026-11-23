@@ -11,6 +11,9 @@ const { buildArgs, concatText, atempo } = require('../src/graph');
 const writeConcat = (d, list, fps) => { const f = path.join(d, 'text.ffconcat'); fs.writeFileSync(f, concatText(list, fps)); return f; };
 
 // shared logic
+assert.strictEqual(S.groupSpan([]), null);
+assert.deepStrictEqual(S.groupSpan([{ start: 6, dur: 2 }]), { start: 6, dur: 2 });
+assert.deepStrictEqual(S.groupSpan([{ start: 8, dur: 1 }, { start: 2, dur: 2 }, { start: 4, dur: 7 }]), { start: 2, dur: 9 });
 assert.deepStrictEqual(atempo(1), []);
 assert.deepStrictEqual(atempo(4), ['atempo=2', 'atempo=2']);
 assert.deepStrictEqual(atempo(0.25), ['atempo=0.5', 'atempo=0.5']);
@@ -56,6 +59,10 @@ const p = {
     { id: 'i4', track: 'a1', media: 'm3', start: 1, dur: 2, volume: 0.5, fadeIn: 0.2 },
   ],
 };
+const grouped = { ...p, groups: { g1: { name: 'Group 1' } }, items: p.items.map((it, i) => i ? { ...it, grp: 'g1' } : it) };
+assert.strictEqual(S.projectDur(grouped), S.projectDur(p));
+assert.deepStrictEqual(buildArgs(grouped, { out: clip }), buildArgs(p, { out: clip }));
+
 const out = path.join(dir, 'out.mp4');
 run(ffmpeg, buildArgs(p, { out, textList }).args);
 const pr = JSON.parse(run(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', out]));
