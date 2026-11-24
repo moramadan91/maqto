@@ -2223,6 +2223,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-process",
  "tauri-plugin-updater",
+ "ttf-parser",
  "ureq 2.12.1",
  "whisper-rs",
 ]

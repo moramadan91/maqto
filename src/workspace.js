@@ -1,18 +1,18 @@
 'use strict';
 (() => {
   const library = ['media', 'text', 'captions', 'filters', 'effects', 'stickers', 'icons', 'trans', 'layers', 'sounds'];
-  const panels = [...library, 'player', 'insp', 'tl'];
+  const panels = [...library, 'player', 'insp', 'tl', 'scopes', 'transcript', 'multicam'];
   const group = (...tabs) => ({ tabs, active: tabs[0] });
   const fractions = sizes => {
     const total = sizes.reduce((sum, size) => sum + size, 0);
     return sizes.map(size => size / total);
   };
-  function valid(tree) {
+  function valid(tree, required = panels) {
     const seen = new Set();
     function check(node) {
       if (!node) return false;
       if (!node.split) return Array.isArray(node.tabs) && node.tabs.includes(node.active) && node.tabs.every(tab => {
-        if (!panels.includes(tab) || seen.has(tab)) return false;
+        if (!required.includes(tab) || seen.has(tab)) return false;
         seen.add(tab);
         return true;
       });
@@ -21,10 +21,16 @@
         && node.sizes.every(n => Number.isFinite(n) && n > 0)
         && Math.abs(node.sizes.reduce((sum, n) => sum + n, 0) - 1) < 0.00001 && node.children.every(check);
     }
-    return check(tree) && seen.size === panels.length;
+    return check(tree) && seen.size === required.length;
   }
   function find(tree, tab) {
     return tree.split ? tree.children.map(node => find(node, tab)).find(Boolean) : tree.tabs.includes(tab) ? tree : null;
+  }
+  function withPanels(tree) {
+    for (const id of ['scopes', 'transcript', 'multicam']) {
+      if (valid(tree, panels.slice(0, panels.indexOf(id)))) find(tree, 'insp').tabs.push(id);
+    }
+    return tree;
   }
   function move(tree, tab, targetTab, zone) {
     const source = find(tree, tab), target = find(tree, targetTab);
@@ -52,7 +58,7 @@
     }
     return visit(tree);
   }
-  const api = { library, panels, group, fractions, valid, find, move };
+  const api = { library, panels, group, fractions, valid, find, withPanels, move };
   if (typeof module === 'object') module.exports = api;
   else window.MaqtoWorkspace = api;
 })();

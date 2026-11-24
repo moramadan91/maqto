@@ -4,6 +4,8 @@ mod rife;
 mod matte;
 mod stems;
 mod media_server;
+mod reframe;
+mod multicam_sync;
 
 pub fn mcp_stdio() { mcp::serve_stdio() }
 
@@ -24,6 +26,9 @@ const IMAGE_EXT: [&str; 6] = ["png", "jpg", "jpeg", "webp", "bmp", "gif"];
 #[derive(Default)]
 struct AppState {
     job: Arc<Mutex<Option<Child>>>,
+    job_lock: Mutex<()>,
+    media_proxy: Mutex<Option<MediaProxyJob>>,
+    multicam_sync: Mutex<()>,
     dirs: Mutex<HashMap<u32, PathBuf>>,
     next: Mutex<u32>,
 }
@@ -59,8 +64,9 @@ fn tail(s: &str) -> String {
     lines[lines.len().saturating_sub(4)..].join("\n")
 }
 
-/// Run a long job; every output line goes to `on_line`. Killable through `cancel`.
-fn run_job(state: &AppState, bin: &Path, args: &[String], on_line: impl Fn(&str) + Send + Sync + 'static) -> R<()> {
+/// Run a long job and retain its stderr tail for callers. Killable through `cancel`.
+fn run_job(state: &AppState, bin: &Path, args: &[String], on_line: impl Fn(&str) + Send + Sync + 'static) -> R<String> {
+    let _job = state.job_lock.try_lock().map_err(|_| "another job is running")?;
     let mut child = command(bin).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
         .spawn().map_err(|e| format!("{}: {e}", bin.display()))?;
     let out = child.stdout.take().unwrap();
@@ -95,7 +101,7 @@ fn run_job(state: &AppState, bin: &Path, args: &[String], on_line: impl Fn(&str)
     t_err.join().ok();
     let status = state.job.lock().unwrap().take().map(|mut c| c.wait());
     match status {
-        Some(Ok(s)) if s.success() => Ok(()),
+        Some(Ok(s)) if s.success() => Ok(std::mem::take(&mut *err_buf.lock().unwrap())),
         Some(Ok(_)) => Err(tail(&err_buf.lock().unwrap())),
         Some(Err(e)) => Err(err(e)),
         None => Err("cancelled".into()),
@@ -112,8 +118,9 @@ fn cancel(state: State<AppState>) {
 }
 
 fn probe_one(p: &str) -> R<Value> {
+    let source_key = media_source_key(p).ok();
     let out = command(&sidecar("ffprobe"))
-        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams", p])
+        .args(["-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-show_chapters", p])
         .output().map_err(err)?;
     if !out.status.success() { return Err(tail(&String::from_utf8_lossy(&out.stderr))); }
     let j: Value = serde_json::from_slice(&out.stdout).map_err(err)?;
@@ -136,10 +143,17 @@ fn probe_one(p: &str) -> R<Value> {
     let kind = if is_img { "image" } else if v.is_some() { "video" } else { "audio" };
     let name = Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
     let mut media = json!({ "path": p, "name": name, "kind": kind, "dur": if is_img { Value::Null } else { json!(dur) },
-        "w": w, "h": h, "fps": fps, "hasAudio": a.is_some() && !is_img });
+        "w": w, "h": h, "fps": fps, "hasAudio": a.is_some() && !is_img, "audioChannels": a.and_then(|a| a["channels"].as_u64()) });
+    media["firstMarker"] = json!(j["chapters"].as_array().into_iter().flatten()
+        .filter_map(|c| num(&c["start_time"])).filter(|t| t.is_finite() && *t >= 0.0)
+        .min_by(f64::total_cmp));
     if let Some(v) = v.filter(|_| !is_img) {
         let hdr = v["color_transfer"] == "arib-std-b67" || v["color_transfer"] == "smpte2084" || v["color_primaries"] == "bt2020";
         media["hdr"] = json!(hdr);
+        media["codec"] = v["codec_name"].clone();
+        let bitrate = num(&v["bit_rate"]).filter(|b| *b > 0.0).or_else(|| num(&j["format"]["bit_rate"]));
+        media["bitrate"] = json!(bitrate);
+        media["sourceKey"] = json!(source_key);
         if hdr {
             for (key, stream_key) in [("trc", "color_transfer"), ("primaries", "color_primaries"), ("matrix", "color_space")] {
                 let value = v[stream_key].as_str().filter(|s| !matches!(*s, "unknown" | "unspecified"));
@@ -177,6 +191,32 @@ fn save_project(path: String, json: String) -> R<()> {
 }
 
 #[tauri::command]
+fn save_chapters(path: String, text: String) -> R<()> {
+    if !path.to_ascii_lowercase().ends_with(".txt") { return Err("chapter files end with .txt".into()); }
+    std::fs::write(path, text).map_err(err)
+}
+
+#[tauri::command]
+fn save_timeline(path: String, text: String) -> R<()> {
+    if !["fcpxml", "edl", "otio"].iter().any(|ext| timeline_extension(&path, ext)) {
+        return Err("timeline files end with .fcpxml, .edl or .otio".into());
+    }
+    std::fs::write(path, text).map_err(err)
+}
+
+fn timeline_extension(path: &str, ext: &str) -> bool {
+    Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext))
+}
+
+#[tauri::command]
+fn read_timeline(path: String) -> R<String> {
+    if !["fcpxml", "otio"].iter().any(|ext| timeline_extension(&path, ext)) {
+        return Err("timeline files end with .fcpxml or .otio".into());
+    }
+    std::fs::read_to_string(path).map_err(err)
+}
+
+#[tauri::command]
 async fn open_project(srv: State<'_, Arc<MediaServer>>, path: String) -> R<Value> {
     if !(path.ends_with(".maqto") || path.ends_with(".kadr")) { return Err("project files end with .maqto".into()); }
     let srv = srv.inner().clone();
@@ -189,10 +229,14 @@ async fn open_project(srv: State<'_, Arc<MediaServer>>, path: String) -> R<Value
                 if f.is_empty() { continue; } // fill layers have no file
                 if Path::new(f).exists() {
                     srv.allow(f);
-                    if v["kind"] == "video" && !v["hdr"].is_boolean() {
+                    if v["kind"] == "video" && (!v["hdr"].is_boolean()
+                        || v["sourceKey"].as_str() != media_source_key(f).ok().as_deref())
+                    {
                         if let Ok(probed) = probe_one(f) {
-                            for key in ["hdr", "trc", "primaries", "matrix"] {
-                                if let Some(value) = probed.get(key) { v[key] = value.clone(); }
+                            // Old projects only gain the newer source keys; a saved size/length/rate is never overwritten.
+                            for key in ["w", "h", "dur", "fps", "hasAudio", "audioChannels", "hdr", "trc", "primaries", "matrix", "codec", "bitrate", "sourceKey", "firstMarker"] {
+                                if matches!(key, "w" | "h" | "dur" | "fps") && !v[key].is_null() { continue; }
+                                v[key] = probed[key].clone();
                             }
                         }
                     }
@@ -229,7 +273,7 @@ fn write_work(state: State<AppState>, request: tauri::ipc::Request) -> R<String>
     let id: u32 = h.get("x-id").and_then(|v| v.to_str().ok()).and_then(|s| s.parse().ok()).ok_or("x-id")?;
     let name = h.get("x-name").and_then(|v| v.to_str().ok()).ok_or("x-name")?;
     let (stem, ext) = name.rsplit_once('.').ok_or("bad name")?;
-    let ok = !stem.is_empty() && stem.len() <= 40 && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && (ext == "cube" || ext == "png" || ext == "ffconcat");
+    let ok = !stem.is_empty() && stem.len() <= 40 && stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') && matches!(ext, "cube" | "png" | "ffconcat" | "ffmetadata");
     if !ok { return Err("bad file name".into()); }
     let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else { return Err("expected raw body".into()) };
     let p = work_dir(&state, id)?.join(name);
@@ -376,13 +420,24 @@ async fn export_run(app: AppHandle, id: u32, args: Vec<String>, concat: Option<S
         let dir = work_dir(&state, id)?;
         if let Some(c) = concat { std::fs::write(dir.join("text.ffconcat"), c).map_err(err)?; }
         let a = app.clone();
-        let r = run_job(&state, &sidecar("ffmpeg"), &args, move |l| {
+        let r = assert_original_inputs(&app, &args).and_then(|()| run_job(&state, &sidecar("ffmpeg"), &args, move |l| {
             if let Some(us) = l.strip_prefix("out_time_us=").and_then(|s| s.trim().parse::<f64>().ok()) {
                 let _ = a.emit("progress", json!({ "label": "export", "p": (us / 1e6 / duration).clamp(0.0, 1.0) }));
             }
-        });
+        }));
         if let Some(d) = state.dirs.lock().unwrap().remove(&id) { let _ = std::fs::remove_dir_all(d); }
-        r
+        r.map(|_| ())
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+async fn loudness_measure(app: AppHandle, args: Vec<String>) -> R<Value> {
+    tauri::async_runtime::spawn_blocking(move || {
+        assert_original_inputs(&app, &args)?;
+        let log = run_job(&app.state::<AppState>(), &sidecar("ffmpeg"), &args, |_| {})?;
+        let end = log.rfind("\n}").ok_or("missing loudness analysis")? + 1;
+        let start = log[..end].rfind("\n{").ok_or("missing loudness analysis")? + 1;
+        serde_json::from_str(&log[start..=end]).map_err(err)
     }).await.map_err(err)?
 }
 
@@ -460,25 +515,189 @@ fn proxy_cancel(job: String) {
     if let Some(s) = PX_JOBS.lock().unwrap().remove(&job) { if let Some(mut c) = s.lock().unwrap().take() { let _ = c.kill(); } }
 }
 
-/// True when a video has keyframes over 2 s apart in its first 12 s (AI clips often have one per file):
-/// every seek then decodes from the far keyframe, so the preview needs a proxy with dense keyframes.
-#[tauri::command]
-async fn sparse_keys(path: String) -> bool {
-    tauri::async_runtime::spawn_blocking(move || {
-        let Ok(out) = command(&sidecar("ffprobe")).args(["-v", "error", "-select_streams", "v:0", "-read_intervals", "%+12",
-            "-show_entries", "packet=pts_time,flags", "-of", "csv=p=0", &path]).output() else { return false };
-        let mut keys = vec![];
-        let mut last = 0.0f64;
-        for l in String::from_utf8_lossy(&out.stdout).lines() {
-            let mut f = l.split(',');
-            let Some(t) = f.next().and_then(|x| x.parse::<f64>().ok()) else { continue };
-            last = last.max(t);
-            if f.next().is_some_and(|x| x.starts_with('K')) { keys.push(t); }
+struct MediaProxyJob {
+    id: String,
+    path: String,
+    cancelled: bool,
+    child: Option<Child>,
+}
+
+fn proxy_hash(value: impl std::hash::Hash) -> String {
+    use std::hash::Hasher;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+fn media_source_key(path: &str) -> R<String> {
+    let meta = std::fs::metadata(path).map_err(err)?;
+    Ok(proxy_hash((path, meta.len(), meta.modified().map_err(err)?)))
+}
+
+fn media_proxy_dir(app: &AppHandle) -> R<PathBuf> {
+    Ok(app.path().app_cache_dir().map_err(err)?.join("media-proxies"))
+}
+
+fn media_proxy_path(dir: &Path, path: &str, source_key: &str, high: bool) -> PathBuf {
+    dir.join(format!("{}-{source_key}-{}.mp4", proxy_hash(path), if high { 1280 } else { 960 }))
+}
+
+fn assert_original_inputs(app: &AppHandle, args: &[String]) -> R<()> {
+    let dir = media_proxy_dir(app)?;
+    let canonical = dir.canonicalize().ok();
+    for pair in args.windows(2).filter(|pair| pair[0] == "-i") {
+        let path = Path::new(&pair[1]);
+        if path.starts_with(&dir) || canonical.as_ref().is_some_and(|d| path.canonicalize().is_ok_and(|p| p.starts_with(d))) {
+            return Err("Editing proxies cannot be used as export inputs".into());
         }
-        keys.sort_by(|a, b| a.total_cmp(b));
-        keys.push(last);
-        keys.windows(2).any(|w| w[1] - w[0] > 2.0)
-    }).await.unwrap_or(false)
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn media_proxy_info(app: AppHandle, srv: State<'_, Arc<MediaServer>>, paths: Vec<String>, high: bool) -> R<Value> {
+    let dir = media_proxy_dir(&app)?;
+    let srv = srv.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut entries = serde_json::Map::new();
+        for path in paths {
+            let Ok(key) = media_source_key(&path) else { continue };
+            let out = media_proxy_path(&dir, &path, &key, high);
+            let cached = out.is_file().then(|| {
+                let out = out.to_string_lossy().into_owned();
+                srv.allow(&out);
+                out
+            });
+            entries.insert(path, json!({ "sourceKey": key, "path": cached }));
+        }
+        Value::Object(entries)
+    }).await.map_err(err)
+}
+
+#[tauri::command]
+fn media_proxy_size(app: AppHandle) -> R<u64> {
+    Ok(std::fs::read_dir(media_proxy_dir(&app)?).into_iter().flatten().flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "mp4"))
+        .filter_map(|e| e.metadata().ok()).map(|m| m.len()).sum())
+}
+
+#[tauri::command]
+fn delete_media_proxies(app: AppHandle, state: State<AppState>, path: Option<String>) -> R<()> {
+    let active = state.media_proxy.lock().unwrap();
+    if active.as_ref().is_some_and(|job| path.as_ref().is_none_or(|p| *p == job.path)) {
+        return Err("Cancel the media proxy job before deleting it".into());
+    }
+    let prefix = path.map(|p| format!("{}-", proxy_hash(p)));
+    let entries = match std::fs::read_dir(media_proxy_dir(&app)?) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(err(e)),
+    };
+    for e in entries {
+        let e = e.map_err(err)?;
+        let name = e.file_name();
+        let name = name.to_string_lossy();
+        if (name.ends_with(".mp4") || name.ends_with(".part"))
+            && prefix.as_ref().is_none_or(|p| name.starts_with(p))
+        {
+            std::fs::remove_file(e.path()).map_err(err)?;
+        }
+    }
+    Ok(())
+}
+
+fn encode_media_proxy(app: &AppHandle, job: &Mutex<Option<MediaProxyJob>>, args: &[String], duration: f64, id: &str) -> R<()> {
+    let mut active = job.lock().unwrap();
+    let active_job = active.as_mut().unwrap();
+    if active_job.cancelled { return Err("cancelled".into()); }
+    let mut child = command(&sidecar("ffmpeg")).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(err)?;
+    let (stdout, mut stderr) = (child.stdout.take().unwrap(), child.stderr.take().unwrap());
+    active_job.child = Some(child);
+    drop(active);
+    let stderr = std::thread::spawn(move || {
+        let mut log = String::new();
+        let _ = stderr.read_to_string(&mut log);
+        log
+    });
+    for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+        if let Some(us) = line.strip_prefix("out_time_us=").and_then(|s| s.parse::<f64>().ok()) {
+            if duration > 0.0 {
+                let _ = app.emit("mediaproxyprog", json!({ "job": id, "p": (us / 1e6 / duration).clamp(0.0, 0.99) }));
+            }
+        }
+    }
+    let log = stderr.join().unwrap_or_default();
+    let mut active = job.lock().unwrap();
+    let active_job = active.as_mut().unwrap();
+    let status = active_job.child.take().unwrap().wait().map_err(err)?;
+    if active_job.cancelled { return Err("cancelled".into()); }
+    if status.success() { Ok(()) } else { Err(tail(&log)) }
+}
+
+#[tauri::command]
+async fn make_proxy(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: String, high: bool, tone_map: String, job: String, source_key: String) -> R<String> {
+    let srv = srv.inner().clone();
+    let dir = media_proxy_dir(&app)?;
+    let out = media_proxy_path(&dir, &path, &source_key, high);
+    {
+        let state = app.state::<AppState>();
+        let mut active = state.media_proxy.lock().unwrap();
+        if active.is_some() { return Err("another media proxy is running".into()); }
+        *active = Some(MediaProxyJob { id: job.clone(), path: path.clone(), cancelled: false, child: None });
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let tmp = out.with_extension("part");
+        let cached = out.is_file();
+        let result = (|| {
+            if media_source_key(&path)? != source_key { return Err("Source changed".into()); }
+            if !cached {
+                std::fs::create_dir_all(&dir).map_err(err)?;
+                let m = probe_one(&path)?;
+                if m["kind"] != "video" { return Err("Expected video".into()); }
+                let w = m["w"].as_f64().filter(|w| *w > 0.0).ok_or("Missing video width")?;
+                let h = m["h"].as_f64().filter(|h| *h > 0.0).ok_or("Missing video height")?;
+                let scale = (if high { 1280.0 } else { 960.0 } / w.max(h)).min(1.0);
+                let even = |v: f64| ((v * scale / 2.0).round() * 2.0).max(2.0);
+                let prefix = if tone_map.is_empty() { String::new() } else { format!("{tone_map},") };
+                let filter = format!("{prefix}scale={}:{}", even(w), even(h));
+                let mut args = vec!["-y", "-v", "error", "-nostats", "-progress", "pipe:1",
+                    "-filter_threads", "2", "-threads", "2", "-i", &path, "-map", "0:V:0", "-map", "0:a:0?",
+                    "-vf", &filter, "-g", "15", "-pix_fmt", "yuv420p", "-fps_mode", "passthrough",
+                    "-enc_time_base:v", "-1", "-c:a", "aac", "-ac", "2", "-b:a", "128k", "-movflags", "+faststart"];
+                if !tone_map.is_empty() { args.extend(["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"]); }
+                let run = |encoder: &[&str]| {
+                    let out = tmp.to_string_lossy();
+                    let args = args.iter().copied().chain(encoder.iter().copied()).chain(["-f", "mp4", out.as_ref()])
+                        .map(str::to_owned).collect::<Vec<_>>();
+                    encode_media_proxy(&app, &state.media_proxy, &args, m["dur"].as_f64().unwrap_or(0.0), &job)
+                };
+                if !cfg!(target_os = "macos") || run(&["-c:v", "h264_videotoolbox", "-allow_sw", "0", "-realtime", "1", "-b:v", if high { "4M" } else { "2M" }]).is_err() {
+                    run(&["-c:v", "libx264", "-preset", "ultrafast", "-crf", "24", "-threads", "2"])?;
+                }
+                if media_source_key(&path)? != source_key { return Err("Source changed".into()); }
+            }
+            Ok(())
+        })();
+        let mut active = state.media_proxy.lock().unwrap();
+        let cancelled = active.take().unwrap().cancelled;
+        let result = if cancelled { Err("cancelled".into()) } else {
+            result.and_then(|()| if cached { Ok(()) } else { std::fs::rename(&tmp, &out).map_err(err) })
+        };
+        if result.is_err() { let _ = std::fs::remove_file(&tmp); }
+        result?;
+        let path = out.to_string_lossy().into_owned();
+        srv.allow(&path);
+        Ok(path)
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+fn cancel_media_proxy(state: State<AppState>, job: String) {
+    if let Some(active) = state.media_proxy.lock().unwrap().as_mut().filter(|a| a.id == job) {
+        active.cancelled = true;
+        if let Some(child) = &mut active.child { let _ = child.kill(); }
+    }
 }
 
 /// Raw frames for motion tracking: ffmpeg's stdout handed to JS as bytes.
@@ -525,6 +744,159 @@ async fn audio_fx(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: String
     let s = out.to_string_lossy().into_owned();
     srv.allow(&s);
     Ok(s)
+}
+
+#[derive(serde::Deserialize)]
+struct MulticamInput {
+    path: String,
+    start: f64,
+    duration: f64,
+    audio: bool,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MulticamMatch {
+    offset: f64,
+    confidence: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct MulticamSync {
+    audio: Option<usize>,
+    matches: Vec<MulticamMatch>,
+}
+
+fn multicam_energy(input: &MulticamInput) -> Vec<f64> {
+    use multicam_sync::FRAME;
+    if !input.audio { return Vec::new(); }
+    let Ok(mut child) = command(&sidecar("ffmpeg")).args([
+        "-v", "error", "-nostdin", "-ss", &input.start.to_string(), "-i", &input.path,
+        "-t", &input.duration.min(180.0).to_string(), "-map", "0:a:0", "-vn", "-ac", "1",
+        "-af", "aresample=8000:async=1:first_pts=0", "-f", "s16le", "pipe:1",
+    ]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+        return Vec::new();
+    };
+    let mut energy = Vec::new();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut frame = [0; FRAME * 2];
+    while reader.read_exact(&mut frame).is_ok() {
+        let power: f64 = frame.chunks_exact(2).map(|p| {
+            (i16::from_le_bytes([p[0], p[1]]) as f64 / 32768.0).powi(2)
+        }).sum();
+        energy.push(power / FRAME as f64);
+    }
+    if child.wait().is_ok_and(|status| status.success()) { energy } else { Vec::new() }
+}
+
+#[tauri::command]
+async fn sync_multicam(app: AppHandle, inputs: Vec<MulticamInput>, reference: Option<usize>, align: bool) -> R<MulticamSync> {
+    if !(2..=9).contains(&inputs.len()) || reference.is_some_and(|i| !inputs.get(i).is_some_and(|a| a.audio))
+        || inputs.iter().any(|i| !i.start.is_finite() || i.start < 0.0 || !i.duration.is_finite() || i.duration <= 0.0) {
+        return Err("Invalid multicam inputs".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        let _job = state.multicam_sync.lock().map_err(err)?;
+        let cache = app.path().app_cache_dir().map_err(err)?.join("multicam-sync");
+        let sources: Vec<_> = inputs.iter().map(|i| {
+            (media_source_key(&i.path).ok(), i.start.to_bits(), i.duration.to_bits(), i.audio)
+        }).collect();
+        let cacheable = sources.iter().all(|s| s.0.is_some());
+        let file = cache.join(format!("{}.json", proxy_hash((1, &sources, reference, align))));
+        if cacheable {
+            if let Some(hit) = std::fs::read(&file).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()) {
+                return Ok(hit);
+            }
+        }
+        let energy: Vec<_> = inputs.iter().map(multicam_energy).collect();
+        let audio = reference.or_else(|| inputs.iter().enumerate().filter(|(_, i)| i.audio)
+            .max_by(|(a, _), (b, _)| {
+                let rank = |i: usize| energy[i].iter().sum::<f64>();
+                rank(*a).total_cmp(&rank(*b)).then_with(|| inputs[*a].duration.total_cmp(&inputs[*b].duration))
+            }).map(|(i, _)| i));
+        let env: Vec<_> = if align { energy.iter().map(|e| multicam_sync::envelope(e)).collect() } else { Vec::new() };
+        let matches = energy.iter().enumerate().map(|(i, e)| {
+            let (offset, confidence) = match audio.filter(|_| align) {
+                Some(r) if r != i => multicam_sync::correlate(&env[r], &env[i], 60 * multicam_sync::HZ),
+                Some(_) if e.iter().any(|v| *v > 1e-8) => (0.0, 1.0),
+                _ => (0.0, 0.0),
+            };
+            MulticamMatch { offset, confidence }
+        }).collect();
+        let result = MulticamSync { audio, matches };
+        if cacheable && inputs.iter().zip(&energy).all(|(i, e)| !i.audio || !e.is_empty())
+            && inputs.iter().zip(&sources).all(|(i, s)| media_source_key(&i.path).ok() == s.0) {
+            if let Ok(bytes) = serde_json::to_vec(&result) {
+                if std::fs::create_dir_all(&cache).is_ok() { let _ = std::fs::write(file, bytes); }
+            }
+        }
+        Ok(result)
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+async fn speech_regions(app: AppHandle, path: String, threshold_db: Option<f64>, silences: Option<bool>) -> R<Vec<(f64, f64)>> {
+    use std::hash::{Hash, Hasher};
+    let dir = app.path().app_data_dir().map_err(err)?.join("speech");
+    tauri::async_runtime::spawn_blocking(move || {
+        const FILTER: &str = "aresample=16000:async=1:first_pts=0,silencedetect=n=-38dB:d=0.20";
+        let silence = silences.unwrap_or(false);
+        let custom;
+        let filter = if silence {
+            let db = threshold_db.filter(|db| db.is_finite()).unwrap_or(-40.0).clamp(-100.0, 0.0);
+            custom = format!("aresample=16000:async=1:first_pts=0,silencedetect=n={db}dB:d=0.001");
+            custom.as_str()
+        } else { FILTER };
+        static SCAN: Mutex<()> = Mutex::new(());
+        let _scan = SCAN.lock().unwrap();
+        let meta = std::fs::metadata(&path).map_err(err)?;
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (&path, meta.len(), meta.modified().ok(), filter).hash(&mut h);
+        let out = dir.join(format!("{:016x}.json", h.finish()));
+        if let Ok(data) = std::fs::read(&out) {
+            if let Ok(regions) = serde_json::from_slice(&data) { return Ok(regions); }
+        }
+        let result = command(&sidecar("ffmpeg")).args([
+            "-hide_banner", "-nostats", "-progress", "pipe:1", "-i", &path,
+            "-map", "0:a:0", "-af", filter, "-f", "null", "-",
+        ]).stdin(Stdio::null()).output().map_err(err)?;
+        let log = String::from_utf8_lossy(&result.stderr);
+        if !result.status.success() { return Err(tail(&log)); }
+        let progress = String::from_utf8_lossy(&result.stdout);
+        let dur = progress.lines().rev().filter_map(|l| l.strip_prefix("out_time_us=")?.parse::<f64>().ok())
+            .next().unwrap_or(0.0) / 1e6;
+        let mut regions = Vec::new();
+        let mut start: f64 = 0.0;
+        for line in log.lines() {
+            if let Some((_, end)) = line.split_once("silence_start: ") {
+                if let Ok(end) = end.trim().parse::<f64>() {
+                    if end.min(dur) > start { regions.push((start, end.min(dur))); }
+                    start = dur;
+                }
+            }
+            if let Some((_, end)) = line.split_once("silence_end: ") {
+                if let Some(end) = end.split_whitespace().next().and_then(|s| s.parse::<f64>().ok()) {
+                    start = end.clamp(0.0, dur);
+                }
+            }
+        }
+        if dur > start { regions.push((start, dur)); }
+        if silence {
+            let mut at = 0.0;
+            let mut gaps = Vec::new();
+            for (a, b) in regions {
+                if a > at { gaps.push((at, a)); }
+                at = b;
+            }
+            if dur > at { gaps.push((at, dur)); }
+            regions = gaps;
+        }
+        std::fs::create_dir_all(&dir).map_err(err)?;
+        let tmp = out.with_extension(format!("{}.part", std::process::id()));
+        std::fs::write(&tmp, serde_json::to_vec(&regions).map_err(err)?).map_err(err)?;
+        std::fs::rename(&tmp, &out).map_err(err)?;
+        Ok(regions)
+    }).await.map_err(err)?
 }
 
 /// Stabilize (vidstab, two passes) the whole source once per file and strength into a cached copy
@@ -604,10 +976,24 @@ async fn model_download(app: AppHandle, model: String) -> R<()> {
 }
 
 // ---------- fonts ----------
-// Families installed on this computer (any app's fonts), names only: the webview draws them by name.
+// Pick samples from the Unicode cmap so the webview never has to substitute a preview glyph.
+fn system_font_sample(data: &[u8], index: u32, name: &str) -> Option<String> {
+    let face = ttf_parser::Face::parse(data, index).ok()?;
+    let supports = |text: &str| text.chars().filter(|c| !c.is_whitespace()).all(|c| face.glyph_index(c).is_some());
+    match (supports("Aa"), supports("أبجد هوز")) {
+        (true, true) => return Some("Aa أبجد هوز".into()),
+        (true, false) => return Some("Aa".into()),
+        (false, true) => return Some("أبجد هوز".into()),
+        _ => {}
+    }
+    if supports(name) { return Some(name.chars().take(8).collect()); }
+    // Other scripts: a few direct glyph lookups; walking the whole cmap of every installed face is too slow.
+    ["αβγ", "абв", "אבג", "कखग", "กขค", "あいう", "漢字", "한글"].into_iter().find(|t| supports(t)).map(String::from)
+}
+
+// Families installed on this computer, with the exact face and its supported preview text.
 #[tauri::command]
 async fn system_fonts(srv: State<'_, Arc<MediaServer>>) -> Result<Value, ()> {
-    // WebKit only draws OS fonts by name, not ones the user installed, so the page loads each family from its files
     let srv = srv.inner().clone();
     Ok(tauri::async_runtime::spawn_blocking(move || {
         let mut db = fontdb::Database::new();
@@ -617,10 +1003,13 @@ async fn system_fonts(srv: State<'_, Arc<MediaServer>>) -> Result<Value, ()> {
             let Some(name) = f.families.first().map(|x| x.0.clone()).filter(|n| !n.starts_with('.')) else { continue };
             let path = match &f.source { fontdb::Source::File(p) => p.clone(), fontdb::Source::SharedFile(p, _) => p.clone(), _ => continue };
             let e = fams.entry(name.to_lowercase()).or_insert_with(|| (name.clone(), vec![]));
-            if f.index > 0 { continue; } // FontFace can't pick a face inside a collection: first one only
+            let (collection, sample) = db.with_face_data(f.id, |data, index| {
+                (data.starts_with(b"ttcf"), system_font_sample(data, index, &name))
+            }).unwrap_or((f.index > 0, None));
             let p = path.to_string_lossy().into_owned();
             srv.allow(&p);
-            e.1.push(json!({ "path": p, "weight": f.weight.0, "italic": f.style != fontdb::Style::Normal }));
+            e.1.push(json!({ "path": p, "index": f.index, "collection": collection, "sample": sample,
+                "weight": f.weight.0, "italic": f.style != fontdb::Style::Normal }));
         }
         Value::Array(fams.into_values().map(|(n, files)| json!({ "family": n, "files": files })).collect())
     }).await.unwrap_or(Value::Array(vec![])))
@@ -765,6 +1154,7 @@ fn path_exists(path: String) -> bool { Path::new(&path).exists() }
 
 #[tauri::command]
 fn quit_app(app: AppHandle, state: State<AppState>) {
+    app.state::<reframe::Reframe>().cancel(None);
     cleanup(&state);
     app.exit(0);
 }
@@ -775,16 +1165,18 @@ fn quit_app(app: AppHandle, state: State<AppState>) {
 fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     use tauri::menu::{Menu, MenuItem, PredefinedMenuItem as P, Submenu};
     let quit = MenuItem::with_id(app, "quit", "Quit Maqto", true, Some("CmdOrCtrl+Q"))?;
+    let shortcuts = MenuItem::with_id(app, "shortcuts", "Keyboard Shortcuts…", true, None::<&str>)?;
     let maqto = Submenu::with_items(app, "Maqto", true, &[
-        &P::about(app, None, None)?, &P::separator(app)?, &P::services(app, None)?, &P::separator(app)?,
+        &P::about(app, None, None)?, &shortcuts, &P::separator(app)?, &P::services(app, None)?, &P::separator(app)?,
         &P::hide(app, None)?, &P::hide_others(app, None)?, &P::show_all(app, None)?, &P::separator(app)?, &quit,
     ])?;
-    // File items go to the page (menu-file event) so they share the save/unsaved-work logic of the shortcuts.
-    let f = |id: &str, label: &str, key: &str| MenuItem::with_id(app, id, label, true, Some(key));
+    // The webview owns editor accelerators so rebinding also releases the old keys.
+    let item = |id: &str, label: &str| MenuItem::with_id(app, id, label, true, None::<&str>);
     let file = Submenu::with_items(app, "File", true, &[
-        &f("new", "New Project", "CmdOrCtrl+N")?, &f("open", "Open…", "CmdOrCtrl+O")?, &P::separator(app)?,
-        &f("save", "Save", "CmdOrCtrl+S")?, &f("saveAs", "Save As…", "CmdOrCtrl+Shift+S")?, &P::separator(app)?,
-        &f("import", "Import Media…", "CmdOrCtrl+I")?, &f("export", "Export Video…", "CmdOrCtrl+E")?,
+        &item("new", "New Project")?, &item("open", "Open…")?, &P::separator(app)?,
+        &item("save", "Save")?, &item("saveAs", "Save As…")?, &P::separator(app)?,
+        &item("import", "Import Media…")?, &item("export", "Export Video…")?,
+        &P::separator(app)?, &item("importTimeline", "Import Timeline…")?, &item("exportTimeline", "Export Timeline As…")?,
     ])?;
     let edit = Submenu::with_items(app, "Edit", true, &[
         &P::undo(app, None)?, &P::redo(app, None)?, &P::separator(app)?,
@@ -950,15 +1342,18 @@ pub fn run() {
         .on_menu_event(|app, e| match e.id().as_ref() {
             "quit" => { let _ = app.emit("quit-requested", ()); }
             "workspaces" => { let _ = app.emit("menu-workspaces", ()); }
-            id @ ("new" | "open" | "save" | "saveAs" | "import" | "export") => { let _ = app.emit("menu-file", id.to_string()); }
+            "shortcuts" => { let _ = app.emit("menu-shortcuts", ()); }
+            id @ ("new" | "open" | "save" | "saveAs" | "import" | "export" | "importTimeline" | "exportTimeline") => { let _ = app.emit("menu-file", id.to_string()); }
             _ => {}
         });
     b
         .manage(AppState::default())
+        .manage(reframe::Reframe::default())
         .manage(MediaServer::start().expect("media server"))
         .invoke_handler(tauri::generate_handler![
-            probe, save_project, open_project, recovery_path, work_begin, work_end, write_frame, export_run, audio_fx, video_stab, proxy_render, write_work, read_lut, lut_library, lut_add, lut_remove, sfx_library, sfx_import, overlay_library,
-            cancel, take_open_file, model_ready, model_download, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, sparse_keys, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_make, stems::stems_ready, stems::stems_download, stems::stems_make, stems::stems_raw, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop, save_to_photos, speech_to_text, whisper_words, matte::cut_ready, matte::cut_download, matte::cut_raw, matte::slow_raw
+            reframe::reframe_analyze, reframe::reframe_cancel,
+            probe, save_project, save_chapters, save_timeline, read_timeline, open_project, recovery_path, work_begin, work_end, write_frame, export_run, loudness_measure, audio_fx, sync_multicam, speech_regions, video_stab, proxy_render, write_work, read_lut, lut_library, lut_add, lut_remove, sfx_library, sfx_import, overlay_library,
+            cancel, take_open_file, model_ready, model_download, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, make_proxy, cancel_media_proxy, media_proxy_info, media_proxy_size, delete_media_proxies, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_make, stems::stems_ready, stems::stems_download, stems::stems_make, stems::stems_raw, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop, save_to_photos, speech_to_text, whisper_words, matte::cut_ready, matte::cut_download, matte::cut_raw, matte::slow_raw
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -977,7 +1372,10 @@ pub fn run() {
         .on_window_event(|w, e| if w.label() == "main" { match e {
             // The page decides: it asks to save unsaved work, then calls quit_app.
             tauri::WindowEvent::CloseRequested { api, .. } => { api.prevent_close(); let _ = w.emit("quit-requested", ()); }
-            tauri::WindowEvent::Destroyed => cleanup(&w.state::<AppState>()),
+            tauri::WindowEvent::Destroyed => {
+                w.state::<reframe::Reframe>().cancel(None);
+                cleanup(&w.state::<AppState>());
+            }
             _ => {}
         } })
         .build(tauri::generate_context!())

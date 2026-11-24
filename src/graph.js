@@ -30,6 +30,25 @@
     proxy: () => ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-g', '12', '-pix_fmt', 'yuv420p'], // preview only: quick to make, quick to seek
   };
   const SDR_TAGS = ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv'];
+  const LOUDNESS_TARGETS = [-14, -16, -23];
+
+  function loudnormFilter(target, stats) {
+    if (!LOUDNESS_TARGETS.includes(target)) return '';
+    const base = `loudnorm=I=${target}:TP=-1:LRA=11`;
+    if (!stats) return base + ':print_format=json';
+    if (stats.input_i === '-inf') return '';
+    const fields = [
+      ['measured_I', 'input_i', -99, 0], ['measured_TP', 'input_tp', -99, 99],
+      ['measured_LRA', 'input_lra', 0, 99], ['measured_thresh', 'input_thresh', -99, 0],
+      ['offset', 'target_offset', -99, 99],
+    ];
+    const measured = fields.map(([option, key, min, max]) => {
+      const value = Number(stats[key]);
+      if (!Number.isFinite(value)) throw new Error('Invalid loudness analysis');
+      return `${option}=${S.clamp(value, min, max)}`;
+    });
+    return [base, ...measured, 'linear=true'].join(':');
+  }
 
   function toneMap(m) {
     if (m.kind !== 'video' || !m.hdr) return '';
@@ -67,11 +86,13 @@
 
   // o: { out, textList (ffconcat path or null), audioOnly, codec }
   function buildArgs(p, o) {
+    p = S.expandMulticam(p);
     const W = p.w, H = p.h, fps = p.fps, T = S.projectDur(p);
     if (!(T > 0)) throw new Error('empty timeline');
+    const audioOnly = o.audioOnly || o.audioExport || o.loudnessAnalysis;
     const vt = p.tracks.filter(t => t.kind === 'video').map(t => t.id).reverse(); // bottom layer first
-    const vis = o.audioOnly || o.audioExport ? [] : p.items
-      .filter(i => vt.includes(i.track) && !i.hidden && i.media && p.media[i.media] && p.media[i.media].kind !== 'audio')
+    const vis = audioOnly ? [] : p.items
+      .filter(i => vt.includes(i.track) && !i.hidden && !i.audioOnly && i.media && p.media[i.media] && p.media[i.media].kind !== 'audio')
       .sort((a, b) => vt.indexOf(a.track) - vt.indexOf(b.track) || a.start - b.start);
     const aud = p.items.filter(i => audible(p, i));
 
@@ -80,6 +101,8 @@
     const fc = [];
     const idx = new Map();
     let n = 0;
+    const chapterInput = !audioOnly && o.chapterFile ? n++ : -1;
+    if (chapterInput >= 0) args.push('-f', 'ffmetadata', '-i', o.chapterFile);
     const input = it => {
       if (idx.has(it.id)) return idx.get(it.id);
       const m = p.media[it.media];
@@ -90,7 +113,7 @@
       return n++;
     };
 
-    if (!o.audioOnly && !o.audioExport) {
+    if (!audioOnly) {
       let base = 'b0';
       fc.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${f3(T)},format=yuv420p[b0]`);
       // text layers (rasterized per group of adjacent text tracks) go in at their track's place in the stack
@@ -196,7 +219,7 @@
           ch.push(`rotate=a='${has('rotate') ? `(${ex('rotate', 0, 't', 0)})*PI/180` : rot.toFixed(6)}':ow=${bw}:oh=${bh}:c=black@0`);
         }
         if (has('opacity')) ch.push(`geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='alpha(X,Y)*clip(${S.pwExpr(kf.opacity, 0, sm, 'T')},0,1)'`);
-        if (has('scale')) {
+        if (has('scale') && (LP?.e.s || kf.scale.some(q => q[1] !== smax))) {
           const sc = ex('scale', 0, 't', 1);
           ch.push(`scale=w='max(2,trunc(${bw}*(${sc})/${smax}/2)*2)':h='max(2,trunc(${bh}*(${sc})/${smax}/2)*2)':eval=frame`);
           // pad back to a fixed size every frame: overlay keeps stale pixels when its input size changes
@@ -274,16 +297,25 @@
       fc.push(`[${src}]${ch.join(',') || 'anull'}[a${j}]`);
       al.push(`[a${j}]`);
     });
-    if (al.length) fc.push(`${al.join('')}amix=inputs=${al.length}:normalize=0:duration=longest,apad=whole_dur=${f3(T)}[aout]`);
-    else fc.push(`anullsrc=r=48000:cl=stereo,atrim=duration=${f3(T)}[aout]`);
+    const mix = al.length ? `${al.join('')}amix=inputs=${al.length}:normalize=0:duration=longest,apad=whole_dur=${f3(T)}`
+      : `anullsrc=r=48000:cl=stereo,atrim=duration=${f3(T)}`;
+    const norm = o.loudnessAnalysis ? loudnormFilter(o.loudnessTarget || LOUDNESS_TARGETS[0])
+      : o.loudnessStats && loudnormFilter(o.loudnessTarget, o.loudnessStats);
+    // The filter must see the same complete timeline in both passes, before the muxer's duration limit.
+    const master = norm ? `,atrim=duration=${f3(T)},${norm},aformat=sample_rates=48000:channel_layouts=stereo` : '';
+    fc.push(`${mix}${master}[aout]`);
 
     args.push('-filter_complex', fc.join(';'));
-    if (o.audioExport) {
+    if (o.loudnessAnalysis) {
+      args.push('-map', '[aout]', '-f', 'null', '-');
+    } else if (o.audioExport) {
       const ac = { mp3: ['-c:a', 'libmp3lame', '-b:a', '320k'], wav: ['-c:a', 'pcm_s16le', '-ar', '48000'], m4a: ['-c:a', 'aac', '-b:a', '256k'] }[o.audioExport];
       args.push('-map', '[aout]', ...ac, '-t', f3(T), '-progress', 'pipe:1', o.out);
     } else if (o.audioOnly) {
       args.push('-map', '[aout]', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-t', f3(T), o.out);
     } else {
+      if (chapterInput >= 0) args.push('-map_metadata', String(chapterInput));
+      args.push('-map_chapters', String(chapterInput));
       args.push('-map', '[vout]', '-map', '[aout]', ...(ENCODERS[o.codec] || ENCODERS.h264)(o.quality),
         ...SDR_TAGS, '-r', String(fps), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart',
         '-t', f3(T), '-progress', 'pipe:1', o.out);
@@ -299,7 +331,22 @@
     return L.join('\n') + '\n';
   }
 
-  const api = { buildArgs, concatText, atempo, ENCODERS, SDR_TAGS, toneMap };
+  function chapterMetadata(markers, duration, intro = 'Intro', unnamed = 'Marker') {
+    const end = Math.round(duration * 1000);
+    const chapters = S.normalizeMarkers(markers)
+      .map(m => ({ start: Math.round(m.time * 1000), title: m.name || unnamed }))
+      .filter((m, i, all) => m.start < end && m.start !== all[i - 1]?.start);
+    if (!chapters.length) return '';
+    // MP4/MOV players start the first chapter at zero, so give the lead-in its own chapter.
+    if (chapters[0].start > 0) chapters.unshift({ start: 0, title: intro });
+    return ';FFMETADATA1\n' + chapters.map((m, i) => {
+      const title = m.title.replace(/[\\=;#]/g, '\\$&');
+      // FFmpeg treats a newline after an escaped backslash as a continuation. NUL ends the value first.
+      return `[CHAPTER]\nTIMEBASE=1/1000\nSTART=${m.start}\nEND=${chapters[i + 1]?.start ?? end}\ntitle=${title}${title.endsWith('\\') ? '\0' : ''}\n`;
+    }).join('');
+  }
+
+  const api = { buildArgs, concatText, chapterMetadata, atempo, audible, ENCODERS, SDR_TAGS, toneMap, LOUDNESS_TARGETS, loudnormFilter };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MaqtoGraph = api;
 })(this);

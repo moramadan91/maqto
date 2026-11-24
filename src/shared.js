@@ -750,11 +750,62 @@
 
   const projectDur = p => p.items.reduce((m, i) => Math.max(m, i.start + i.dur), 0);
 
+  const markerTitle = name => typeof name === 'string' ? name.replace(/[\r\n\u2028\u2029\0]+/g, ' ').trim().slice(0, 80) : '';
+  function normalizeMarkers(markers) {
+    return (Array.isArray(markers) ? markers : []).flatMap(m => {
+      const time = typeof m === 'number' ? m : m?.time;
+      return Number.isFinite(time) && time >= 0 ? [{
+        time, name: markerTitle(m.name), note: typeof m.note === 'string' ? m.note : '', color: m.color || 'accent',
+      }] : [];
+    }).sort((a, b) => a.time - b.time);
+  }
+
+  function youtubeChapters(markers, duration, intro = 'Intro', unnamed = 'Marker') {
+    const chapters = normalizeMarkers(markers);
+    if (chapters[0]?.time !== 0) chapters.unshift({ time: 0, name: intro });
+    const starts = chapters.map(m => Math.floor(m.time));
+    const pad = n => String(n).padStart(2, '0');
+    const stamp = s => duration >= 3600 || s >= 3600
+      ? `${Math.floor(s / 3600)}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`
+      : `${Math.floor(s / 60)}:${pad(s % 60)}`;
+    return {
+      text: chapters.map((m, i) => `${stamp(starts[i])} ${m.name || unnamed}`).join('\n'),
+      valid: chapters.length >= 3 && chapters.every((m, i) => m.time < duration && (starts[i + 1] ?? duration) - starts[i] >= 10),
+    };
+  }
+
   function groupSpan(items) {
     if (!items.length) return null;
     let start = Infinity, end = -Infinity;
     for (const it of items) { start = Math.min(start, it.start); end = Math.max(end, it.start + it.dur); }
     return { start, dur: end - start };
+  }
+
+  const SOCIAL_EXPORT_PRESETS = {
+    youtube1080: { aspect: [16, 9], res: 1080, quality: 'high' },
+    youtube4k: { aspect: [16, 9], res: 2160, codec: 'hevc', quality: 'high', hw: false },
+    shorts: { aspect: [9, 16], res: 1080 },
+    instagram: { aspect: [4, 5], res: 1080 },
+    podcast: { video: false, audio: true, afmt: 'mp3', loudnessTarget: -16 },
+    master: { codec: 'prores', format: 'mov', quality: 'high', loudnessTarget: 0 },
+  };
+
+  function exportPresetSettings(preset, project, encoders) {
+    const { aspect, ...settings } = preset;
+    const codec = settings.codec && Object.hasOwn(encoders, settings.codec) ? settings.codec : 'h264';
+    return {
+      settings: {
+        video: true, audio: false, format: 'mp4', afmt: 'mp3', quality: 'rec', res: 1080,
+        fps: project.fps, loudnessTarget: -14, chapters: true,
+        ...settings, codec,
+      },
+      aspectHint: aspect && Math.abs((project.w / project.h) / (aspect[0] / aspect[1]) - 1) > 0.001
+        ? aspect.join(':') : '',
+    };
+  }
+
+  function snapshotExport(project, settings, paths) {
+    return { project: scaleProject(project, 1), settings: JSON.parse(JSON.stringify(settings)), paths: { ...paths } };
   }
 
   // Same project at k times the resolution (export at 2K/4K). Pixel offsets and text sizes scale; fractions don't.
@@ -766,7 +817,7 @@
     for (const it of q.items) {
       if (typeof it.x === 'number' && it.type !== 'text') it.x *= k;
       if (typeof it.y === 'number' && it.type !== 'text') it.y *= k;
-      if (it.kf && it.type !== 'text') for (const f of ['x', 'y']) if (it.kf[f]) it.kf[f] = it.kf[f].map(([t, v]) => [t, v * k]);
+      if (it.kf && it.type !== 'text') for (const f of ['x', 'y']) if (it.kf[f]) it.kf[f] = it.kf[f].map(([t, v, ...rest]) => [t, v * k, ...rest]);
       if (it.style) for (const f of ['size', 'strokeW', 'spacing', 'shadowBlur', 'shadowDist', 'glowSize']) if (typeof it.style[f] === 'number') it.style[f] *= k;
       if (it.style) for (const x of [...(it.style.strokes || []), ...(it.style.shadows || [])]) for (const f of ['w', 'blur', 'dist']) if (x[f] != null) x[f] = +x[f] * k;
     }
@@ -814,15 +865,21 @@
 
   // Motion tracking: it.trk.pts = [[lt, fx, fy], ...] sorted by lt; offsets are fractions of the frame size.
   function trkAt(it, lt) {
-    const p = it.trk && it.trk.pts;
+    return it.trk?.reframe ? [0, 0] : trackOffset(it.trk, lt);
+  }
+  function trackOffset(trk, lt) {
+    const p = trk?.pts;
     if (!p || !p.length) return [0, 0];
     if (lt <= p[0][0]) return [p[0][1], p[0][2]];
-    for (let i = 1; i < p.length; i++) if (lt <= p[i][0]) {
-      const a = p[i - 1], b = p[i], u = (lt - a[0]) / Math.max(1e-6, b[0] - a[0]);
-      return [a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+    let lo = 0, hi = p.length - 1;
+    if (lt >= p[hi][0]) return [p[hi][1], p[hi][2]];
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (lt <= p[mid][0]) hi = mid;
+      else lo = mid;
     }
-    const z = p[p.length - 1];
-    return [z[1], z[2]];
+    const a = p[lo], b = p[hi], u = (lt - a[0]) / Math.max(1e-6, b[0] - a[0]);
+    return [a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
   }
   // Piecewise curve [[lt, v], ...] as an ffmpeg expression: a flat sum of pieces (no deep nesting).
   // off shifts lt into the filter's clock (item start for overlay's global t, 0 for local t); tv names that clock.
@@ -833,13 +890,15 @@
     for (let i = 1; i < n; i++) {
       const a = pts[i - 1], b = pts[i], d = b[0] - a[0];
       if (d <= 0) continue;
-      const u = `(${tv}-${T(a[0])})/${d.toFixed(4)}`, f = smooth ? `(${u})*(${u})*(3-2*(${u}))` : u;
-      parts.push(`gte(${tv},${T(a[0])})*lt(${tv},${T(b[0])})*(${V(a[1])}+${V(b[1] - a[1])}*${f})`);
+      const u = `(${tv}-${T(a[0])})/${d.toFixed(4)}`;
+      const f = smooth && b[2] !== 'linear' ? `(${u})*(${u})*(3-2*(${u}))` : u;
+      const v = b[2] === 'cut' ? V(a[1]) : `${V(a[1])}+${V(b[1] - a[1])}*${f}`;
+      parts.push(`gte(${tv},${T(a[0])})*lt(${tv},${T(b[0])})*(${v})`);
     }
     return parts.join('+');
   }
   function trkExpr(it, size, axis) {
-    const p = it.trk && it.trk.pts;
+    const p = it.trk?.reframe ? null : it.trk?.pts;
     return p && p.length ? pwExpr(p.map(q => [q[0], q[axis + 1] * size]), it.start, false) : '0';
   }
 
@@ -849,11 +908,99 @@
     if (lt <= p[0][0]) return p[0][1];
     for (let i = 1; i < p.length; i++) if (lt <= p[i][0]) {
       const a = p[i - 1], b = p[i], u = (lt - a[0]) / Math.max(1e-6, b[0] - a[0]);
-      return a[1] + (b[1] - a[1]) * u * u * (3 - 2 * u);
+      if (b[2] === 'cut') return lt < b[0] ? a[1] : b[1];
+      return a[1] + (b[1] - a[1]) * (b[2] === 'linear' ? u : u * u * (3 - 2 * u));
     }
     return p[p.length - 1][1];
   }
+  // Samples are [local seconds, normalized source x, normalized source y, cut].
+  function smoothPath(samples, { frame = [1, 1], deadZone = 0.08, maxSpeed = 0.65 } = {}) {
+    let path, target, prev;
+    return samples.map(([t, x, y, cut]) => {
+      const subject = [x, y];
+      if (!path || cut) target = path = subject;
+      else {
+        const dt = Math.max(0, t - prev), blend = 1 - Math.exp(-dt / 0.22);
+        target = subject.map((v, i) => {
+          const radius = deadZone * frame[i], delta = v - path[i];
+          return Math.abs(delta) <= radius ? path[i] : target[i] + (v - Math.sign(delta) * radius - target[i]) * blend;
+        });
+        path = target.map((v, i) => {
+          const step = maxSpeed * frame[i] * dt;
+          return path[i] + clamp(v - path[i], -step, step);
+        });
+      }
+      prev = t;
+      return [t, ...path, cut];
+    });
+  }
+  function thinKeys(samples, threshold = 0.008, interval = 0.5) {
+    if (!samples.length) return [];
+    const keys = [samples[0]];
+    const change = (a, b) => Math.max(Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+    for (let i = 1; i < samples.length; i++) {
+      const p = samples[i], before = samples[i - 1], last = keys.at(-1);
+      if (p[3]) {
+        if (before[0] > last[0] && change(before, last) >= threshold) keys.push(before);
+        keys.push(p);
+      } else if ((p[0] - last[0] >= interval || i === samples.length - 1) && change(p, last) >= threshold) {
+        if (before[0] - last[0] >= interval && change(before, last) < threshold) {
+          const hold = Math.min(before[0], p[0] - interval);
+          if (hold - last[0] >= interval) keys.push([hold, last[1], last[2]]);
+        }
+        keys.push(p);
+      }
+    }
+    return keys;
+  }
+  function cropKeyframes(centres, sw, sh, w, h) {
+    const cover = Math.max(w / sw, h / sh), contain = Math.min(w / sw, h / sh);
+    const scale = cover / contain;
+    const { cw, ch } = layout({ fit: 'contain', scale }, { w: sw, h: sh }, w, h);
+    const pan = (v, source, frame) => clamp((0.5 - v) * source, (frame - source) / 2, (source - frame) / 2);
+    const positions = centres.map(([t, x, y, cut]) => [t, pan(x, cw, w) / w, pan(y, ch, h) / h, cut]);
+    const keys = thinKeys(positions);
+    const axis = (i, size) => keys.every(p => p[i] === keys[0][i])
+      ? [[0, (keys[0]?.[i] ?? 0) * size]]
+      : keys.map(p => [+p[0].toFixed(4), p[i] * size, p[3] ? 'cut' : 'linear']);
+    return { x: axis(1, w), y: axis(2, h), scale: [[0, scale]] };
+  }
   const volumeAt = (it, lt) => it.kf?.volume?.length ? kfVal(it.kf.volume, lt) : num(it.volume, 1);
+  const DUCK_DEFAULTS = { amount: -12, attack: 0.15, release: 0.4, source: '' };
+  const isDuckKey = q => q[2] === 'duck' || q[2] === 'ducked';
+  function duckGainKeys(regions, dur, settings = DUCK_DEFAULTS) {
+    const attack = clamp(num(settings.attack, DUCK_DEFAULTS.attack), 0.01, 5);
+    const release = clamp(num(settings.release, DUCK_DEFAULTS.release), 0.01, 5);
+    const gain = 10 ** (clamp(num(settings.amount, DUCK_DEFAULTS.amount), -30, -3) / 20);
+    const spans = [];
+    for (const [a, b] of regions.filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0])) {
+      const last = spans[spans.length - 1];
+      // Hold the dip if there isn't enough time to release and attack again.
+      if (last && a - attack <= last[1] + release) last[1] = Math.max(b, last[1]);
+      else spans.push([a, b]);
+    }
+    const keys = new Map();
+    for (const [a, b] of spans) {
+      const ramp = [[a - attack, 1], [a, gain], [b, gain], [b + release, 1]];
+      if (a - attack >= dur || b + release <= 0) continue;
+      for (const [t] of ramp) {
+        const x = clamp(t, 0, dur);
+        keys.set(+x.toFixed(4), kfVal(ramp, x));
+      }
+    }
+    return [...keys];
+  }
+  function writeDuckKeys(it, gainKeys) {
+    const manual = (it.kf?.volume || []).filter(q => !isDuckKey(q));
+    const times = new Set(manual.map(q => q[0]));
+    const generated = gainKeys.filter(([t]) => !times.has(t)).map(([t, gain]) => [
+      t, gain * (manual.length ? kfVal(manual, t) : num(it.volume, 1)), gain < 1 ? 'ducked' : 'duck',
+    ]);
+    const keys = [...manual, ...generated].sort((a, b) => a[0] - b[0]);
+    if (keys.length) (it.kf ??= {}).volume = keys;
+    else if (it.kf) delete it.kf.volume;
+    return generated.length;
+  }
   const hasKf = (it, props = KF) => !!(it.kf && props.some(k => it.kf[k] && it.kf[k].length));
   function animAt(it, lt) { // item with its keyframed props resolved at local time lt
     if (!hasKf(it)) return it;
@@ -863,8 +1010,8 @@
   }
   // Keyframes and tracking are pinned to the content: dropping d seconds from the front moves them back by d.
   function shiftTimes(it, d) {
-    if (it.kf) for (const k of KF) if (it.kf[k]) it.kf[k] = it.kf[k].map(([t, v]) => [+(t - d).toFixed(4), v]);
-    if (it.trk) it.trk = { pts: it.trk.pts.map(([t, x, y]) => [+(t - d).toFixed(4), x, y]) };
+    if (it.kf) for (const k of KF) if (it.kf[k]) it.kf[k] = it.kf[k].map(([t, ...values]) => [+(t - d).toFixed(4), ...values]);
+    if (it.trk) it.trk = { ...it.trk, pts: it.trk.pts.map(([t, x, y]) => [+(t - d).toFixed(4), x, y]) };
   }
 
   // Visual (image/video/logo) animations: in/out play over it.inDur/it.outDur, loop runs all clip long.
@@ -989,7 +1136,10 @@
     o.kf = it.kf?.volume?.length ? { volume: it.kf.volume } : {};
     for (const k of VIS_KF) {
       const v = rows.map(r => num(r[k], k === 'scale' || k === 'opacity' ? 1 : 0));
-      if (v.some(x => Math.abs(x - v[0]) > 1e-6)) o.kf[k] = times.map((x, i) => [x, +v[i].toFixed(5)]);
+      if (v.some(x => Math.abs(x - v[0]) > 1e-6)) {
+        const cuts = new Set((it.kf?.[k] || []).filter(q => q[2] === 'cut').map(q => q[0]));
+        o.kf[k] = times.map((x, i) => cuts.has(x) ? [x, +v[i].toFixed(5), 'cut'] : [x, +v[i].toFixed(5)]);
+      } else if (it.kf?.[k]?.length) o[k] = v[0];
     }
     o._lin = true;
     return o;
@@ -1044,6 +1194,13 @@
   // Seconds into the source (from it.in) at local time lt, and back.
   const srcAt = (it, lt) => hasCurve(it) ? it.curve.src * uAtF(it.curve, lt / it.dur) : lt * num(it.speed, 1);
   const ltAt = (it, so) => hasCurve(it) ? it.dur * fAtU(it.curve, so / it.curve.src) : so / num(it.speed, 1);
+  function speechTimelineRegions(it, regions) {
+    const from = num(it.in, 0), to = from + srcLen(it);
+    return regions.flatMap(([a, b]) => {
+      const lo = Math.max(a, from), hi = Math.min(b, to);
+      return hi > lo ? [[it.start + ltAt(it, lo - from), it.start + ltAt(it, hi - from)]] : [];
+    });
+  }
   // Playback rate at local time lt.
   function rateAt(it, lt) {
     if (!hasCurve(it)) return num(it.speed, 1);
@@ -1055,6 +1212,270 @@
     const c = it.curve, u0 = uAtF(c, a / it.dur), u1 = uAtF(c, b / it.dur), n = 16, pts = [];
     for (let i = 0; i <= n; i++) pts.push([+(i / n).toFixed(4), +curveSpeed(c.pts, u0 + (u1 - u0) * i / n).toFixed(4)]);
     return { id: c.id, pts, src: +(c.src * (u1 - u0)).toFixed(5), edited: true };
+  }
+
+  // Cuts and offsets share the source clock: source time for an angle is multicam time minus offset.
+  const multicamTime = (clip, local) => num(clip.in, 0) + srcAt(clip, local);
+  function cutIndex(cuts, time) {
+    for (let i = cuts.length - 1; i >= 0; i--) if (cuts[i].t <= time + 1e-7) return i;
+    return -1;
+  }
+  function recordCut(cuts, time, angle) {
+    const i = cutIndex(cuts, time);
+    if (i < 0) return [{ t: time, angle }, ...cuts];
+    if (cuts[i].angle === angle) return cuts;
+    if (Math.abs(cuts[i].t - time) < 1e-7) return switchSegment(cuts, time, angle);
+    return [...cuts.slice(0, i + 1), { t: time, angle }, ...cuts.slice(i + 1)];
+  }
+  function switchSegment(cuts, time, angle) {
+    if (!cuts.length) return [{ t: time, angle }];
+    const i = Math.max(0, cutIndex(cuts, time));
+    return cuts[i].angle === angle ? cuts : cuts.map((cut, j) => j === i ? { ...cut, angle } : cut);
+  }
+  function cutsToSegments(clip, source) {
+    const cuts = clip.cuts?.length ? clip.cuts : [{ t: 0, angle: source.defaultAngle ?? 0 }];
+    const start = num(clip.in, 0), end = start + srcLen(clip);
+    const first = Math.max(0, cutIndex(cuts, start));
+    return cuts.slice(first).flatMap((cut, j) => {
+      const a = j === 0 ? start : cut.t, b = Math.min(end, cuts[first + j + 1]?.t ?? end);
+      return b - a > 1e-7 ? [{ a, b, angle: cut.angle, index: first + j }] : [];
+    });
+  }
+  function multicamAngle(clip, source, media, angle, a, b) {
+    const ref = source.angles[angle], m = media[ref?.media], start = num(clip.in, 0);
+    if (!m) return null;
+    const lo = Math.max(a, ref.offset + num(ref.in, 0));
+    const hi = Math.min(b, ref.offset + Math.min(num(ref.out, m.dur), m.dur));
+    if (hi - lo <= 1e-7) return null;
+    const x = ltAt(clip, lo - start), y = ltAt(clip, hi - start);
+    const { cuts, ...piece } = clip;
+    Object.assign(piece, { media: ref.media, start: clip.start + x, in: lo - ref.offset, dur: y - x });
+    if (x > 1e-7) { delete piece.trans; piece.fadeIn = 0; }
+    if (y < clip.dur - 1e-7) piece.fadeOut = 0;
+    if (piece.kf) piece.kf = { ...piece.kf };
+    shiftTimes(piece, x);
+    if (hasCurve(clip) && (x > 1e-7 || y < clip.dur - 1e-7)) piece.curve = subCurve(clip, x, y);
+    return piece;
+  }
+  function multicamClips(clip, source, media) {
+    const video = cutsToSegments(clip, source).flatMap(({ a, b, angle, index }) => {
+      if (media[source.angles[angle]?.media]?.kind !== 'video') return [];
+      const piece = multicamAngle(clip, source, media, angle, a, b);
+      return piece ? [{ ...piece, id: clip.id + '|mc' + angle + '|' + index, muted: true }] : [];
+    });
+    const m = media[source.angles[source.audioAngle]?.media];
+    const audio = (m?.kind === 'audio' || m?.hasAudio) && multicamAngle(clip, source, media,
+      source.audioAngle, num(clip.in, 0), multicamTime(clip, clip.dur));
+    return { video, audio: audio ? { ...audio, id: clip.id + '|audio', audioOnly: true } : null };
+  }
+  function expandMulticam(project, expand = multicamClips) {
+    if (!project.items.some(clip => project.media[clip.media]?.angles)) return project;
+    const items = project.items.flatMap(clip => {
+      const source = project.media[clip.media];
+      if (!source?.angles) return [clip];
+      const { video, audio } = expand(clip, source, project.media);
+      const pieces = audio ? [...video, audio] : video;
+      const end = clip.start + clip.dur, last = pieces.reduce((t, p) => Math.max(t, p.start + p.dur), clip.start);
+      // Keep the project duration when an angle ends before the clip does.
+      if (end - last > 1e-7) pieces.push({ id: clip.id + '|gap', track: clip.track, start: last, dur: end - last, hidden: true, muted: true });
+      return pieces;
+    });
+    return { ...project, items };
+  }
+
+  const cutEnd = clip => clip.start + clip.dur;
+  const cutEps = 1e-6;
+  function mergeRanges(ranges) {
+    const merged = [];
+    for (const [a, b] of ranges.filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b - a > cutEps)
+      .sort((a, b) => a[0] - b[0])) {
+      const last = merged[merged.length - 1];
+      if (last && a <= last[1] + cutEps) last[1] = Math.max(last[1], b);
+      else merged.push([a, b]);
+    }
+    return merged;
+  }
+  function wordsToRanges(words, padding = 0, start = 0, end = Infinity) {
+    return mergeRanges(words.filter(w => w.e > w.s).map(w =>
+      [Math.max(start, w.s - padding), Math.min(end, w.e + padding)]));
+  }
+  function silencesToCuts(regions, start, end, minSilence = 0.5, padding = 0.12) {
+    const silence = mergeRanges(regions.map(([a, b]) => [Math.max(start, a), Math.min(end, b)]));
+    return silence.filter(([a, b]) => b - a + cutEps >= minSilence).flatMap(([a, b]) => {
+      const lo = a > start + cutEps ? a + padding : a;
+      const hi = b < end - cutEps ? b - padding : b;
+      return hi - lo > cutEps ? [[lo, hi]] : [];
+    });
+  }
+  function normalizeArabic(text) {
+    return text.normalize('NFC').replace(/\p{M}|ـ/gu, mark => /\p{Script_Extensions=Arabic}/u.test(mark) ? '' : mark)
+      .replace(/[أإآٱ]/g, 'ا');
+  }
+  // Keep only the words a piece can show (midpoint rule of the transcript view, +-0.05 s) so copies and undo snapshots stay small.
+  function trimTranscript(clip) {
+    if (!Array.isArray(clip.transcript)) return clip;
+    const from = num(clip.in, 0) - 0.05, to = num(clip.in, 0) + srcLen(clip) + 0.05;
+    clip.transcript = clip.transcript.filter(w => (w.s + w.e) / 2 >= from && (w.s + w.e) / 2 < to);
+    return clip;
+  }
+  // ripple: untargeted ranges also close the gap on tracks that have no clip under them (multi-track ripple).
+  function cutRanges(clips, ranges, minDur, sourceDuration = () => 0, ripple = false) {
+    const general = mergeRanges(ranges.filter(r => r[2] == null));
+    const targets = new Map();
+    for (const [a, b, id] of ranges) {
+      if (id == null) continue;
+      if (!targets.has(id)) targets.set(id, []);
+      targets.get(id).push([a, b]);
+    }
+    const removed = ripple ? [...general] : [];
+    const pieces = clips.flatMap(clip => {
+      const start = clip.start, end = cutEnd(clip);
+      const cuts = clip.fixed ? [] : mergeRanges([...(targets.get(clip.id) || []), ...general]
+        .map(([a, b]) => [Math.max(a, start), Math.min(b, end)]));
+      if (!cuts.length) return [{ clip, start, end }];
+      removed.push(...cuts);
+      let at = start;
+      const keep = [];
+      for (const [a, b] of [...cuts, [end, end]]) {
+        if (a > at + cutEps) {
+          if (a - at + cutEps >= minDur) keep.push({ clip, start: at, end: a });
+          else removed.push([at, a]);
+        }
+        at = b;
+      }
+      return keep;
+    });
+    if (!removed.length) return clips;
+    const cuts = mergeRanges(removed), prefix = [0];
+    for (const [a, b] of cuts) prefix.push(prefix[prefix.length - 1] + b - a);
+    const removedBefore = t => {
+      let lo = 0, hi = cuts.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cuts[mid][1] <= t) lo = mid + 1;
+        else hi = mid;
+      }
+      return prefix[lo] + (lo < cuts.length ? Math.max(0, t - cuts[lo][0]) : 0);
+    };
+    const fixedEnds = clips.filter(c => c.fixed).map(cutEnd).sort((a, b) => a - b);
+    return pieces.map(({ clip, start, end }) => {
+      if (clip.fixed) return clip;
+      const floor = fixedEnds.findLast(t => t <= start + cutEps) ?? 0;
+      const at = start - Math.max(0, removedBefore(start) - removedBefore(floor));
+      const head = start - clip.start, tail = cutEnd(clip) - end;
+      if (head < cutEps && tail < cutEps) return at === start ? clip : { ...clip, start: at };
+      const next = head >= cutEps ? withTrim(clip, 'in', head, sourceDuration) : { ...clip };
+      next.start = at;
+      next.dur = end - start;
+      if (hasCurve(clip)) next.curve = subCurve(clip, head, end - clip.start);
+      trimTranscript(next);
+      if (head >= cutEps) { next.fadeIn = next.afIn = 0; delete next.trans; }
+      if (tail >= cutEps) next.fadeOut = next.afOut = 0;
+      if (clip.words) {
+        next.words = next.words.filter(w => w.s >= -cutEps && w.s < next.dur);
+        next.text = next.words.map(w => w.w).join(' ');
+      }
+      return next;
+    });
+  }
+  // Markers follow a ripple: the ones inside a cut go, the rest move left by what was removed before them.
+  function cutMarkers(markers, ranges) {
+    const cuts = mergeRanges(ranges);
+    return markers.filter(m => !cuts.some(([a, b]) => m.time > a + cutEps && m.time < b - cutEps))
+      .map(m => ({ ...m, time: m.time - cuts.reduce((n, [a, b]) => n + Math.max(0, Math.min(b, m.time) - a), 0) }));
+  }
+  const adjacent = (a, b) => a && b && !a.fixed && !b.fixed && Math.abs(cutEnd(a) - b.start) < cutEps;
+  const trackOrder = clips => [...clips].sort((a, b) => a.start - b.start);
+  function edgeLimits(clip, edge, sourceDuration, minDur) {
+    const room = Math.max(0, clip.dur - minDur);
+    if (edge === 'in') {
+      const head = Number.isFinite(sourceDuration(clip)) ? num(clip.in, 0) / num(clip.speed, 1) : Infinity;
+      return [hasCurve(clip) ? 0 : -Math.max(0, head), room];
+    }
+    const tail = (sourceDuration(clip) - num(clip.in, 0) - srcLen(clip)) / num(clip.speed, 1);
+    return [-room, hasCurve(clip) ? 0 : Math.max(0, tail)];
+  }
+  function withTrim(clip, edge, d, sourceDuration) {
+    const head = edge === 'in';
+    const next = { ...clip, dur: clip.dur + (head ? -d : d) };
+    if (head) {
+      next.start += d;
+      if (Number.isFinite(sourceDuration(clip))) next.in = Math.max(0, num(clip.in, 0) + srcAt(clip, d));
+      if (clip.words) next.words = clip.words.map(w => ({ ...w, s: w.s - d, e: w.e - d }));
+      if (clip.kf) next.kf = { ...clip.kf };
+      shiftTimes(next, d);
+    }
+    if (hasCurve(clip)) next.curve = head ? subCurve(clip, d, clip.dur) : subCurve(clip, 0, next.dur);
+    return next;
+  }
+  // Deltas are timeline seconds. Each operation returns clips in the caller's order.
+  function trackEdit(clips, delta, changes) {
+    if (Math.abs(delta) < cutEps) return { clips, delta: 0 };
+    return { clips: clips.map(clip => changes.get(clip) || clip), delta };
+  }
+  function rollEdit(clips, id, edge, delta, sourceDuration, minDur) {
+    const row = trackOrder(clips), i = row.findIndex(clip => clip.id === id);
+    const j = edge === 'in' ? i - 1 : i;
+    return i < 0 ? { clips, delta: 0 } : trimBetween(clips, row[j], null, row[j + 1], delta, sourceDuration, minDur);
+  }
+  function slideClip(clips, id, delta, sourceDuration, minDur) {
+    const row = trackOrder(clips), i = row.findIndex(clip => clip.id === id);
+    return trimBetween(clips, row[i - 1], row[i], row[i + 1], delta, sourceDuration, minDur);
+  }
+  function trimBetween(clips, left, middle, right, delta, sourceDuration, minDur) {
+    if (middle ? !adjacent(left, middle) || !adjacent(middle, right) : !adjacent(left, right)) return { clips, delta: 0 };
+    const [outMin, outMax] = edgeLimits(left, 'out', sourceDuration, minDur);
+    const [inMin, inMax] = edgeLimits(right, 'in', sourceDuration, minDur);
+    const d = clamp(delta, Math.max(outMin, inMin), Math.min(outMax, inMax));
+    if (Math.abs(d) < cutEps) return { clips, delta: 0 };
+    const changes = new Map([[left, withTrim(left, 'out', d, sourceDuration)], [right, withTrim(right, 'in', d, sourceDuration)]]);
+    if (middle) changes.set(middle, { ...middle, start: middle.start + d });
+    return trackEdit(clips, d, changes);
+  }
+  function slipClip(clips, id, delta, sourceDuration) {
+    const clip = clips.find(c => c.id === id);
+    if (!clip || clip.fixed || hasCurve(clip) || !Number.isFinite(sourceDuration(clip))) return { clips, delta: 0 };
+    const speed = num(clip.speed, 1), start = num(clip.in, 0);
+    const d = clamp(delta, -start / speed, Math.max(0, (sourceDuration(clip) - start - srcLen(clip)) / speed));
+    return trackEdit(clips, d, new Map([[clip, { ...clip, in: Math.max(0, start + d * speed) }]]));
+  }
+  function rippleTrim(clips, id, edge, delta, sourceDuration, minDur) {
+    const row = trackOrder(clips), i = row.findIndex(clip => clip.id === id), clip = row[i];
+    if (!clip || clip.fixed) return { clips, delta: 0 };
+    const later = row.slice(i + 1).filter(c => !c.fixed), fixed = row.filter(c => c.fixed);
+    let [min, max] = edgeLimits(clip, edge, sourceDuration, minDur);
+    // A compound outside the current timeline keeps its offsets and acts as a barrier.
+    let grow = Infinity, shrink = later.length ? Math.max(0, later[0].start - clip.start) : Infinity;
+    for (const obstacle of fixed) {
+      if (obstacle.start >= clip.start) grow = Math.min(grow, Math.max(0, obstacle.start - cutEnd(clip)));
+      for (const c of later) {
+        if (obstacle.start >= c.start) grow = Math.min(grow, Math.max(0, obstacle.start - cutEnd(c)));
+        else shrink = Math.min(shrink, Math.max(0, c.start - cutEnd(obstacle)));
+      }
+    }
+    const head = edge === 'in';
+    min = Math.max(min, head ? -grow : -shrink);
+    max = Math.min(max, head ? shrink : grow);
+    const d = clamp(delta, min, max);
+    if (Math.abs(d) < cutEps) return { clips, delta: 0 };
+    const shift = head ? -d : d;
+    const changes = new Map(later.map(c => [c, { ...c, start: c.start + shift }]));
+    changes.set(clip, { ...withTrim(clip, edge, d, sourceDuration), start: clip.start });
+    return trackEdit(clips, d, changes);
+  }
+  function trimAudioEdge(clips, id, edge, delta, sourceDuration, minDur) {
+    const clip = clips.find(c => c.id === id);
+    if (!clip || clip.fixed) return { clips, delta: 0 };
+    let [min, max] = edgeLimits(clip, edge, sourceDuration, minDur);
+    if (edge === 'in') min = Math.max(min, -clip.start);
+    for (const other of clips) {
+      if (other === clip) continue;
+      if (edge === 'in' && other.start < clip.start) min = Math.max(min, Math.min(0, cutEnd(other) - clip.start));
+      if (edge === 'out' && other.start >= clip.start) max = Math.min(max, Math.max(0, other.start - cutEnd(clip)));
+    }
+    const d = clamp(delta, min, max);
+    return Math.abs(d) < cutEps ? { clips, delta: 0 }
+      : trackEdit(clips, d, new Map([[clip, withTrim(clip, edge, d, sourceDuration)]]));
   }
 
   // Masks: a shape in the clip box's own 0..1 space. Preview uses the alpha directly; the export
@@ -1154,7 +1575,7 @@
     else if (id === 'split') ctx.rect(x + w / 2 * (1 - p), y, w * p, h);
     ctx.clip();
   }
-  const visualClip = (p, i) => { const m = i.media && p.media[i.media]; return !!m && m.kind !== 'audio' && !i.hidden; };
+  const visualClip = (p, i) => { const m = i.media && p.media[i.media]; return !!m && m.kind !== 'audio' && !i.audioOnly && !i.hidden; };
   function transIn(p, it) {
     const T = it.trans;
     if (!T || !(TRANS.includes(T.id) || GLT.includes(T.id)) || !visualClip(p, it)) return null;
@@ -1767,7 +2188,61 @@
     return [];
   }
 
-  const api = { FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, fxKey, projectDur, groupSpan, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, hasKf, animAt, shiftTimes };
+  function needsProxy(meta, mode = 'auto') {
+    if (meta?.kind !== 'video' || meta.fill || meta.adj || meta.angles) return false;
+    if (mode === 'always') return true;
+    return mode === 'auto' && (Math.max(meta.w, meta.h) > 1920 || Math.min(meta.w, meta.h) > 1080 ||
+      meta.bitrate > 50_000_000);
+  }
+
+  const api = { multicamTime, cutIndex, recordCut, switchSegment, cutsToSegments, multicamAngle, multicamClips, expandMulticam, needsProxy, FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, fxKey, projectDur, markerTitle, normalizeMarkers, youtubeChapters, groupSpan, SOCIAL_EXPORT_PRESETS, exportPresetSettings, snapshotExport, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, DUCK_DEFAULTS, duckGainKeys, writeDuckKeys, speechTimelineRegions, hasKf, animAt, shiftTimes };
+  const KEY_CODES = {
+    Space: 'Space', Backspace: 'Delete', Delete: 'Delete', Escape: 'Escape', Home: 'Home', End: 'End',
+    ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown',
+    PageUp: 'PageUp', PageDown: 'PageDown', Enter: 'Enter', NumpadEnter: 'Enter', Insert: 'Insert',
+    BracketLeft: '[', BracketRight: ']', Equal: '=', Minus: '-', Slash: '/', Backslash: '\\',
+    Comma: ',', Period: '.', Semicolon: ';', Quote: "'", Backquote: '`',
+    NumpadAdd: '=', NumpadSubtract: '-', NumpadDecimal: '.', NumpadDivide: '/', NumpadMultiply: '*',
+  };
+  const KEY_NAMES = new Set(Object.values(KEY_CODES));
+  function normalizeKey(e, mac) {
+    if (e.isComposing || e.keyCode === 229 || e.getModifierState?.('AltGraph')) return '';
+    const code = e.code || '';
+    const key = /^(Key[A-Z]|Digit[0-9]|Numpad[0-9])$/.test(code) ? code.at(-1)
+      : /^F([1-9]|1[0-9]|2[0-4])$/.test(code) ? code : Object.hasOwn(KEY_CODES, code) ? KEY_CODES[code] : '';
+    if (!key) return '';
+    return [(mac ? e.metaKey : e.ctrlKey) && 'Mod', mac && e.ctrlKey && 'Ctrl',
+      !mac && e.metaKey && 'Meta', e.altKey && 'Alt', e.shiftKey && 'Shift', key].filter(Boolean).join('+');
+  }
+  // On macOS a Mod binding also answers to Ctrl (main treated them alike); an explicit Ctrl binding wins.
+  function lookupKey(map, key, mac) {
+    return map.get(key) ?? (mac && key.startsWith('Ctrl+') ? map.get('Mod+' + key.slice(5)) : undefined);
+  }
+  function validShortcut(spec) {
+    if (typeof spec !== 'string') return false;
+    const match = /^(?:Mod\+)?(?:Ctrl\+|Meta\+)?(?:Alt\+)?(?:Shift\+)?([^+]+)$/.exec(spec);
+    return !!match && (KEY_NAMES.has(match[1]) || /^[A-Z0-9]$|^F([1-9]|1[0-9]|2[0-4])$/.test(match[1]));
+  }
+  function shortcutConflict(bindings, id, key) {
+    return Object.keys(bindings).find(other => id !== other && bindings[other].includes(key));
+  }
+  function mergeKeymap(commands, ...layers) {
+    const bindings = {}, used = new Set();
+    // Explicit assignments win over inherited defaults regardless of command order.
+    for (const layer of layers.reverse().concat([Object.fromEntries(Object.entries(commands).map(([id, cmd]) => [id, cmd.default]))])) {
+      for (const [id, keys] of Object.entries(layer)) {
+        if (!Object.hasOwn(commands, id) || Object.hasOwn(bindings, id)) continue;
+        bindings[id] = keys.filter(key => {
+          if (used.has(key)) return false;
+          used.add(key);
+          return true;
+        });
+      }
+    }
+    return bindings;
+  }
+  Object.assign(api, { normalizeKey, lookupKey, validShortcut, shortcutConflict, mergeKeymap, trackOffset, smoothPath, thinKeys, cropKeyframes,
+    rollEdit, slipClip, slideClip, rippleTrim, trimAudioEdge, wordsToRanges, cutRanges, trimTranscript, cutMarkers, silencesToCuts, normalizeArabic });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MaqtoShared = api;
 })(this);

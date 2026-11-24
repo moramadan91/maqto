@@ -12,25 +12,31 @@
   <div class="brand" data-tauri-drag-region><span class="logo"></span><b data-t="appName"></b></div>
   <div class="pname" id="pname" data-tauri-drag-region></div>
   <span class="flex" data-tauri-drag-region></span>
-  <button class="ib" id="bUndo" data-i="undo-2" data-tt="undo"></button>
-  <button class="ib" id="bRedo" data-i="redo-2" data-tt="redo"></button>
+  <button class="ib" id="bUndo" data-command="undo" data-i="undo-2" data-tt="undo"></button>
+  <button class="ib" id="bRedo" data-command="redo" data-i="redo-2" data-tt="redo"></button>
   <button class="tb" id="bAsst" data-i="sparkles"><span data-t="asst"></span></button>
   <button class="ib" id="bWorkspaces" data-i="layout-dashboard" data-tt="workspaces" aria-expanded="false" aria-controls="workspaces"></button>
-  <button class="ib" id="bKeys" data-i="keyboard" data-tt="shortcuts"></button>
+  <button class="ib" id="bKeys" data-command="shortcuts shortcutSearch" data-i="keyboard" data-tt="k_title"></button>
+  <button class="tb" id="bSettings"><span data-t="settings"></span></button>
   <button class="tb" id="bUpd" data-i="refresh-cw" data-tt="checkUpd"><span data-t="updates"></span></button>
   <span class="sep"></span>
   <button class="tb" id="bLang" data-i="languages"><span data-t="lang"></span></button>
-  <button class="tb" id="bNew" data-i="file-plus" data-tt="k_new"><span data-t="new"></span></button>
-  <button class="tb" id="bOpen" data-i="folder-open"><span data-t="open"></span></button>
-  <button class="tb" id="bSave" data-i="save"><span data-t="save"></span></button>
-  <button class="tb primary" id="bExport" data-i="share"><span data-t="export"></span></button>
+  <button class="tb" id="bNew" data-command="new" data-i="file-plus" data-tt="k_new"><span data-t="new"></span></button>
+  <button class="tb" id="bOpen" data-command="open" data-tt="open" data-i="folder-open"><span data-t="open"></span></button>
+  <button class="tb" id="bSave" data-command="save" data-tt="save" data-i="save"><span data-t="save"></span></button>
+  <button class="tb" id="bQueue" data-i="list"><span data-t="renderQueue"></span><span id="rqBadge" hidden></span></button>
+  <button class="tb primary" id="bExport" data-command="export" data-tt="export" data-i="share"><span data-t="export"></span></button>
 </header>
 
 <main id="dock">
   <div id="lib" hidden>
     <section data-pane="media">
-      <button class="wide accent-ghost" id="bImport" data-i="plus"><span data-t="import"></span></button>
-      <div class="binbar"><input id="binQ" type="search" data-ph="searchMedia"><select id="binSort"><option value="added" data-t="s_added"></option><option value="name" data-t="s_name"></option><option value="dur" data-t="s_dur"></option><option value="kind" data-t="s_kind"></option></select><button class="ib" id="binAll" data-tt="selAll"></button><button class="ib danger" id="binDel" hidden></button><button class="ib" id="binView" data-tt="viewMode"></button></div>
+      <button class="wide accent-ghost" id="bImport" data-command="import" data-tt="import" data-i="plus"><span data-t="import"></span></button>
+      <details id="markerPanel"><summary data-t="markers"></summary><div id="markerList"></div>
+        <p class="hint marker-warning" id="chapterWarning" role="status" hidden></p>
+        <div class="marker-actions"><button id="copyChapters" data-t="copyChapters"></button><button id="saveChapters" data-t="saveChapters"></button></div>
+      </details>
+      <div class="binbar"><input id="binQ" type="search" data-ph="searchMedia"><select id="binSort"><option value="added" data-t="s_added"></option><option value="name" data-t="s_name"></option><option value="dur" data-t="s_dur"></option><option value="kind" data-t="s_kind"></option></select><button class="ib" id="binAll" data-command="selectAll" data-tt="selAll"></button><button class="ib danger" id="binDel" hidden></button><button class="ib" id="binView" data-tt="viewMode"></button></div>
       <div class="binzoom"><button class="ib" id="binZOut" data-i="zoom-out" data-tt="zoomOut"></button><input id="binZoom" type="range" min="56" max="220" step="4"><button class="ib" id="binZIn" data-i="zoom-in" data-tt="zoomIn"></button></div>
       <div id="binList"></div>
       <p class="hint" data-t="importHint"></p>
@@ -92,12 +98,15 @@
       <span class="tc"><b id="tc">00:00:00</b><i>/</i><span id="tdur">00:00:00</span></span>
       <span class="tmid">
       <button class="ib" id="bBack" data-i="skip-back"></button>
-      <button class="ib big" id="bPlay" data-i="play" data-tt="k_play"></button>
+      <button class="ib big" id="bPlay" data-command="togglePlay" data-i="play" data-tt="k_play"></button>
       <button class="ib" id="bFwd" data-i="skip-forward"></button>
+      <button class="ib" id="bProxy" data-command="toggleProxies" data-tt="proxyUse" aria-pressed="false">P</button>
       <span class="safebtns" id="bSafe"><button class="ib" data-sz="tiktok"></button><button class="ib" data-sz="reels"></button><button class="ib" data-sz="snap"></button></span>
       </span>
-      <label class="ratio"><span data-t="ratio"></span>
-        <select id="aspect"></select></label>
+      <div class="ratio">
+        <label for="aspect" data-t="ratio"></label><select id="aspect"></select>
+        <button id="smartReframe" data-t="reframe"></button>
+      </div>
     </div>
   </section>
 
@@ -106,33 +115,98 @@
     <div id="inspBody"></div>
   </aside>
 
+  <section class="panel" id="multicam" hidden>
+    <p id="mcEmpty" class="hint" data-t="mcEmpty"></p>
+    <div id="mcGrid" class="mc-grid"></div>
+  </section>
+  <section class="panel" id="transcript" hidden>
+    <div class="transcript-controls">
+      <div class="transcript-options">
+        <label class="f"><span data-t="capLang"></span><select id="transcriptLang"></select></label>
+        <label class="f"><span data-t="capModel"></span><select id="transcriptModel"></select></label>
+      </div>
+      <div class="transcript-actions">
+        <button id="transcribeClips" data-t="transcribeClips"></button>
+        <button id="cutTranscript" data-t="cutTranscript" disabled></button>
+      </div>
+      <details>
+        <summary data-t="removeSilences"></summary>
+        <div class="transcript-options">
+          <label class="f"><span data-t="silenceThreshold"></span><input id="silenceThreshold" type="number" min="-100" max="0" step="1" value="-40"></label>
+          <label class="f"><span data-t="minSilence"></span><input id="minSilence" type="number" min="0" step="0.01" value="0.5"></label>
+          <label class="f"><span data-t="silencePadding"></span><input id="silencePadding" type="number" min="0" step="0.01" value="0.12"></label>
+        </div>
+        <div class="transcript-actions">
+          <button id="previewSilences" data-t="previewSilences"></button>
+          <button id="applySilences" data-t="applySilences"></button>
+          <output id="silenceCount" aria-live="polite"></output>
+        </div>
+      </details>
+      <details>
+        <summary data-t="removeFillers"></summary>
+        <div id="fillerList"></div>
+        <form id="fillerForm" class="transcript-actions">
+          <input id="fillerInput" type="text" dir="auto" data-ph="fillerPhrase" aria-label="" autocomplete="off" required>
+          <button data-t="addFiller"></button>
+        </form>
+      </details>
+      <div class="transcript-actions">
+        <button id="selectFillers" data-t="selectFillers" disabled></button>
+        <output id="fillerCount" aria-live="polite"></output>
+      </div>
+    </div>
+    <div id="transcriptText" tabindex="0" role="region" aria-labelledby="transcriptLabel"></div>
+    <span id="transcriptLabel" data-t="wsTranscript" hidden></span>
+  </section>
+
+  <section class="panel" id="scopes" hidden>
+    <div class="scope-controls">
+      <span id="scopePrimary" data-t="scopePrimary" hidden></span>
+      <select aria-labelledby="scopePrimary">
+        <option value="waveform" data-t="scopeWaveform"></option>
+        <option value="parade" data-t="scopeParade"></option>
+        <option value="vector" data-t="scopeVector"></option>
+        <option value="histogram" data-t="scopeHistogram"></option>
+      </select>
+      <span id="scopeSecondary" data-t="scopeSecondary" hidden></span>
+      <select aria-labelledby="scopeSecondary">
+        <option value="" data-t="scopeSingle"></option>
+      </select>
+    </div>
+    <div class="scope-plots"><canvas></canvas><canvas hidden></canvas></div>
+  </section>
+
 <section id="tl">
   <div class="tools">
     <div class="seg">
-      <button class="ib on" id="tSelect" data-i="mouse-pointer-2" data-tt="select"></button>
-      <button class="ib" id="tBlade" data-i="scissors" data-tt="blade"></button>
+      <button class="ib on" id="tSelect" data-tl-tool="select" aria-pressed="true" data-command="select" data-i="mouse-pointer-2" data-tt="select"></button>
+      <button class="ib" id="tBlade" data-tl-tool="blade" aria-pressed="false" data-command="blade" data-i="scissors" data-tt="blade"></button>
+      <button class="ib" data-tl-tool="ripple" aria-pressed="false" data-command="ripple" data-i="between-vertical-start" data-tt="rippleTool"></button>
+      <button class="ib" data-tl-tool="roll" aria-pressed="false" data-command="roll" data-i="arrow-right-left" data-tt="rollTool"></button>
+      <button class="ib" data-tl-tool="slip" aria-pressed="false" data-command="slip" data-i="stretch-horizontal" data-tt="slipTool"></button>
+      <button class="ib" data-tl-tool="slide" aria-pressed="false" data-command="slide" data-i="move-horizontal" data-tt="slideTool"></button>
     </div>
     <span class="sep"></span>
-    <button class="ib" id="bSplit" data-i="square-split-horizontal" data-tt="split"></button>
-    <button class="ib" id="bDelL" data-i="arrow-left-to-line" data-tt="delLeft"></button>
-    <button class="ib" id="bDelR" data-i="arrow-right-to-line" data-tt="delRight"></button>
-    <button class="ib" id="bDel" data-i="trash-2" data-tt="del"></button>
-    <button class="ib" id="bDup" data-i="copy" data-tt="dup"></button>
-    <button class="ib" id="bMarker" data-i="bookmark" data-tt="marker"></button>
+    <button class="ib" id="bSplit" data-command="split addEdit" data-i="square-split-horizontal" data-tt="split"></button>
+    <button class="ib" id="bDelL" data-command="trimLeft" data-i="arrow-left-to-line" data-tt="delLeft"></button>
+    <button class="ib" id="bDelR" data-command="trimRight" data-i="arrow-right-to-line" data-tt="delRight"></button>
+    <button class="ib" id="bDel" data-command="delete" data-i="trash-2" data-tt="del"></button>
+    <button class="ib" id="bDup" data-command="duplicate" data-i="copy" data-tt="dup"></button>
+    <button class="ib" id="bMarker" data-command="marker" data-i="bookmark" data-tt="marker"></button>
     <button class="ib" id="bCrop" data-i="crop" data-tt="crop"></button>
     <button class="ib" id="bMirror" data-i="flip-horizontal-2" data-tt="mirror"></button>
-    <button class="ib" id="bRotate" data-i="rotate-cw-square" data-tt="rotate90"></button>
-    <button class="ib" id="bFreeze" data-i="snowflake" data-tt="freeze"></button>
+    <button class="ib" id="bRotate" data-command="rotate" data-i="rotate-cw-square" data-tt="rotate90"></button>
+    <button class="ib" id="bFreeze" data-command="freeze" data-i="snowflake" data-tt="freeze"></button>
     <span class="flex"></span>
     <button class="ib" id="bRec" data-i="mic" data-tt="record"></button>
     <span class="sep"></span>
-    <button class="ib on" id="bMagnet" data-i="magnet" data-tt="magnet"></button>
-    <button class="ib on" id="bSnap" data-i="link-2" data-tt="snap"></button>
+    <button class="ib on" id="bMagnet" data-command="magnet" data-i="magnet" data-tt="magnet"></button>
+    <button class="ib on" id="bSnap" data-command="snap" data-i="link-2" data-tt="snap"></button>
     <span class="sep"></span>
-    <button class="ib" id="bZoomOut" data-i="zoom-out" data-tt="zoomOut"></button>
+    <button class="ib" id="bZoomOut" data-command="zoomOut" data-i="zoom-out" data-tt="zoomOut"></button>
     <input type="range" id="zoom" min="8" max="400" value="60">
-    <button class="ib" id="bZoomIn" data-i="zoom-in" data-tt="zoomIn"></button>
-    <button class="ib" id="bFit" data-i="maximize-2" data-tt="fit"></button>
+    <button class="ib" id="bZoomIn" data-command="zoomIn" data-i="zoom-in" data-tt="zoomIn"></button>
+    <button class="ib" id="bFit" data-command="fit" data-i="maximize-2" data-tt="fit"></button>
   </div>
   <div class="tlbody" dir="ltr">
     <div class="heads"><div class="rhead"></div><div id="heads"></div></div>
@@ -148,8 +222,25 @@
 </main>
 
 <div id="workspaces" class="glass" hidden></div>
+<div id="trimFeedback" class="glass" aria-hidden="true" hidden><b dir="ltr"></b><span></span></div>
 <div id="ctx" class="glass" hidden></div>
+<form id="markerEditor" class="glass" aria-labelledby="markerEditorTitle" hidden></form>
 <div id="modal" hidden><div class="glass box" id="mBox"></div></div>
+<dialog id="keysDialog" class="glass box" aria-labelledby="keysTitle">
+  <h3 id="keysTitle" data-t="k_title"></h3>
+  <div class="key-toolbar">
+    <input id="keySearch" type="search" data-ph="k_search" aria-labelledby="keySearchLabel">
+    <span id="keySearchLabel" hidden data-t="k_searchTitle"></span>
+    <label><span data-t="k_preset"></span> <select id="keyPreset"></select></label>
+  </div>
+  <div id="keyNotice"></div>
+  <div id="keyRows"></div>
+  <div class="acts">
+    <button type="button" id="keyResetAll" data-t="k_resetAll"></button>
+    <span class="flex"></span>
+    <button type="button" id="keyClose" data-t="close"></button>
+  </div>
+</dialog>
 <div id="toast" class="glass" hidden></div>
 <div id="ghost" hidden></div>
 <script src="icons.js"></script>
@@ -158,11 +249,14 @@
 <script src="gltrans.js"></script>
 <script src="anims.js"></script>
 <script src="shared.js"></script>
+<script src="interchange.js"></script>
 <script src="emoji.js"></script>
 <script src="animfx.js"></script>
 <script src="graph.js"></script>
 <script src="iconlib.js"></script>
 <script src="workspace.js"></script>
+<script src="scopes.js"></script>
+<script src="whatsnew.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

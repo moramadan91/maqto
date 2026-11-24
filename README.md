@@ -9,6 +9,10 @@ Free desktop video editor for Mac and Windows. Tauri 2 (Rust) + plain HTML/JS. A
 - Voiceover recording.
 - Export 720p to 4K, 24–60 fps, H.264 or HEVC, hardware encoding on Mac.
 
+## J and L cuts
+
+Right-click a video clip with sound and choose **Split audio edge**. Maqto places the sound on a separate audio track and silences the original clip. In Select, hold Alt (Option on Mac) and drag the audio clip’s in edge earlier for a J cut, or its out edge later for an L cut. Overlapping sounds can sit on separate audio tracks.
+
 ## Develop
 
 ```

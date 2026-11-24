@@ -5,6 +5,7 @@ const NAMES = ['plus', 'monitor', 'history', 'type', 'captions', 'undo-2', 'redo
   'magnet', 'link-2', 'zoom-in', 'zoom-out', 'maximize-2', 'play', 'pause', 'skip-back', 'skip-forward', 'save',
   'folder-open', 'share', 'languages', 'film', 'music', 'image', 'copy', 'x', 'square', 'eye', 'volume-2', 'volume-x',
   'rotate-ccw', 'chevron-down', 'monitor-play', 'sparkles', 'layers', 'wand-sparkles', 'keyboard', 'file-plus', 'layout-grid', 'layout-dashboard', 'list', 'check', 'snowflake', 'crosshair', 'refresh-cw', 'align-left', 'align-center', 'align-right', 'star', 'rotate-cw', 'download', 'diamond', 'chevron-left', 'chevron-right', 'rotate-cw-square', 'search', 'pilcrow-left', 'pilcrow-right', 'pipette', 'upload', 'eye-off', 'paint-bucket', 'blend', 'arrow-right-left', 'zap', 'sticker', 'vibrate', 'lock', 'lock-open', 'shapes', 'scan', 'heart', 'message-circle', 'send', 'share-2', 'circle-user', 'ellipsis'];
+NAMES.push('between-vertical-start', 'stretch-horizontal', 'move-horizontal');
 const out = {};
 for (const n of NAMES) {
   const svg = readFileSync(`node_modules/lucide-static/icons/${n}.svg`, 'utf8');
