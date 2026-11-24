@@ -9,12 +9,13 @@
 <body>
 
 <header class="bar glass" data-tauri-drag-region>
-  <div class="brand" data-tauri-drag-region><span class="logo"></span><b data-t="appName"></b><span class="beta" data-t="beta"></span></div>
+  <div class="brand" data-tauri-drag-region><span class="logo"></span><b data-t="appName"></b></div>
   <div class="pname" id="pname" data-tauri-drag-region></div>
   <span class="flex" data-tauri-drag-region></span>
   <button class="ib" id="bUndo" data-i="undo-2" data-tt="undo"></button>
   <button class="ib" id="bRedo" data-i="redo-2" data-tt="redo"></button>
   <button class="tb" id="bAsst" data-i="sparkles"><span data-t="asst"></span></button>
+  <button class="ib" id="bWorkspaces" data-i="layout-dashboard" data-tt="workspaces" aria-expanded="false" aria-controls="workspaces"></button>
   <button class="ib" id="bKeys" data-i="keyboard" data-tt="shortcuts"></button>
   <button class="tb" id="bUpd" data-i="refresh-cw" data-tt="checkUpd"><span data-t="updates"></span></button>
   <span class="sep"></span>
@@ -25,20 +26,8 @@
   <button class="tb primary" id="bExport" data-i="share"><span data-t="export"></span></button>
 </header>
 
-<main>
-  <aside class="glass panel" id="lib">
-    <nav class="tabs" id="libTabs">
-      <button data-tab="media" data-i="film"><span data-t="media"></span></button>
-      <button data-tab="text" data-i="type"><span data-t="text"></span></button>
-      <button data-tab="captions" data-i="captions"><span data-t="captions"></span></button>
-      <button data-tab="filters" data-i="sparkles"><span data-t="filters"></span></button>
-      <button data-tab="effects" data-i="zap"><span data-t="fxTab"></span></button>
-      <button data-tab="stickers" data-i="sticker"><span data-t="stTab"></span></button>
-      <button data-tab="icons" data-i="shapes"><span data-t="icTab"></span></button>
-      <button data-tab="trans" data-i="arrow-right-left"><span data-t="transitions"></span></button>
-      <button data-tab="layers" data-i="layers"><span data-t="layersTab"></span></button>
-      <button data-tab="sounds" data-i="volume-2"><span data-t="sfxTab"></span></button>
-    </nav>
+<main id="dock">
+  <div id="lib" hidden>
     <section data-pane="media">
       <button class="wide accent-ghost" id="bImport" data-i="plus"><span data-t="import"></span></button>
       <div class="binbar"><input id="binQ" type="search" data-ph="searchMedia"><select id="binSort"><option value="added" data-t="s_added"></option><option value="name" data-t="s_name"></option><option value="dur" data-t="s_dur"></option><option value="kind" data-t="s_kind"></option></select><button class="ib" id="binAll" data-tt="selAll"></button><button class="ib danger" id="binDel" hidden></button><button class="ib" id="binView" data-tt="viewMode"></button></div>
@@ -95,9 +84,9 @@
       <div id="sfxList"></div>
       <p class="hint" data-t="sfxHint"></p>
     </section>
-  </aside>
+  </div>
 
-  <section class="glass panel" id="player">
+  <section class="panel" id="player">
     <div id="stage"><canvas id="view"></canvas><div id="safe" hidden></div></div>
     <div class="transport">
       <span class="tc"><b id="tc">00:00:00</b><i>/</i><span id="tdur">00:00:00</span></span>
@@ -112,13 +101,12 @@
     </div>
   </section>
 
-  <aside class="glass panel" id="insp">
+  <aside class="panel" id="insp">
     <nav class="tabs" id="inspTabs"></nav>
     <div id="inspBody"></div>
   </aside>
-</main>
 
-<section class="glass" id="tl">
+<section id="tl">
   <div class="tools">
     <div class="seg">
       <button class="ib on" id="tSelect" data-i="mouse-pointer-2" data-tt="select"></button>
@@ -157,6 +145,9 @@
   </div>
 </section>
 
+</main>
+
+<div id="workspaces" class="glass" hidden></div>
 <div id="ctx" class="glass" hidden></div>
 <div id="modal" hidden><div class="glass box" id="mBox"></div></div>
 <div id="toast" class="glass" hidden></div>
@@ -171,6 +162,7 @@
 <script src="animfx.js"></script>
 <script src="graph.js"></script>
 <script src="iconlib.js"></script>
+<script src="workspace.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

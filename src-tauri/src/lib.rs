@@ -790,7 +790,11 @@ fn app_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         &P::undo(app, None)?, &P::redo(app, None)?, &P::separator(app)?,
         &P::cut(app, None)?, &P::copy(app, None)?, &P::paste(app, None)?, &P::select_all(app, None)?,
     ])?;
-    let window = Submenu::with_items(app, "Window", true, &[&P::minimize(app, None)?, &P::maximize(app, None)?, &P::fullscreen(app, None)?])?;
+    let workspaces = MenuItem::with_id(app, "workspaces", "Workspaces", true, None::<&str>)?;
+    let window = Submenu::with_items(app, "Window", true, &[
+        &P::minimize(app, None)?, &P::maximize(app, None)?, &P::fullscreen(app, None)?,
+        &P::separator(app)?, &workspaces,
+    ])?;
     Menu::with_items(app, &[&maqto, &file, &edit, &window])
 }
 
@@ -945,6 +949,7 @@ pub fn run() {
     let b = b.plugin(tauri_plugin_updater::Builder::new().build()).plugin(tauri_plugin_process::init())
         .on_menu_event(|app, e| match e.id().as_ref() {
             "quit" => { let _ = app.emit("quit-requested", ()); }
+            "workspaces" => { let _ = app.emit("menu-workspaces", ()); }
             id @ ("new" | "open" | "save" | "saveAs" | "import" | "export") => { let _ = app.emit("menu-file", id.to_string()); }
             _ => {}
         });

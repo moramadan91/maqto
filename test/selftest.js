@@ -33,6 +33,29 @@ assert.deepStrictEqual(words.map(w => w.w), ['السلام', 'عليكم،', 'ك
 const groups = S.groupWords(words);
 assert.deepStrictEqual(groups.map(g => g.text), ['السلام عليكم،', 'كيف حالكم']);
 
+// Docking moves the original panel IDs through tab groups and nested splits.
+const W = require('../src/workspace');
+const allTabs = W.group(...W.panels);
+const detached = W.move(allTabs, 'media', 'media', 'start');
+assert.deepStrictEqual(detached.sizes, [0.5, 0.5]);
+assert.deepStrictEqual(detached.children[0], W.group('media'));
+assert.strictEqual(detached.children[1].active, 'text');
+assert.strictEqual(detached.split, 'row');
+const beside = W.move(detached, 'effects', 'media', 'bottom');
+assert.strictEqual(beside.children[0].split, 'col');
+assert.deepStrictEqual(beside.children[0].children[1], W.group('effects'));
+const rejoined = W.move(beside, 'media', 'text', 'center');
+assert.strictEqual(rejoined.children[0].active, 'effects');
+assert.strictEqual(rejoined.children[1].active, 'media');
+assert.ok(rejoined.children[1].tabs.includes('media'));
+const collapsed = W.move(rejoined, 'effects', 'media', 'center');
+assert.strictEqual(collapsed.active, 'effects');
+assert.ok(W.valid(collapsed));
+assert.strictEqual(W.move(collapsed, 'media', 'effects', 'center'), collapsed);
+assert.ok(!W.valid({ ...collapsed, tabs: [...collapsed.tabs, 'media'] }));
+assert.deepStrictEqual(allTabs, W.group(...W.panels));
+console.log('Workspace tree assertions passed');
+
 // real export
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maqto-test-'));
 const run = (bin, a) => execFileSync(bin, a, { stdio: ['ignore', 'pipe', 'pipe'] }).toString();

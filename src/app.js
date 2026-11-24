@@ -16,6 +16,14 @@ const inv = TA.core.invoke;
 const { clamp, num } = S;
 const $ = s => document.querySelector(s);
 const $$ = s => document.querySelectorAll(s);
+function paintRange(input) {
+  const min = Number(input.min), max = Number(input.max);
+  input.style.setProperty('--range-fill', max > min ? (input.valueAsNumber - min) / (max - min) : 0);
+}
+document.addEventListener('input', e => {
+  if (e.target.type === 'range') paintRange(e.target);
+});
+$$('input[type=range]').forEach(paintRange);
 const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const icon = n => `<svg class="ic" viewBox="0 0 24 24">${ICONS[n] || ''}</svg>`;
@@ -125,6 +133,8 @@ function fontPicker(it) {
 }
 function closeFontPop() { const p = $('#fpop'); if (p) { p._off(); p.remove(); } }
 const ACCENT = '#5cd3c6';
+let CHROME_ACCENT = ACCENT;
+const PANEL_GAP = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap'));
 const ROW = 37;
 const IN_T = 0.35, OUT_T = 0.25;
 const MEDIA_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'];
@@ -157,7 +167,7 @@ function newProject() {
 let P = newProject(), projectPath = null, dirty = false;
 const msel = new Set(); // timeline multi-selection (always includes sel when used)
 let openGrp = null, sel = null, t = 0, playing = false, pps = 60, lastTick = 0, needsDraw = true, cancelled = false;
-let tool = 'select', magnet = true, snapOn = true, inspTab = null, libTab = 'media';
+let tool = 'select', magnet = true, snapOn = true, inspTab = null;
 const undoStack = [], redoStack = [];
 
 const item = id => P.items.find(i => i.id === id);
@@ -421,7 +431,7 @@ const fillPts = (f, L) => { f = { ...FILL_DEF, ...f }; const P1 = [L.ox + f.x1 *
 function drawFillGuide(ctx, f, L) {
   const p = fillPts(f, L), s = P.w / Math.max(1, view.getBoundingClientRect().width); // screen pixel in project units
   ctx.save(); ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
-  ctx.lineWidth = 3 * s; ctx.strokeStyle = '#fff'; ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 4 * s;
+  ctx.lineWidth = 3 * s; ctx.strokeStyle = '#fff';
   ctx.beginPath(); ctx.moveTo(...p.p1); ctx.lineTo(...p.p2); ctx.stroke();
   for (const [pt, r, c] of [[p.p1, 9, f.c1 || '#000'], [p.p2, 7, f.c2 || '#000']]) {
     ctx.beginPath(); ctx.arc(pt[0], pt[1], r * s, 0, Math.PI * 2); ctx.fillStyle = c; ctx.fill(); ctx.lineWidth = 3 * s; ctx.strokeStyle = '#fff'; ctx.stroke();
@@ -879,7 +889,7 @@ function drawMaskGuide(ctx, M, L) {
   const q = { ...S.MASK_DEF, ...M }, w = L.cw, h = L.ch;
   ctx.save();
   ctx.translate(L.ox + q.x * w, L.oy + q.y * h); ctx.rotate(q.rot * Math.PI / 180);
-  ctx.setLineDash([10, 8]); ctx.lineWidth = 3; ctx.strokeStyle = '#5cd3c6';
+  ctx.setLineDash([10, 8]); ctx.lineWidth = 3; ctx.strokeStyle = CHROME_ACCENT;
   ctx.beginPath();
   const D = Math.hypot(w, h);
   if (q.type === 'linear') { ctx.moveTo(-D, 0); ctx.lineTo(D, 0); }
@@ -887,7 +897,7 @@ function drawMaskGuide(ctx, M, L) {
   else if (q.type === 'circle') ctx.ellipse(0, 0, q.w * w / 2, q.h * h / 2, 0, 0, Math.PI * 2);
   else ctx.rect(-q.w * w / 2, -q.h * h / 2, q.w * w, q.h * h);
   ctx.stroke();
-  ctx.setLineDash([]); ctx.fillStyle = '#5cd3c6'; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill();
+  ctx.setLineDash([]); ctx.fillStyle = CHROME_ACCENT; ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
 function drawDelogo(ctx, it, src, m, k, C, L, u, v) {
@@ -901,7 +911,7 @@ function drawDelogo(ctx, it, src, m, k, C, L, u, v) {
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(dlc, 0, 0, 8, 2, dx, dy, b.w / u, b.h / v);
   if (ctx === vctx && sel === it.id && inspTab === 'tVideo' && !playing) {
-    ctx.setLineDash([10, 8]); ctx.lineWidth = 3; ctx.strokeStyle = '#5cd3c6';
+    ctx.setLineDash([10, 8]); ctx.lineWidth = 3; ctx.strokeStyle = CHROME_ACCENT;
     ctx.strokeRect(dx, dy, b.w / u, b.h / v);
   }
   ctx.restore();
@@ -1553,47 +1563,358 @@ new ResizeObserver(placeSafe).observe(view);
 $('#bSafe').onclick = e => { const b = e.target.closest('[data-sz]'); if (!b) return; safeOn = safeOn === b.dataset.sz ? '' : b.dataset.sz; lsSet('kadr.safe', safeOn); renderSafe(); }; // a second click hides it
 renderSafe();
 
-/* ---------- resizable panels: drag the gaps between library / player / inspector / timeline ---------- */
-const PANES = {
-  libW: { el: () => $('#lib'), min: 200, max: () => 560, def: 290 },
-  inspW: { el: () => $('#insp'), min: 240, max: () => 560, def: 320 },
-  tlH: { el: () => $('#tl'), min: 150, max: () => innerHeight - 320, def: 340 },
-};
-const paneSize = k => { try { return +localStorage.getItem('kadr.' + k) || PANES[k].def; } catch { return PANES[k].def; } };
-const setPane = (k, v) => { v = Math.round(clamp(v, PANES[k].min, Math.max(PANES[k].min, PANES[k].max()))); document.body.style.setProperty('--' + k, v + 'px'); return v; };
-const splits = Object.keys(PANES).map(k => {
-  setPane(k, paneSize(k));
-  const sp = document.body.appendChild(Object.assign(document.createElement('div'), { className: 'split ' + (k === 'tlH' ? 'h' : 'v') }));
-  sp.addEventListener('pointerdown', e => {
-    const rtl = document.documentElement.dir === 'rtl', x0 = e.clientX, y0 = e.clientY;
-    const r = PANES[k].el().getBoundingClientRect(), w0 = k === 'tlH' ? r.height : r.width;
-    // library sits at the start edge, inspector at the end edge; flip for RTL
-    const sign = k === 'tlH' ? -1 : (k === 'libW') !== rtl ? 1 : -1;
-    let v = w0;
-    sp.classList.add('on'); document.body.classList.add('resizing'); document.body.style.cursor = getComputedStyle(sp).cursor;
-    const mv = ev => { v = setPane(k, w0 + sign * (k === 'tlH' ? ev.clientY - y0 : ev.clientX - x0)); };
-    window.addEventListener('pointermove', mv);
-    window.addEventListener('pointerup', () => {
-      window.removeEventListener('pointermove', mv);
-      sp.classList.remove('on'); document.body.classList.remove('resizing'); document.body.style.cursor = '';
-      try { localStorage.setItem('kadr.' + k, String(v)); } catch {}
-    }, { once: true });
-  });
-  sp.addEventListener('dblclick', () => { setPane(k, PANES[k].def); try { localStorage.removeItem('kadr.' + k); } catch {} });
-  return [k, sp];
-});
-function placeSplits() {
-  const rtl = document.documentElement.dir === 'rtl', lib = $('#lib').getBoundingClientRect(), insp = $('#insp').getBoundingClientRect(), tl = $('#tl').getBoundingClientRect();
-  for (const [k, sp] of splits) {
-    if (k === 'tlH') Object.assign(sp.style, { left: tl.left + 'px', width: tl.width + 'px', top: tl.top - 8 + 'px' });
-    else {
-      const r = k === 'libW' ? lib : insp, atStart = (k === 'libW') !== rtl; // pane's inner edge faces the player
-      Object.assign(sp.style, { top: r.top + 'px', height: r.height + 'px', left: (atStart ? r.right : r.left - 8) + 'px' });
-    }
+/* ---------- docking and workspaces ---------- */
+const W = window.MaqtoWorkspace, dock = $('#dock'), wsMenu = $('#workspaces'), wsButton = $('#bWorkspaces');
+const dockPanels = Object.fromEntries(W.panels.map(id => [id, $(W.library.includes(id) ? `[data-pane="${id}"]` : '#' + id)]));
+const dockNames = { player: 'wsPreview', insp: 'wsInspector', tl: 'wsTimeline', effects: 'fxTab', stickers: 'stTab', icons: 'icTab', trans: 'transitions', layers: 'layersTab', sounds: 'sfxTab' };
+const dockName = id => tr(dockNames[id] || id);
+const panelVisible = id => !dockPanels[id].hidden;
+const wsKey = 'kadr.workspaces', validAccent = c => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c);
+const accents = { wsTeal: ACCENT, wsOrange: '#ff8a3d', wsGreen: '#46c770', wsBlue: '#4a8dff', wsViolet: '#8b6cff', wsPink: '#ff5c9a', wsYellow: '#f5c542', wsRed: '#ff5a5a' };
+const cloneDock = tree => JSON.parse(JSON.stringify(tree));
+const dockGroups = new Map(), dockTabsObserver = new ResizeObserver(entries => entries.forEach(e => e.target.updateEdges()));
+let ws, dockDrag;
+
+function loadWorkspaces() {
+  const saved = lsGet(wsKey, null);
+  const validEntry = w => w && typeof w.id === 'string' && w.id && w.id !== 'standard' && typeof w.name === 'string' && w.name.trim() && validAccent(w.accent) && W.valid(w.layout);
+  if (saved?.version === 1 && W.valid(saved.standard) && W.valid(saved.layout) && validAccent(saved.accent)
+      && Array.isArray(saved.workspaces) && saved.workspaces.every(validEntry)
+      && new Set(saved.workspaces.map(w => w.id)).size === saved.workspaces.length
+      && (saved.current === 'standard' || saved.workspaces.some(w => w.id === saved.current))) return saved;
+  const legacy = (key, fallback, min, max) => {
+    const size = +lsGet('kadr.' + key, 0);
+    return saved == null && Number.isFinite(size) && size > 0 ? clamp(size, min, Math.max(min, max)) : fallback;
+  };
+  const lib = legacy('libW', 290, 200, 560), insp = legacy('inspW', 320, 240, 560);
+  const bounds = dock.getBoundingClientRect();
+  const height = bounds.height - PANEL_GAP, tl = legacy('tlH', 340, 150, height - 320);
+  const standard = { split: 'col', sizes: W.fractions([Math.max(160, height - tl), tl]), children: [
+    { split: 'row', sizes: W.fractions([lib, Math.max(240, bounds.width - 2 * PANEL_GAP - lib - insp), insp]), children: [W.group(...W.library), W.group('player'), W.group('insp')] },
+    W.group('tl'),
+  ] };
+  return { version: 1, current: 'standard', standard, workspaces: [], layout: cloneDock(standard), accent: ACCENT };
+}
+const persistDock = () => lsSet(wsKey, ws);
+function applyAccent(colour) {
+  ws.accent = colour.toLowerCase();
+  const root = document.documentElement.style;
+  const rgb = ws.accent.slice(1).match(/../g).map(c => parseInt(c, 16));
+  const hex = channels => '#' + channels.map(c => c.toString(16).padStart(2, '0')).join('');
+  const whiteMix = amount => rgb.map(c => Math.round(c + (255 - c) * amount));
+  const luma = channels => channels.reduce((sum, c, i) => {
+    const s = c / 255;
+    return sum + [0.2126, 0.7152, 0.0722][i] * (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4);
+  }, 0);
+  const darkInk = (luma(rgb) + 0.05) / 0.05 >= 4.5;
+  // Keep the same readable ink when the accent button is hovered.
+  const hover = [0.18, 0.09, 0.04, 0.02, 0].map(whiteMix).find(c => darkInk || 1.05 / (luma(c) + 0.05) >= 4.5);
+  root.setProperty('--accent', ws.accent);
+  root.setProperty('--accent-hover', hex(hover));
+  root.setProperty('--accent-ink', darkInk ? '#000' : '#fff');
+  CHROME_ACCENT = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  needsDraw = true;
+}
+function dockVisibility(before) {
+  if (panelVisible('trans') && !before.has('trans')) renderTrans();
+  if (['filters', 'effects'].some(id => panelVisible(id) && !before.has(id))) renderLookCards();
+  if (panelVisible('layers') && !before.has('layers')) renderLayers();
+  if (panelVisible('icons') && !$('#iconList').childElementCount) renderIcons();
+  if (panelVisible('captions') && !before.has('captions')) renderCapModels();
+  if (panelVisible('sounds') && !before.has('sounds')) loadSfx();
+  if (!panelVisible('sounds') && !sfxAudio.paused) sfxAudio.pause();
+  if (!panelVisible('media')) stopBinPrev();
+}
+function dockTabState(group) {
+  for (const id of group.tabs) dockPanels[id].hidden = id !== group.active;
+  const bar = dockGroups.get(group).bar;
+  if (!bar) return;
+  for (const b of bar.children) {
+    const on = b.dataset.dockTab === group.active;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
   }
 }
-new ResizeObserver(placeSplits).observe(document.body);
-for (const id of ['#lib', '#insp', '#tl']) new ResizeObserver(placeSplits).observe($(id));
+function revealPanel(id) {
+  const group = W.find(ws.layout, id), { bar } = dockGroups.get(group);
+  const before = new Set(W.panels.filter(panelVisible));
+  group.active = id;
+  dockTabState(group);
+  const b = bar?.querySelector(`[data-dock-tab="${id}"]`);
+  if (b) {
+    const r = b.getBoundingClientRect(), q = bar.getBoundingClientRect();
+    if (r.left < q.left + 22 || r.right > q.right - 22) bar.scrollBy({ left: (r.left + r.right - q.left - q.right) / 2 });
+  }
+  dockVisibility(before);
+  persistDock();
+}
+function renderDock() {
+  const before = new Set(W.panels.filter(id => panelVisible(id) && dockPanels[id].closest('.dock-group')));
+  const focused = document.activeElement, focusedTab = focused.dataset.dockTab;
+  dockTabsObserver.disconnect();
+  dockGroups.clear();
+  function build(node) {
+    const el = document.createElement('div');
+    if (!node.split) {
+      el.className = 'dock-group glass panel';
+      el.dockGroup = node;
+      const bar = dockHeader(el, node);
+      dockGroups.set(node, { el, bar });
+      el.append(...node.tabs.map(id => dockPanels[id]));
+      dockTabState(node);
+      const widths = { player: 240, insp: 240, tl: 280 };
+      const heights = { player: 160, tl: 150 };
+      return { el, w: Math.max(...node.tabs.map(id => widths[id] || 200)), h: 32 + Math.max(...node.tabs.map(id => heights[id] || 96)) };
+    }
+    const row = node.split === 'row', children = node.children.map(build), axis = row ? 'w' : 'h';
+    el.className = 'dock-split dock-' + node.split;
+    const tracks = () => {
+      const cells = children.map((c, i) => `minmax(${c[axis]}px, ${Math.max(1, node.sizes[i] * 1000)}fr)`).join(' var(--gap) ');
+      el.style[row ? 'gridTemplateColumns' : 'gridTemplateRows'] = cells;
+    };
+    tracks();
+    children.forEach((c, i) => {
+      if (i) el.append(dockSplitter(node, children, i - 1, row, tracks));
+      el.append(c.el);
+    });
+    const sum = k => children.reduce((n, c) => n + c[k], (children.length - 1) * PANEL_GAP);
+    const max = k => Math.max(...children.map(c => c[k]));
+    return { el, w: row ? sum('w') : max('w'), h: row ? max('h') : sum('h') };
+  }
+  const { el, w, h } = build(ws.layout);
+  el.style.minWidth = w + 'px';
+  el.style.minHeight = h + 'px';
+  dock.replaceChildren(el);
+  if (focusedTab) dock.querySelector(`[data-dock-tab="${focusedTab}"]`)?.focus({ preventScroll: true });
+  else if (dock.contains(focused) && !focused.closest('[hidden]')) focused.focus({ preventScroll: true });
+  for (const { bar } of dockGroups.values()) {
+    if (!bar) continue;
+    const active = bar.querySelector('.on');
+    const b = active.getBoundingClientRect(), r = bar.getBoundingClientRect();
+    if (b.left < r.left || b.right > r.right) bar.scrollLeft += (b.left + b.right - r.left - r.right) / 2;
+  }
+  dockVisibility(before);
+  persistDock();
+}
+function dockHeader(el, group) {
+  const wrap = el.appendChild(document.createElement('div')), multiple = group.tabs.length > 1;
+  wrap.className = multiple ? 'tabwrap' : 'dock-title';
+  const bar = multiple ? wrap.appendChild(document.createElement('nav')) : wrap;
+  if (multiple) bar.className = 'tabs';
+  for (const id of group.tabs) {
+    const b = bar.appendChild(document.createElement('button'));
+    b.type = 'button';
+    b.dataset.dockTab = id;
+    b.textContent = dockName(id);
+    b.onpointerdown = e => startDockDrag(e, id, b);
+    b.onclick = e => {
+      if (b.dragged && e.detail) { b.dragged = false; return; }
+      if (id === 'media') focusZone = 'bin';
+      if (id === 'tl') focusZone = 'tl';
+      if (multiple) revealPanel(id);
+    };
+  }
+  if (!multiple) return null;
+  const arrow = (side, dx) => {
+    const b = wrap.appendChild(document.createElement('button'));
+    b.className = 'tarr ' + side;
+    b.innerHTML = icon(side === 'l' ? 'chevron-left' : 'chevron-right');
+    b.setAttribute('aria-label', tr(dx < 0 ? 'wsScrollLeft' : 'wsScrollRight'));
+    b.onclick = () => bar.scrollBy({ left: dx * bar.clientWidth * 0.7 });
+    return b;
+  };
+  const left = arrow('l', -1), right = arrow('r', 1);
+  bar.updateEdges = () => {
+    const r = bar.getBoundingClientRect(), kids = [...bar.children].map(c => c.getBoundingClientRect());
+    left.hidden = Math.min(...kids.map(c => c.left)) >= r.left - 1;
+    right.hidden = Math.max(...kids.map(c => c.right)) <= r.right + 1;
+  };
+  bar.onscroll = bar.updateEdges;
+  bar.addEventListener('wheel', e => {
+    if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    bar.scrollLeft += e.deltaY * (LANG === 'ar' ? -1 : 1);
+    e.preventDefault();
+  }, { passive: false });
+  dockTabsObserver.observe(bar);
+  return bar;
+}
+function dockSplitter(node, children, i, row, tracks) {
+  const sp = document.createElement('div');
+  sp.className = 'split ' + (row ? 'v' : 'h');
+  sp.onpointerdown = e => {
+    if (e.button !== 0 || !e.isPrimary) return;
+    const axis = row ? 'w' : 'h', size = row ? 'width' : 'height', coord = row ? 'clientX' : 'clientY';
+    const sizes = children.map(c => c.el.getBoundingClientRect()[size]);
+    const start = e[coord], direction = row && LANG === 'ar' ? -1 : 1, original = node.sizes;
+    sp.setPointerCapture(e.pointerId);
+    sp.classList.add('on');
+    document.body.classList.add('resizing');
+    document.body.style.cursor = row ? 'col-resize' : 'row-resize';
+    const move = ev => {
+      if (ev.pointerId !== e.pointerId) return;
+      const d = clamp((ev[coord] - start) * direction, children[i][axis] - sizes[i], sizes[i + 1] - children[i + 1][axis]);
+      node.sizes = d === 0 ? original : W.fractions(sizes.map((s, j) => s + (j === i ? d : j === i + 1 ? -d : 0)));
+      tracks();
+    };
+    const finish = ev => {
+      if (ev.type !== 'blur' && ev.pointerId !== e.pointerId) return;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+      window.removeEventListener('blur', finish);
+      if (sp.hasPointerCapture(e.pointerId)) sp.releasePointerCapture(e.pointerId);
+      sp.classList.remove('on');
+      document.body.classList.remove('resizing');
+      document.body.style.cursor = '';
+      persistDock();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    window.addEventListener('blur', finish);
+  };
+  sp.ondblclick = () => { node.sizes = children.map(() => 1 / children.length); tracks(); persistDock(); };
+  return sp;
+}
+function startDockDrag(e, id, tab) {
+  if (e.button !== 0 || !e.isPrimary || dockDrag) return;
+  tab.dragged = false;
+  const ghost = document.createElement('div'), overlay = document.createElement('div');
+  ghost.className = 'dock-ghost glass';
+  ghost.textContent = dockName(id);
+  overlay.className = 'dock-drop';
+  const zones = ['left', 'right', 'top', 'bottom', 'center'];
+  overlay.innerHTML = zones.map(zone => `<i class="${zone}"></i>`).join('');
+  let active = false, target, zone, x = e.clientX, y = e.clientY;
+  const draw = (px, py) => {
+    ghost.style.transform = `translate(${px + 12}px, ${py + 12}px)`;
+    const over = document.elementFromPoint(px, py)?.closest('.dock-group');
+    target = over?.dockGroup;
+    overlay.hidden = !target;
+    if (!target) return;
+    if (overlay.parentNode !== over) over.append(overlay);
+    const r = over.getBoundingClientRect(), fx = (px - r.left) / r.width, fy = (py - r.top) / r.height;
+    const distances = [fx, 1 - fx, fy, 1 - fy], min = Math.min(...distances);
+    zone = min < 0.25 ? zones[distances.indexOf(min)] : 'center';
+    const same = target.tabs.includes(id);
+    overlay.dataset.zone = same && (target.tabs.length === 1 || zone === 'center') ? '' : zone;
+  };
+  const start = () => {
+    active = tab.dragged = true;
+    tab.setPointerCapture(e.pointerId);
+    document.body.append(ghost);
+    draw(x, y);
+  };
+  const timer = setTimeout(start, 250);
+  const move = ev => {
+    if (ev.pointerId !== e.pointerId) return;
+    x = ev.clientX; y = ev.clientY;
+    if (!active && Math.hypot(x - e.clientX, y - e.clientY) > 5) { clearTimeout(timer); start(); }
+    if (active) draw(x, y);
+  };
+  const finish = ev => {
+    clearTimeout(timer);
+    if (!ev) tab.dragged = true;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', end);
+    window.removeEventListener('pointercancel', end);
+    window.removeEventListener('blur', finish);
+    if (active && tab.hasPointerCapture(e.pointerId)) tab.releasePointerCapture(e.pointerId);
+    overlay.remove();
+    ghost.remove();
+    dockDrag = null;
+    if (active && ev?.type === 'pointerup' && target) {
+      const rtl = LANG === 'ar';
+      const logical = zone === 'left' ? (rtl ? 'end' : 'start') : zone === 'right' ? (rtl ? 'start' : 'end') : zone;
+      const next = W.move(ws.layout, id, target.active, logical);
+      if (next !== ws.layout) { ws.layout = next; renderDock(); }
+    }
+  };
+  const end = ev => {
+    if (ev.pointerId !== e.pointerId) return;
+    if (active && ev.type === 'pointerup') draw(ev.clientX, ev.clientY);
+    finish(ev);
+  };
+  dockDrag = finish;
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', end);
+  window.addEventListener('pointercancel', end);
+  window.addEventListener('blur', finish);
+}
+
+function activateWorkspace(id) {
+  const w = ws.workspaces.find(w => w.id === id);
+  ws.current = id;
+  ws.layout = cloneDock(w ? w.layout : ws.standard);
+  applyAccent(w ? w.accent : ACCENT);
+  renderDock();
+}
+function closeWorkspaces(focus = false) {
+  wsMenu.hidden = true;
+  wsButton.setAttribute('aria-expanded', 'false');
+  if (focus) wsButton.focus();
+}
+function openWorkspaces() {
+  if (!ws || !$('#modal').hidden) return;
+  const current = ws.workspaces.find(w => w.id === ws.current);
+  const entry = (act, label, extra = '') => `<button type="button" data-ws="${act}" ${extra}>${esc(label)}</button>`;
+  const choices = [{ id: 'standard', name: tr('wsStandard') }, ...ws.workspaces];
+  wsMenu.innerHTML = `<div class="ws-list">${choices.map(w => `<button type="button" data-ws-id="${esc(w.id)}" aria-pressed="${w.id === ws.current}"><span>${w.id === ws.current ? icon('check') : ''}</span><bdi>${esc(w.name)}</bdi></button>`).join('')}</div><hr>` +
+    entry('saveAs', tr('wsSaveAs')) + (current ? entry('save', tr('wsSave').replace('{name}', () => current.name)) : '') + entry('reset', tr('wsReset')) +
+    (current ? entry('rename', tr('wsRename')) + entry('delete', tr('wsDelete'), 'class="danger"') : '') +
+    `<hr><div class="ws-accent"><span>${tr('wsAccent')}</span><div>${Object.entries(accents).map(([k, c]) => `<button class="ws-swatch" type="button" data-colour="${c}" style="--swatch:${c}" title="${tr(k)}" aria-label="${tr(k)}" aria-pressed="${c === ws.accent}"></button>`).join('')}<input type="color" value="${ws.accent}" aria-label="${tr('wsCustom')}" title="${tr('wsCustom')}"></div></div>`;
+  wsMenu.hidden = false;
+  wsButton.setAttribute('aria-expanded', 'true');
+  const r = wsButton.getBoundingClientRect(), width = wsMenu.offsetWidth;
+  wsMenu.style.left = clamp(LANG === 'ar' ? r.right - width : r.left, 6, innerWidth - width - 6) + 'px';
+  wsMenu.style.top = r.bottom + 6 + 'px';
+  wsMenu.querySelector('[aria-pressed="true"]').focus({ preventScroll: true });
+}
+function chooseAccent(colour) {
+  applyAccent(colour);
+  wsMenu.querySelector('input').value = ws.accent;
+  wsMenu.querySelectorAll('[data-colour]').forEach(b => b.setAttribute('aria-pressed', b.dataset.colour === ws.accent));
+  persistDock();
+}
+wsMenu.oninput = e => { if (e.target.type === 'color') chooseAccent(e.target.value); };
+wsMenu.onclick = async e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  if (b.dataset.colour) return chooseAccent(b.dataset.colour);
+  closeWorkspaces(true);
+  if (b.dataset.wsId) {
+    if (b.dataset.wsId !== ws.current) activateWorkspace(b.dataset.wsId);
+    return;
+  }
+  const current = ws.workspaces.find(w => w.id === ws.current), action = b.dataset.ws;
+  if (action === 'reset') return activateWorkspace(ws.current);
+  if (action === 'delete') {
+    ws.workspaces = ws.workspaces.filter(w => w !== current);
+    return activateWorkspace('standard');
+  }
+  if (action === 'save') Object.assign(current, { layout: cloneDock(ws.layout), accent: ws.accent });
+  else {
+    const name = await askText(tr('wsName'), action === 'rename' ? current.name : '');
+    wsButton.focus();
+    if (!name) return;
+    if (action === 'rename') current.name = name;
+    else {
+      ws.current = uid();
+      ws.workspaces.push({ id: ws.current, name, layout: cloneDock(ws.layout), accent: ws.accent });
+    }
+  }
+  persistDock();
+};
+wsButton.onclick = () => { if (wsMenu.hidden) openWorkspaces(); else closeWorkspaces(); };
+document.addEventListener('pointerdown', e => {
+  if (!wsMenu.hidden && !wsMenu.contains(e.target) && !wsButton.contains(e.target)) closeWorkspaces();
+}, true);
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !dockDrag && wsMenu.hidden) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (dockDrag) dockDrag(); else closeWorkspaces(true);
+}, true);
 
 /* ---------- transport ---------- */
 function loop(now) {
@@ -1625,10 +1946,10 @@ function loop(now) {
   const p2 = performance.now();
   if (playing && p2 - p0 > 30) inv('dev_log', { msg: `slow tick sync=${Math.round(p1 - p0)}ms draw=${Math.round(p2 - p1)}ms at t=${t.toFixed(2)}` });
   if (!playing && inspTab === 'tAnim' && now - (loop.th || 0) > 33) { loop.th = now; animThumbs(now / 1000); }
-  if (!playing && libTab === 'trans' && now - (loop.tt || 0) > 40) { loop.tt = now; transThumbs(now / 1000); }
-  if (!playing && libTab === 'effects' && fxHover && now - (loop.tf || 0) > 33) { loop.tf = now; fxThumbs(now / 1000); }
-  if (!playing && libTab === 'stickers' && stCat === 'anim' && now - (loop.ts || 0) > 40) { loop.ts = now; stickerThumbs(now / 1000); }
-  if (!playing && libTab === 'icons' && (icCat === 'anim' || icCat === 'draw') && !$('#icQ').value && now - (loop.ti || 0) > 40) { loop.ti = now; iconThumbs(now / 1000); }
+  if (!playing && panelVisible('trans') && now - (loop.tt || 0) > 40) { loop.tt = now; transThumbs(now / 1000); }
+  if (!playing && panelVisible('effects') && fxHover && now - (loop.tf || 0) > 33) { loop.tf = now; fxThumbs(now / 1000); }
+  if (!playing && panelVisible('stickers') && stCat === 'anim' && now - (loop.ts || 0) > 40) { loop.ts = now; stickerThumbs(now / 1000); }
+  if (!playing && panelVisible('icons') && (icCat === 'anim' || icCat === 'draw') && !$('#icQ').value && now - (loop.ti || 0) > 40) { loop.ti = now; iconThumbs(now / 1000); }
   if (now - (loop.tw || 0) > 300) { loop.tw = now; warmTrans(); }
 }
 const clock = { tc: null, at: 0 };
@@ -1704,7 +2025,7 @@ function follow() {
 }
 
 /* ---------- timeline ---------- */
-const TRACK_COLOR = { video: 'rgb(62,132,255)', audio: 'rgb(74,210,110)', text: 'rgb(168,112,255)' };
+const TRACK_COLOR = { video: 'rgb(var(--video))', audio: 'rgb(var(--audio))', text: 'rgb(var(--text-c))' };
 function clipLabel(it) {
   const off = it.hidden ? icon('eye-off') : '';
   if (isText(it)) return off + icon('type') + esc(it.text);
@@ -1785,7 +2106,7 @@ $('#rows').addEventListener('pointerdown', e => {
     needsDraw = true;
   };
   window.addEventListener('pointermove', mv);
-  window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); if (moved) { dirty = true; refresh(); if (libTab === 'trans') renderTrans(); } }, { once: true });
+  window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); if (moved) { dirty = true; refresh(); if (panelVisible('trans')) renderTrans(); } }, { once: true });
 }, true);
 // The main lane sits in the middle of the timeline; new lanes stack above it until they reach the top, then it scrolls.
 function laneGap() {
@@ -1793,7 +2114,7 @@ function laneGap() {
   const g = Math.max(0, Math.round(mid - ROW / 2 - above * ROW));
   $('#rows').style.marginTop = $('#heads').style.marginTop = g + 'px';
 }
-new ResizeObserver(() => laneGap()).observe($('#scroll'));
+new ResizeObserver(() => requestAnimationFrame(laneGap)).observe($('#scroll'));
 /* ---------- audio waveforms on the timeline ---------- */
 // Peaks (the loudest sample of each 1/50 s) of a sound, from the buffer Web Audio decodes for playback.
 const PK = 50, peaks = new Map(), pkWait = new Set();
@@ -2194,7 +2515,10 @@ function renderRuler(width) {
 const ppsVar = () => { $('#rows').style.setProperty('--pps', pps); $('#ruler').style.setProperty('--pps', pps); };
 // Zoom writes one CSS variable; the ruler is rebuilt only when its tick spacing changes.
 function setZoom(v) {
-  pps = clamp(v, 8, 400); $('#zoom').value = pps;
+  const zoom = $('#zoom');
+  pps = clamp(v, 8, 400);
+  zoom.value = pps;
+  paintRange(zoom);
   ppsVar();
   if (rulerStep() !== renderRuler.step) renderRuler((Math.max(total(), t) + 30) * pps);
   updatePlayhead();
@@ -2247,7 +2571,7 @@ function select(id) {
   paintSel();
   inspTab = null;
   inspector();
-  if (libTab === 'filters' || libTab === 'effects') renderLookCards();
+  if (panelVisible('filters') || panelVisible('effects')) renderLookCards();
 }
 // Cmd/Ctrl/Shift-click adds or removes a clip from the selection.
 function toggleSel(id) {
@@ -2540,6 +2864,7 @@ function syncKfUI(force) {
     const el = document.querySelector(`#inspBody [data-k="${k}"]`), v = num(a[k], d[k]);
     if (!el) continue;
     el.value = el.type === 'number' ? +v.toFixed(3) : v;
+    if (el.type === 'range') paintRange(el);
     setShow(k, v);
   }
 }
@@ -2594,7 +2919,7 @@ $('#inspBody').addEventListener('pointerdown', e => {
 });
 function inspector() {
   kfSyncT = -1;
-  if (libTab === 'trans') renderTrans();
+  if (panelVisible('trans')) renderTrans();
   const body = $('#inspBody'), it = sel && item(sel), tabs = inspTabsFor(it);
   if (!tabs.includes(inspTab)) inspTab = tabs[0] || null;
   $('#inspTabs').innerHTML = tabs.map(x => `<button data-itab="${x}" class="${x === inspTab ? 'on' : ''}">${tr(x)}</button>`).join('');
@@ -2780,6 +3105,7 @@ function inspector() {
     }
   }
   body.innerHTML = h.join('');
+  body.querySelectorAll('input[type=range]').forEach(paintRange);
   paintIcons(body);
   $$('#inspBody [data-tpl]').forEach(b => {
     const tp = CAP_TPL.find(x => x.id === b.dataset.tpl), txt = tr('tplSample'), w = txt.split(' ');
@@ -3059,7 +3385,10 @@ $('#inspBody').addEventListener('input', e => {
     it.speed = v;
     delete it.curve;
     const o = $(`#inspBody [data-k="${k === 'speed' ? 'spdLog' : 'speed'}"]`), dd = $('#inspBody [data-k="dur"]');
-    if (o) o.value = k === 'speed' ? Math.log10(v) : v;
+    if (o) {
+      o.value = k === 'speed' ? Math.log10(v) : v;
+      if (o.type === 'range') paintRange(o);
+    }
     if (dd) dd.value = +it.dur.toFixed(2);
   } else if (k === 'dur') {
     if (S.hasCurve(it)) it.dur = Math.max(1 / P.fps, v); // stretches the whole curve
@@ -3488,41 +3817,6 @@ async function runTrack(f, src, box) {
   toast(lost > pts.length * 0.2 ? tr('trk_weak') : tr('trk_done'));
 }
 
-/* ---------- library ---------- */
-// Library tab bar slides sideways: trackpad swipe, mouse wheel, or the edge arrows (shown only when there is more that way).
-const libBar = (() => {
-  const bar = $('#libTabs'), wrap = document.createElement('div');
-  wrap.className = 'tabwrap';
-  bar.before(wrap); wrap.append(bar);
-  const arrow = (side, dx) => { const b = document.createElement('button'); b.className = 'tarr ' + side; b.innerHTML = icon(side === 'l' ? 'chevron-left' : 'chevron-right'); b.onclick = () => bar.scrollBy({ left: dx * bar.clientWidth * 0.7 }); wrap.append(b); return b; };
-  const L = arrow('l', -1), R = arrow('r', 1);
-  const edges = () => {
-    const r = bar.getBoundingClientRect(), kids = [...bar.children].map(c => c.getBoundingClientRect());
-    L.hidden = !(Math.min(...kids.map(k => k.left)) < r.left - 1);
-    R.hidden = !(Math.max(...kids.map(k => k.right)) > r.right + 1);
-  };
-  bar.addEventListener('scroll', edges);
-  bar.addEventListener('wheel', e => { if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { bar.scrollLeft += e.deltaY; e.preventDefault(); } }, { passive: false });
-  new ResizeObserver(edges).observe(bar);
-  return { edges, show: b => { const r = b.getBoundingClientRect(), q = bar.getBoundingClientRect(); bar.scrollBy({ left: r.left + r.width / 2 - (q.left + q.width / 2) }); setTimeout(edges, 400); } };
-})();
-function setLibTab(tab) {
-  const tb = $(`#libTabs [data-tab="${tab}"]`);
-  if (tb) libBar.show(tb);
-  libTab = tab;
-  if (tab === 'trans') renderTrans();
-  if (tab === 'filters' || tab === 'effects') renderLookCards();
-  if (tab === 'layers') renderLayers();
-  if (tab === 'icons' && !$('#iconList').childElementCount) renderIcons();
-  if (tab === 'captions') renderCapModels();
-  if (tab === 'sounds') loadSfx();
-  else if (!sfxAudio.paused) sfxAudio.pause();
-  if (tab !== 'media') stopBinPrev();
-  $$('#libTabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  $$('#lib [data-pane]').forEach(p => (p.hidden = p.dataset.pane !== tab));
-}
-$('#libTabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b) setLibTab(b.dataset.tab); });
-
 /* ---------- media library: search, sort, grid/list, multi-select, context menu ---------- */
 const binSel = new Set();
 let binAnchor = null, focusZone = 'tl';
@@ -3688,7 +3982,14 @@ function binMarquee(e) {
 $('#binList').addEventListener('dblclick', e => { if (e.target.closest('.mi')) { stopBinPrev(); addMany(picked()); } });
 // Zoom: card size of the grid view.
 {
-  const z = $('#binZoom'), set = v => { v = Math.max(+z.min, Math.min(+z.max, v)); z.value = v; $('#binList').style.setProperty('--binW', v + 'px'); try { localStorage.setItem('kadr.binZoom', v); } catch {} };
+  const z = $('#binZoom');
+  const set = v => {
+    v = Math.max(+z.min, Math.min(+z.max, v));
+    z.value = v;
+    paintRange(z);
+    $('#binList').style.setProperty('--binW', v + 'px');
+    try { localStorage.setItem('kadr.binZoom', v); } catch {}
+  };
   let v0 = 72; try { v0 = +localStorage.getItem('kadr.binZoom') || 72; } catch {}
   set(v0);
   z.oninput = () => set(+z.value);
@@ -3890,6 +4191,7 @@ function renderTrans() {
   transThumbs(performance.now() / 1000);
   const d = $('#trDur');
   if (d) {
+    paintRange(d);
     d.onpointerdown = () => snapshot();
     d.oninput = () => { tg.trans.dur = +d.value; d.previousElementSibling.lastElementChild.textContent = (+d.value).toFixed(1) + 's'; dirty = true; needsDraw = true; };
     d.onchange = () => { renderTimeline(); previewTrans(tg); };
@@ -3953,15 +4255,15 @@ $('#transCards').addEventListener('click', e => {
 $('#rows').addEventListener('click', e => {
   const b = e.target.closest('.trn');
   if (!b) return;
-  select(b.dataset.trn); setLibTab('trans');
+  select(b.dataset.trn); revealPanel('trans');
 });
 
 /* ---------- fill layers pane ---------- */
 const LAYERS = {
   shadow: { type: 'linear', c1: '#000000', a1: 0, c2: '#000000', a2: 0.85, x1: 0.5, y1: 0.4, x2: 0.5, y2: 1, mid: 0.5 },
-  gradient: { type: 'linear', c1: '#5cd3c6', a1: 1, c2: '#141518', a2: 1, x1: 0, y1: 0, x2: 1, y2: 1, mid: 0.5 },
+  gradient: { type: 'linear', c1: ACCENT, a1: 1, c2: '#141518', a2: 1, x1: 0, y1: 0, x2: 1, y2: 1, mid: 0.5 },
   vignette: { type: 'radial', c1: '#000000', a1: 0, c2: '#000000', a2: 0.8, x1: 0.5, y1: 0.5, x2: 1, y2: 1, mid: 0.6 },
-  solid: { type: 'solid', c1: '#5cd3c6', a1: 1 },
+  solid: { type: 'solid', c1: ACCENT, a1: 1 },
 };
 function renderLayers() {
   $('#layerCards').innerHTML = Object.keys(LAYERS).map(id => `<button class="trc" data-layer="${id}"><i class="lv"><canvas width="96" height="96"></canvas></i><span>${tr('ly_' + id)}</span><i class="plus" title="${tr('addLayer')}">${icon('plus')}</i></button>`).join('');
@@ -4107,9 +4409,10 @@ async function importMedia() {
 }
 TA.webviewWindow.getCurrentWebviewWindow().onDragDropEvent(async e => {
   const p = e.payload;
-  $('#lib').classList.toggle('drop', p.type === 'enter' || p.type === 'over');
-  if (p.type === 'drop' && p.paths.length) {
-    setLibTab('media');
+  const group = ws && dockGroups.get(W.find(ws.layout, 'media')).el;
+  group?.classList.toggle('drop', p.type === 'enter' || p.type === 'over');
+  if (ws && p.type === 'drop' && p.paths.length) {
+    revealPanel('media');
     addToBin(await inv('probe', { paths: p.paths }));
   }
 });
@@ -4170,7 +4473,7 @@ function lookScene() { // [key, 240x180 canvas]
   if (c) return ['c' + it.id, c];
   const im = trImgs[0];
   if (im.complete && im.naturalWidth) return ['photo', lookScene.photo || (lookScene.photo = cardCanvas(ctx => ctx.drawImage(im, 13.3, 0, 293.4, 200, 0, 0, 240, 180)))];
-  im.addEventListener('load', () => { if (libTab === 'filters' || libTab === 'effects') renderLookCards(); }, { once: true });
+  im.addEventListener('load', () => { if (panelVisible('filters') || panelVisible('effects')) renderLookCards(); }, { once: true });
   return ['sample', cardCanvas(sampleScene)];
 }
 const lookFake = (attr, x) => attr === 'preset' ? { id: 'card:' + x, preset: x } : { id: 'card:' + x, fx: { id: x, a: 0.7 }, dur: 5 };
@@ -4583,7 +4886,7 @@ async function quitNow() {
 async function updateDialog() {
   const cur = TA.app ? await TA.app.getVersion().catch(() => '') : '';
   $('#modal').hidden = false;
-  $('#mBox').innerHTML = `<div class="upd"><h3>${tr('updates')}</h3><p class="hint">${tr('curVer')} <bdi>v${esc(cur)} ${tr('beta')}</bdi></p>
+  $('#mBox').innerHTML = `<div class="upd"><h3>${tr('updates')}</h3><p class="hint">${tr('curVer')} <bdi>v${esc(cur)}</bdi></p>
     <div id="uState" class="ustate"></div>
     <div class="umode"><div class="gh">${tr('updHow')}</div>
       ${['auto', 'manual'].map(m => `<label class="uopt"><input type="radio" name="um" value="${m}"${updMode.get() === m ? ' checked' : ''}><span><b>${tr('upd_' + m)}</b><small>${tr('upd_' + m + 'Hint')}</small></span></label>`).join('')}</div>
@@ -4630,6 +4933,9 @@ $('#bUpd').onclick = updateDialog;
 let toastTimer;
 function toast(msg, action) {
   const el = $('#toast');
+  const tl = dockPanels.tl.getBoundingClientRect();
+  const overTimeline = tl.bottom >= innerHeight - PANEL_GAP && tl.top > 100 && tl.left <= innerWidth / 2 && tl.right >= innerWidth / 2;
+  el.style.bottom = (20 + (overTimeline ? innerHeight - tl.top : 0)) + 'px';
   el.innerHTML = `<span>${esc(msg)}</span>`;
   if (action) { const b = document.createElement('button'); b.textContent = action.label; b.onclick = action.run; el.appendChild(b); }
   el.hidden = false;
@@ -5232,7 +5538,7 @@ $('#bSnap').onclick = () => { snapOn = !snapOn; $('#bSnap').classList.toggle('on
 $('#bZoomIn').onclick = () => setZoom(pps * 1.4);
 $('#bZoomOut').onclick = () => setZoom(pps / 1.4);
 $('#bFit').onclick = () => setZoom(($('#scroll').clientWidth - 40) / Math.max(total(), 1));
-$('#bLang').onclick = () => { LANG = LANG === 'ar' ? 'en' : 'ar'; applyLang(); renderLibCards(); refresh(); requestAnimationFrame(placeSplits); };
+$('#bLang').onclick = () => { LANG = LANG === 'ar' ? 'en' : 'ar'; applyLang(); if (ws) renderDock(); renderLibCards(); refresh(); };
 
 /* ---------- keyboard: CapCut-style keymap. One table drives the keys, the tooltips and the shortcuts sheet ---------- */
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -5401,6 +5707,7 @@ async function openPending() {
 TA.event.listen('open-file', openPending);
 // macOS menu bar > File
 TA.event.listen('menu-file', e => ({ new: () => newProj(), open, save: () => save(), saveAs: () => save(true), import: importMedia, export: exportDialog })[e.payload]?.());
+TA.event.listen('menu-workspaces', openWorkspaces);
 TA.event.listen('quit-requested', async () => {
   if (quitting) return;
   await autosave();
@@ -5414,7 +5721,8 @@ TA.event.listen('quit-requested', async () => {
   $('#qSave').onclick = async () => { done(); await save(); if (!dirty) quitNow(); };
 });
 window.addEventListener('keydown', e => {
-  if (e.target.matches('input, textarea, select')) return;
+  if (e.target.matches('input, textarea, select') || wsMenu.contains(e.target)
+      || e.key === ' ' && e.target.matches('[data-dock-tab], .tarr, #bWorkspaces')) return;
   if (!$('#modal').hidden) { if (e.key === 'Escape' && $('#mBox .ksheet')) hideModal(); return; }
   const run = KEY_RUN.get(keyCombo(e));
   if (!run) return;
@@ -5433,7 +5741,9 @@ inv('system_fonts').then(v => {
 }).catch(() => {});
 paintIcons();
 applyLang();
-setLibTab('media');
+ws = loadWorkspaces();
+applyAccent(ws.accent);
+renderDock();
 document.fonts.load('800 40px "Cairo"').then(renderLibCards);
 // Bundled fonts load on first use; redraw (and re-paint template cards) once they arrive.
 document.fonts.addEventListener('loadingdone', () => { needsDraw = true; if (inspTab === 'tTpl' && document.activeElement.tagName !== 'INPUT') inspector(); });
