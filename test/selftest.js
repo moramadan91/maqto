@@ -714,7 +714,7 @@ const allTabs = W.group(...W.panels);
 const detached = W.move(allTabs, 'media', 'media', 'start');
 assert.deepStrictEqual(detached.sizes, [0.5, 0.5]);
 assert.deepStrictEqual(detached.children[0], W.group('media'));
-assert.strictEqual(detached.children[1].active, 'text');
+assert.strictEqual(detached.children[1].active, 'aiTools'); // the tab after media
 assert.strictEqual(detached.split, 'row');
 const beside = W.move(detached, 'effects', 'media', 'bottom');
 assert.strictEqual(beside.children[0].split, 'col');
@@ -750,6 +750,7 @@ assert.strictEqual(W.find(transcriptLayout, 'multicam').active, 'transcript');
 const preAiLayout = W.move(allTabs, 'media', 'media', 'start');
 const previousLibrary = W.find(preAiLayout, 'aiTools');
 previousLibrary.tabs = previousLibrary.tabs.filter(id => id !== 'aiTools');
+previousLibrary.active = previousLibrary.tabs[0]; // a pre-AI layout never had aiTools active
 assert.ok(W.valid(W.withPanels(preAiLayout)));
 assert.deepStrictEqual(W.find(preAiLayout, 'aiTools'), { tabs: ['media', 'aiTools'], active: 'media' });
 console.log('Workspace tree assertions passed');

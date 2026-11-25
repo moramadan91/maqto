@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const library = ['media', 'text', 'captions', 'filters', 'effects', 'stickers', 'icons', 'trans', 'layers', 'sounds', 'aiTools'];
+  const library = ['media', 'aiTools', 'text', 'captions', 'filters', 'effects', 'stickers', 'icons', 'trans', 'layers', 'sounds'];
   const panels = [...library, 'player', 'insp', 'tl', 'scopes', 'transcript', 'multicam'];
   const group = (...tabs) => ({ tabs, active: tabs[0] });
   const fractions = sizes => {
@@ -32,7 +32,7 @@
       const required = previous.slice(0, previous.indexOf(id));
       if (valid(tree, required) || valid(tree, [...required, 'aiTools'])) find(tree, 'insp').tabs.push(id);
     }
-    if (valid(tree, previous)) find(tree, 'media').tabs.push('aiTools');
+    if (valid(tree, previous)) { const g = find(tree, 'media'); g.tabs.splice(g.tabs.indexOf('media') + 1, 0, 'aiTools'); }
     return tree;
   }
   function move(tree, tab, targetTab, zone) {

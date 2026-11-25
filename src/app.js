@@ -6025,7 +6025,7 @@ function viewerAngles(it) {
 const mcGrid = $('#mcGrid');
 let mcViewerKey = '';
 function renderMulticamViewer(it, angles) {
-  const source = media(it), names = source?.angles.map(a => P.media[a.media]?.name || '');
+  const source = media(it)?.angles ? media(it) : null, names = source?.angles.map(a => P.media[a.media]?.name || '');
   const key = source ? JSON.stringify([it.id, names, LANG]) : '';
   if (key !== mcViewerKey) {
     for (const el of mcGrid.querySelectorAll('video')) mediaHold.appendChild(el);
@@ -9794,29 +9794,6 @@ window.addEventListener('keydown', e => {
   if (!command.when || command.when(e)) command.run();
 });
 
-(async () => {
-MEDIA_BASE = await inv('media_base');
-inv('fonts_downloaded').then(m => {
-  for (const [f, files] of Object.entries(m || {})) regFont(f, files);
-  ensureFonts();
-  $('#fpop')?._list();
-}).catch(() => {});
-inv('system_fonts').then(v => {
-  for (const font of v || []) {
-    font.previewFiles = font.files.filter(file => file.sample)
-      .sort((a, b) => Number(a.italic) - Number(b.italic) || Math.abs(a.weight - 400) - Math.abs(b.weight - 400));
-    font.arabic = font.previewFiles.some(file => file.sample.includes('أبجد'));
-    FontLib.sys.set(font.family, font);
-    for (const file of font.files) {
-      if (file.collection) continue;
-      document.fonts.add(new FontFace(font.family, systemFontSource(file), { weight: String(file.weight), style: file.italic ? 'italic' : 'normal' }));
-    }
-  }
-  ensureFonts();
-  $('#fpop')?._list();
-  needsDraw = true;
-}).catch(() => {});
-/* ---------- AI Tools ---------- */
 const aiToolPanel = dockPanels.aiTools;
 const aiTransfers = new Map(), aiReady = new Map();
 function localAIModel(command, label, param, selected = () => '', sync = () => {}) {
@@ -10400,7 +10377,7 @@ const AI_TOOLS = [
   { id: 'assistant', icon: 'sparkles', name: aiText('asst'), desc: aiText('aiAssistantDesc'),
     model: 'Claude (Claude Code)', license: aiText('aiProprietary'), size: aiText('aiExternal'),
     ready: async () => (await inv('assistant_ready')) || null,
-    run: () => { asstPanel().hidden = false; $('#asIn').focus(); } },
+    run: () => { if (document.getElementById('asst')?.hidden !== false) $('#bAsst').click(); } }, // asstPanel lives inside the startup closure
   { id: 'reframe', icon: 'crop', name: aiText('reframe'), desc: aiText('aiReframeDesc'), ...bundledAI,
     run: () => {
       if (!selectedItems().some(it => media(it)?.kind === 'video')) return toast(tr('aiPickVideo'));
@@ -10519,6 +10496,30 @@ $('#bAITools').onclick = () => {
 };
 window.addEventListener('focus', () => { if (panelVisible('aiTools')) refreshAITools(); });
 
+
+(async () => {
+MEDIA_BASE = await inv('media_base');
+inv('fonts_downloaded').then(m => {
+  for (const [f, files] of Object.entries(m || {})) regFont(f, files);
+  ensureFonts();
+  $('#fpop')?._list();
+}).catch(() => {});
+inv('system_fonts').then(v => {
+  for (const font of v || []) {
+    font.previewFiles = font.files.filter(file => file.sample)
+      .sort((a, b) => Number(a.italic) - Number(b.italic) || Math.abs(a.weight - 400) - Math.abs(b.weight - 400));
+    font.arabic = font.previewFiles.some(file => file.sample.includes('أبجد'));
+    FontLib.sys.set(font.family, font);
+    for (const file of font.files) {
+      if (file.collection) continue;
+      document.fonts.add(new FontFace(font.family, systemFontSource(file), { weight: String(file.weight), style: file.italic ? 'italic' : 'normal' }));
+    }
+  }
+  ensureFonts();
+  $('#fpop')?._list();
+  needsDraw = true;
+}).catch(() => {});
+/* ---------- AI Tools ---------- */
 paintIcons();
 applyLang();
 paintProxyToggle();
