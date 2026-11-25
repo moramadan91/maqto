@@ -11,12 +11,11 @@ const tcode = t => `00:${pad(Math.floor(t / 60))}:${pad(Math.floor(t % 60))}:${p
 
 /* ---------- language: Arabic comes from the page, English from here ---------- */
 const EN = {
-  skip: 'Skip to content', nDemos: 'What it does', nClaude: 'Assistant', nInstall: 'Install', nFaq: 'FAQ', nGet: 'Free download',
+  skip: 'Skip to content', nDemos: 'What it does', nAI: 'AI Tools', newBadge: 'NEW', nClaude: 'Assistant', nInstall: 'Install', nFaq: 'FAQ', nGet: 'Free download',
   tag: 'Completely free · Mac & Windows · no watermark',
   h1: 'Pro video editing, fluent in Arabic.',
   lead: 'Auto captions timed word by word, silence cutting with the assistant, 567 motions and 495 transitions, color, and export up to 4K. Free, and all on your computer.',
   mac: 'Download for Mac', macSub: 'Apple Silicon · M1 and later', win: 'Download for Windows', winSub: 'Windows 10 and 11 · 64-bit', ver: 'Version {v}',
-  showAlt: 'The real Maqto window', fl1: 'Auto Arabic captions', fl2: 'HEVC · 60fps', fl3: '“Cut the silences”',
   numsAria: 'Library', n1: 'clip motions', n2: 'transitions', n3: 'filters', n4: 'effects', n5: 'animated icons', n6: 'text animations', n7: 'Google fonts', n8: 'HEVC export',
   dEye: 'See it working', dTitle: 'Creative features, free and open source.', pause: 'Pause motion', prev: 'Previous', next: 'Next', play: 'Play motion',
   d1: 'Auto captions, word by word.', d1p: 'One click turns speech into captions synced to the voice, and the spoken word lights up. It captions only the clips you pick, and one style applies to all of them.', d1c2: 'Every word timed', d1c3: 'On your computer',
@@ -28,7 +27,18 @@ const EN = {
   iEye2: 'Inside the app', iTitle2: 'Real screens, not mockups.', iSub2: 'This is Maqto as you will open it: the captions panel, the effects library with live previews, animated stickers and icons, and the timeline.',
   il1: 'Captions', il1p: 'Pick the spoken language and the speech model, then press Auto captions.', il2: 'Effects', il2p: 'Sort by trending and favourites; click again to remove an effect.', il3: 'Stickers', il3p: 'Animated emoji and 646 icons in your colour and line width.',
   mEye: 'And also', mTitle: 'Everything you look for, in one app.',
-  m1: 'Color and LUTs', m1p: 'Color wheels, curves and LUTs. The preview matches the export.', m2: 'Chroma key', m2p: 'Drop the green screen and put any background behind it.', m3: 'AI background removal', m3p: 'For people and products, with no green screen and no internet.', m4: 'Smooth slow motion', m4p: 'AI in-between frames (RIFE) so slow motion never stutters.', m5: 'Voiceover and clean audio', m5p: 'Record in the app and remove noise with RNNoise.', m6: 'Motion tracking', m6p: 'Text or a sticker follows what moves in the frame.', m7: 'Safe zones', m7p: 'See where TikTok, Instagram and Snapchat put their buttons before you post.', m8: 'Export up to 4K', m8p: 'H.264 and HEVC, hardware accelerated on Mac, up to 60 fps.', m9: 'Hundreds of fonts', m9p: 'Every Arabic Google font ready, plus your own, with Arabic shaped right.', m10: 'Automatic updates', m10p: 'Every new version reaches you on its own, signed and verified.', m11: 'Autosave', m11p: '.maqto files with their own icon, and recovery if the computer shuts down.', m12: 'Stays on your computer', m12p: 'Your files, audio and transcripts are never uploaded anywhere.',
+  m1: 'Color and LUTs', m1p: 'Color wheels, curves and LUTs. The preview matches the export.', m2: 'Chroma key', m2p: 'Drop the green screen and put any background behind it.', m3: 'AI background removal', m3p: 'For people and products, with no green screen and no internet.', m4: 'Smooth slow motion', m4p: 'AI in-between frames (RIFE) so slow motion never stutters.', m5: 'Voiceover and clean audio', m5p: 'Record in the app and remove noise with DeepFilterNet.', m6: 'Motion tracking', m6p: 'Text or a sticker follows what moves in the frame.', m7: 'Safe zones', m7p: 'See where TikTok, Instagram and Snapchat put their buttons before you post.', m8: 'Export up to 4K', m8p: 'H.264 and HEVC, hardware accelerated on Mac, up to 60 fps.', m9: 'Hundreds of fonts', m9p: 'Every Arabic Google font ready, plus your own, with Arabic shaped right.', m10: 'Automatic updates', m10p: 'Every new version reaches you on its own, signed and verified.', m11: 'Autosave', m11p: '.maqto files with their own icon, and recovery if the computer shuts down.', m12: 'Stays on your computer', m12p: 'Your files, audio and transcripts are never uploaded anywhere.',
+  aiEye: 'AI Tools', aiTitle: 'New AI tools, running on your computer.',
+  aiSub: 'Nine new models inside Maqto. Each one downloads once and runs offline, and your videos never leave your computer.',
+  a1: 'Select & track objects', a1p: 'Click any object or draw a box around it, and Maqto selects it and follows it through the clip. Cut it out, pixelate it, or keep only its colour.',
+  a2: 'Remove objects', a2p: 'Erase an object or a watermark from the shot and the gap fills itself.',
+  a3: 'Depth effects', a3p: 'Portrait blur like a real camera, fog that builds with distance, and 3D camera moves on a photo or video.',
+  a4: 'AI upscale', a4p: 'Upscale a video or image 2× or 4×, and export your project in 4K.',
+  a5: 'Caption translation', a5p: 'Translate captions between Arabic and English on your computer, as a new track with the same timing or an SRT file.',
+  a6: 'AI voice-over', a6p: 'Turn any text or caption track into Arabic or English speech, each line at its own time.',
+  a7: 'Voice clean-up', a7p: 'Remove AC hum, street noise and hiss, and keep the voice clear.',
+  a8: 'Scene detection', a8p: 'Finds every cut in a long video and splits it into scenes in one click.',
+  a9: 'Highlights to Shorts', a9p: 'Pulls the strongest moments from a long talk, and each one becomes a 9:16 short with silences cut and captions on.',
   cEye: 'Maqto + Claude', cTitle: 'Write the idea, watch the video build itself.', cSub: 'Maqto has an assistant inside the app and an MCP server. Claude works on your timeline live: it cuts, adds text, motion and transitions, looks at the frame to check, and exports.',
   aTag: 'The assistant inside the app', aTitle: 'No terminal, no commands.',
   as1: 'Install <a href="https://claude.com/claude-code" target="_blank" rel="noopener"><b>Claude Code</b></a> and sign in with your Claude account.',
@@ -57,21 +67,21 @@ const EN = {
   b1: 'Open your downloads list and click the Maqto file marked <b>Unverified download blocked</b>.',
   b2: 'Click <b>Download unverified file</b> and the download finishes. Then follow the install steps above.',
   qEye: 'FAQ', qTitle: 'Before you ask.',
-  q1: 'Is it really free?', a1: 'Yes. No subscription, no ads, and no watermark on your videos.',
-  q2: 'Do I need internet?', a2: 'No. Editing and export work offline. You only need internet for updates and to download the caption model once (about 550 MB for the recommended one).',
-  q3: 'Which computers does it run on?', a3: 'Macs with Apple silicon (M1 or later) on macOS 13.4 or later, and Windows 10 or 11, 64-bit.',
-  q6: 'How does silence cutting work?', a6: 'Through the assistant inside Maqto: write “cut the silences” and Claude finds the pauses and cuts them on the timeline. It needs Claude Code and a Claude Pro plan or higher.',
-  q4: 'How do updates arrive?', a4: 'When you open Maqto it checks for a new version and asks you. Say yes and it downloads, restarts and opens the new version.',
-  q5: 'Are my videos uploaded anywhere?', a5: 'No. Your files, audio and transcription all stay on your computer.',
+  q1: 'Is it really free?', faqA1: 'Yes. No subscription, no ads, and no watermark on your videos.',
+  q2: 'Do I need internet?', faqA2: 'No. Editing and export work offline. You only need internet for updates and to download the caption model once (about 550 MB for the recommended one).',
+  q3: 'Which computers does it run on?', faqA3: 'Macs with Apple silicon (M1 or later) on macOS 13.4 or later, and Windows 10 or 11, 64-bit.',
+  q6: 'How does silence cutting work?', faqA6: 'Through the assistant inside Maqto: write “cut the silences” and Claude finds the pauses and cuts them on the timeline. It needs Claude Code and a Claude Pro plan or higher.',
+  q4: 'How do updates arrive?', faqA4: 'When you open Maqto it checks for a new version and asks you. Say yes and it downloads, restarts and opens the new version.',
+  q5: 'Are my videos uploaded anywhere?', faqA5: 'No. Your files, audio and transcription all stay on your computer.',
   endT: 'Try Maqto today.', endS: 'Free, no account, no watermark.', foot: 'Maqto · free, no ads', all: 'All versions', priv: 'Privacy',
 };
 Object.assign(EN, {
-  dockAria: 'Sections', k1: 'Intro', k2: 'Demos', k3: 'Inside', k4: 'Features', k5: 'Assistant', k6: 'Install', k7: 'FAQ', k8: 'Export',
+  dockAria: 'Sections', k1: 'Intro', k2: 'Demos', k3: 'Inside', k4: 'Features', k5: 'Assistant', k6: 'Install', k7: 'FAQ', k8: 'Export', k9: 'AI Tools',
   htx: 'Pro editing', htx2: 'fluent in Arabic',
   m13: 'Sound separation', m13p: 'Split any video\'s audio into 3 lanes: voice, music and sound effects, each on its own track. On your computer, no internet needed.',
 });
 const AR = { prev: 'السابق', next: 'التالي', ver: 'نسخة {v}', pause: 'وقّف الحركة', play: 'شغّل الحركة', copied: 'تم النسخ', numsAria: 'المكتبة', dockAria: 'الأقسام',
-  k1: 'البداية', k2: 'الديمو', k3: 'من جوه', k4: 'المميزات', k5: 'المساعد', k6: 'التثبيت', k7: 'أسئلة', k8: 'التحميل' };
+  k1: 'البداية', k2: 'الديمو', k3: 'من جوه', k4: 'المميزات', k5: 'المساعد', k6: 'التثبيت', k7: 'أسئلة', k8: 'التحميل', k9: 'أدوات AI' };
 $$('[data-t]').forEach(el => (AR[el.dataset.t] ??= el.hasAttribute('data-html') ? el.innerHTML : el.textContent));
 const T = { ar: AR, en: EN };
 let lang = 'ar', version = '';
@@ -136,16 +146,20 @@ fetch('https://api.github.com/repos/moramadan91/maqto/releases/latest')
 
 /* ---------- looping demos: play only while on screen and not paused ---------- */
 let paused = !motionOK;
-const loops = new Map(); // element -> { tl, vis }
-const sync = () => loops.forEach(l => (l.vis && !paused ? l.tl.play() : l.tl.pause()));
-const io = new IntersectionObserver(es => es.forEach(e => {
-  const l = loops.get(e.target);
-  if (l) { l.vis = e.isIntersecting; sync(); }
-}), { threshold: 0.15 });
-const loop = (el, tl) => {
+const loops = new Map(); // element -> { tl, playback, vis }
+const sync = () => loops.forEach(l => (l.vis && !paused ? l.playback.play() : l.playback.pause()));
+const io = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    const l = loops.get(entry.target);
+    if (l) l.vis = entry.isIntersecting;
+  }
+  sync();
+}, { threshold: 0.15 });
+const loop = (el, tl, playback = tl) => {
   const old = loops.get(el);
   if (old) old.tl.kill();
-  loops.set(el, { tl: tl.pause(), vis: old ? old.vis : false });
+  tl.pause();
+  loops.set(el, { tl, playback, vis: old?.vis ?? false });
   if (!old) io.observe(el);
 };
 
@@ -299,7 +313,7 @@ function buildLoops() {
     save: s => gsap.timeline({ repeat: -1, repeatDelay: 1 }).fromTo($('.tick', s), { strokeDasharray: 24, strokeDashoffset: 24 }, { strokeDashoffset: 0, duration: 0.6, ease: 'power2.out' }),
     lock: s => gsap.timeline({ repeat: -1, repeatDelay: 1.4 }).to($('.shk', s), { y: -3, duration: 0.25, yoyo: true, repeat: 1, ease: 'power2.out' }),
   };
-  $$('.fc').forEach(c => loop(c, ic[c.dataset.ic](c)));
+  $$('.fc[data-ic]').forEach(c => loop(c, ic[c.dataset.ic](c)));
 
   // number marquee
   {
@@ -310,30 +324,98 @@ function buildLoops() {
   sync();
 }
 
-/* ---------- the hero clip ---------- */
-const live = $('#live');
-function playVids() {
-  paused ? live.pause() : live.play().catch(() => {});
-}
+/* ---------- the Studio Pro session ---------- */
+function buildEditor() {
+  const app = $('#app'), q = s => $(s, app), all = s => $$(s, app);
+  const live = q('#live'), playhead = q('#hph'), timecode = q('.vtc');
+  const [firstClip, secondClip] = all('.app-caption-clip');
+  const picked = q('.app-selected'), halves = all('.app-split-left, .app-split-tail');
+  const cut = q('.app-cut-line'), snap = q('.app-snap-line'), movingClip = q('.app-snap-clip');
+  const media = q('.app-media-grid'), models = q('.app-models'), badge = q('.app-ai-tab .new-badge');
+  const keyframe = all('.app-keyframe, .app-diamond b'), transition = q('.app-transition');
+  const exportButton = q('.app-export'), progress = q('.app-export i');
+  const position = q('.app-position'), scale = q('.sv'), angle = q('.app-angle'), opacity = q('.app-opacity');
+  const state = { cutting: 0, aiOpen: 0, x: 0, y: 0, scale: 100, angle: 0, opacity: 100 };
+  const excerptStart = 5, excerptLength = 11, rulerEnd = 28;
+  const tl = gsap.timeline({ paused: true, repeat: -1, defaults: { ease: 'power3.out' } });
 
-// pause control for every loop and the hero clip
+  tl.set([firstClip, secondClip, cut, snap, models, transition, progress, ...halves, ...keyframe], { opacity: 0 }, 0)
+    .set([media, picked], { opacity: 1 }, 0)
+    .set(movingClip, { xPercent: 13 }, 0)
+    .set(state, { cutting: 1 }, .7)
+    .set(picked, { opacity: 0 }, 1.16)
+    .set([...halves, cut], { opacity: 1 }, 1.16)
+    .to(cut, { opacity: 0, duration: .28 }, 1.16)
+    .set(state, { cutting: 0 }, 1.85)
+    .to(movingClip, { xPercent: 0, duration: .42, ease: 'power3.inOut' }, 2.12)
+    .set(snap, { opacity: 1 }, 2.54)
+    .to(snap, { opacity: 0, duration: .32 }, 2.54)
+    .fromTo(firstClip, { y: -5 }, { y: 0, opacity: 1, duration: .24 }, 3.05)
+    .fromTo(secondClip, { y: -5 }, { y: 0, opacity: 1, duration: .24 }, 4.44)
+    .set(state, { aiOpen: 1 }, 5.45)
+    .to(media, { opacity: 0, duration: .16 }, 5.45)
+    .to(models, { opacity: 1, duration: .18 }, 5.51)
+    .to(badge, { scale: 1.16, duration: .18, repeat: 1, yoyo: true }, 5.51)
+    .to(models, { opacity: 0, duration: .14 }, 6.52)
+    .set(state, { aiOpen: 0 }, 6.58)
+    .to(media, { opacity: 1, duration: .18 }, 6.58)
+    .to(state, { x: 12, y: -6, scale: 112, angle: -2, opacity: 96, duration: .65 }, 6.66)
+    .fromTo(keyframe, { scale: .8 }, { opacity: 1, scale: 1, duration: .22 }, 7.28)
+    .fromTo(transition, { y: -12 }, { y: 0, opacity: 1, duration: .27 }, 8.05)
+    .to(exportButton, { scale: .93, duration: .12, repeat: 1, yoyo: true }, 9.29)
+    .set(progress, { opacity: 1 }, 9.43)
+    .fromTo(progress, { scaleX: 0 }, { scaleX: 1, duration: 1.12, ease: 'none' }, 9.43)
+    .to(progress, { opacity: 0, duration: .2 }, excerptLength - .2);
+
+  const format = value => String(Math.round(value)).replace('-', '−');
+  const readout = (el, value) => { if (el.textContent !== value) el.textContent = value; };
+  const render = () => {
+    const t = Math.min(live.currentTime, excerptLength);
+    tl.time(t, true);
+    app.classList.toggle('app-cutting', Boolean(state.cutting));
+    app.classList.toggle('app-ai-open', Boolean(state.aiOpen));
+    playhead.style.transform = `translateX(${(excerptStart + t) / rulerEnd * 100}%)`;
+    readout(timecode, tcode(excerptStart + t));
+    readout(position, `${format(state.x)}, ${format(state.y)}`);
+    readout(scale, `${format(state.scale)}%`);
+    readout(angle, `${format(state.angle)}°`);
+    readout(opacity, `${format(state.opacity)}%`);
+  };
+  // The video drives the animation through buffering, pauses and native loop boundaries.
+  loop(app, tl, {
+    play: () => { if (live.paused) live.play().catch(() => {}); },
+    pause: () => live.pause(),
+  });
+  return () => { if (!live.paused) render(); };
+}
+const updateEditor = motionOK ? buildEditor() : () => {};
+
+// Pause control for all registered loops, including the hero editor.
 $('#pz').onclick = () => {
   paused = !paused;
   $('#pz').setAttribute('aria-pressed', paused);
   $('#pz use').setAttribute('href', paused ? '#i-play' : '#i-pause');
   $('#pz span').textContent = paused ? T[lang].play : T[lang].pause;
-  playVids();
   sync();
 };
 
-// the hero timeline follows the clip, like the real editor
-{
-  const hph = $('#hph'), vtc = $('.vtc'), sv = $('.sv');
-  gsap.ticker.add(() => {
-    const t = 5 + (live.currentTime || 0); // the clip is seconds 5–16 of the exported project
-    hph.style.left = `calc(16px + ${(t / 24).toFixed(4)} * (100% - 32px))`; // the ruler shows 0–24 s
-    vtc.textContent = tcode(t);
-    sv.textContent = `${Math.round(100 + 8 * Math.sin(t * 1.3))}%`;
+if (motionOK) {
+  const iconMotion = {
+    select: { x: 12, y: 8 },
+    remove: { opacity: .1, scale: .85 },
+    depth: { y: -5 },
+    upscale: { scale: 1.55 },
+    translate: { x: 3, opacity: .5 },
+    speak: { scaleY: .38 },
+    clean: { x: 2, scaleY: .55 },
+    scenes: { y: 5, opacity: .18 },
+    shorts: { x: 5, scale: .88 },
+  };
+  $$('.ai-card').forEach((card, i) => {
+    const icon = $('.ai-icon-active', card);
+    const tl = gsap.timeline({ repeat: -1, yoyo: true, repeatDelay: .75 + i * .07 });
+    tl.to(icon, { ...iconMotion[card.dataset.ic], transformOrigin: '50% 50%', duration: .6, ease: 'sine.inOut' });
+    loop(card, tl);
   });
 }
 
@@ -392,7 +474,10 @@ const reels = $$('.reel').map(reel => {
 /* ---------- Lenis drives scroll, GSAP everything else, one loop ---------- */
 const lenis = new Lenis({ lerp: 0.09 });
 lenis.on('scroll', ScrollTrigger.update);
-gsap.ticker.add(t => lenis.raf(t * 1000));
+gsap.ticker.add(t => {
+  lenis.raf(t * 1000);
+  updateEditor();
+});
 gsap.ticker.lagSmoothing(0);
 document.addEventListener('click', e => {
   const a = e.target.closest('a[href^="#"]'), id = a && a.getAttribute('href');
@@ -448,8 +533,7 @@ $('.mq-in').after($('.mq-in').cloneNode(true));
 $$('.mq-in')[1].setAttribute('aria-hidden', 'true');
 applyLang();
 buildLoops();
-if (paused) { live.removeAttribute('autoplay'); $('#pz').setAttribute('aria-pressed', 'true'); $('#pz use').setAttribute('href', '#i-play'); $('#pz span').textContent = T[lang].play; }
-playVids();
+if (paused) { $('#pz').setAttribute('aria-pressed', 'true'); $('#pz use').setAttribute('href', '#i-play'); $('#pz span').textContent = T[lang].play; }
 
 // Counters run once when the numbers come into view.
 $$('.mq-in:first-child b[data-n]').forEach(b => {
@@ -509,30 +593,20 @@ const mm = gsap.matchMedia();
 mm.add('(prefers-reduced-motion: no-preference)', () => {
   const dir = () => (rtl() ? -1 : 1);
 
-  // intro: the clips snap onto the timeline, the viewer opens like a clip
   gsap.timeline({ defaults: { ease: 'expo.out' } })
     .from('.nav', { y: -30, autoAlpha: 0, duration: 0.8 })
     .from('.hero .tag', { y: 16, autoAlpha: 0, duration: 0.6 }, 0.1)
     .from('h1 .wi', { x: () => dir() * 90, autoAlpha: 0, filter: 'blur(12px)', duration: 1.1, stagger: 0.08 }, 0.15)
-    .from('.viewer', { scaleY: 0.02, autoAlpha: 0, duration: 1, ease: 'expo.inOut' }, 0.2)
-    .from('.hero .lead, .hero .dlc', { y: 22, autoAlpha: 0, duration: 0.7, stagger: 0.08 }, 0.6)
-    .from('.insp', { scale: 0.5, autoAlpha: 0, duration: 0.6, stagger: 0.12, ease: 'back.out(2)' }, 0.9)
-    .from('.htl', { y: 40, autoAlpha: 0, duration: 0.8 }, 0.5)
-    .from('.htl .hc', { scaleX: 0, transformOrigin: '0 50%', duration: 0.7, stagger: 0.06 }, 0.7)
-    .from('.htl .trm', { scale: 0, duration: 0.4, stagger: 0.1, ease: 'back.out(3)' }, 1.1)
-    .from('.htl .wave i', { scaleY: 0, duration: 0.5, stagger: { amount: 0.6 } }, 0.9);
+    .from('.hero .lead, .hero .dlc', { y: 22, autoAlpha: 0, duration: 0.7, stagger: 0.08 }, 0.6);
 
-  // the inspector chips drift at different depths
-  gsap.to('.i1', { y: -60, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: true } });
-  gsap.to('.i2', { y: -120, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: true } });
-  gsap.to('.i3', { y: -30, ease: 'none', scrollTrigger: { trigger: '.hero', start: 'top top', end: 'bottom top', scrub: true } });
-
-  // the hero timeline sinks into the dock
-  // explicit start values: the intro still has it hidden when this tween is created
-  gsap.fromTo('#htl', { y: 0, scale: 1, autoAlpha: 1 }, { y: 60, scale: 0.94, autoAlpha: 0.3, ease: 'none', immediateRender: false, scrollTrigger: { trigger: '#htl', start: 'top 22%', end: 'bottom top', scrub: true } });
+  // Measuring the stage keeps scroll thresholds independent of the editor's transform.
+  gsap.fromTo('#app', { y: 0, scale: 1, opacity: 1 }, {
+    y: 60, scale: .94, opacity: .3, ease: 'none', immediateRender: false,
+    scrollTrigger: { trigger: '.app-stage', start: 'top 22%', end: 'bottom top', scrub: true },
+  });
   const showDock = v => gsap.to(dock, { yPercent: v ? 0 : 150, y: 0, duration: 0.7, ease: v ? 'expo.out' : 'power2.in', overwrite: true });
   gsap.set(dock, { yPercent: 150 });
-  ScrollTrigger.create({ trigger: '#htl', start: 'bottom 35%', onEnter: () => showDock(1), onLeaveBack: () => showDock(0) });
+  ScrollTrigger.create({ trigger: '.app-stage', start: 'bottom 35%', onEnter: () => showDock(1), onLeaveBack: () => showDock(0) });
 
   // each section enters with an editing transition, and its marker on the dock lights up
   const TR = {
@@ -556,8 +630,23 @@ mm.add('(prefers-reduced-motion: no-preference)', () => {
   // reels: items slide in from the reading side
   $$('.reel .track').forEach(t => gsap.from(t.children, { x: () => dir() * 160, autoAlpha: 0, duration: 1.1, ease: 'expo.out', stagger: 0.08, scrollTrigger: { trigger: t, start: 'top 82%' } }));
 
+  const aiBadge = $('.ai-badge');
+  gsap.fromTo($('.ai-badge i'), { xPercent: -100, opacity: .7 }, {
+    xPercent: 100, duration: .65, ease: 'power2.out', immediateRender: false,
+    scrollTrigger: { trigger: aiBadge, start: 'top 90%', once: true },
+  });
+  const markers = $$('.ai-rail i');
+  $$('.ai-card').forEach((card, i) => {
+    const marker = markers[i];
+    marker.setAttribute('data-pending', '');
+    gsap.from(card, {
+      y: 18, autoAlpha: 0, duration: .55, delay: i % 3 * .07, ease: 'power3.out',
+      onStart: () => marker.removeAttribute('data-pending'),
+      scrollTrigger: { trigger: card, start: 'top 94%', once: true },
+    });
+  });
   // cards in batches
-  const cards = '.grid .card, .os-grid .card, .faq details, .asst, .brw';
+  const cards = '#more .card, .os-grid .card, .faq details, .asst, .brw';
   gsap.set(cards, { y: 34, autoAlpha: 0 });
   ScrollTrigger.batch(cards, { start: 'top 94%', onEnter: b => gsap.to(b, { y: 0, autoAlpha: 1, duration: 0.6, ease: 'power3.out', stagger: 0.06, overwrite: true }) });
   ScrollTrigger.addEventListener('scrollEnd', () => $$(cards).forEach(c => {

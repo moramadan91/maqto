@@ -54,6 +54,7 @@
   <a class="brand" href="#top" aria-label="Maqto"><img src="/assets/maqto-logo.svg" alt="Maqto" width="88" height="40"></a>
   <nav class="links" aria-label="main">
     <a href="#demos" data-t="nDemos">بيعمل إيه</a>
+    <a class="nav-ai" href="#ai"><span data-t="nAI">أدوات AI</span><small class="new-badge" data-t="newBadge">جديد</small></a>
     <a href="#claude" data-t="nClaude">المساعد</a>
     <a href="#install" data-t="nInstall">التثبيت</a>
     <a href="#faq" data-t="nFaq">أسئلة</a>
@@ -63,45 +64,128 @@
 </header>
 
 <main id="main">
-  <!-- HERO: a viewer and a real timeline -->
+  <!-- HERO -->
   <section class="hero" id="top" data-clip="k1" data-thumb="/assets/shots/s4.jpg">
-    <div class="wrap hero-grid">
-      <div class="hero-txt">
-        <p class="tag"><b class="dot"></b><span data-t="tag">مجاني بالكامل · ماك وويندوز · من غير علامة مائية</span></p>
-        <h1 class="split" data-t="h1">مونتاج احترافي، بيتكلم عربي.</h1>
-        <p class="lead" data-t="lead">كابشن تلقائي كلمة بكلمة، قص السكتات بالمساعد، 567 حركة و495 ترانزيشن، ألوان، وتصدير لحد 4K. ببلاش، وكله على جهازك.</p>
-        <div class="dl" id="download">
-          <div class="dlc"><a class="btn lg" id="mac" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true"><use href="#i-mac"/></svg><span><strong data-t="mac">حمّل للماك</strong><small data-t="macSub">Apple Silicon · M1 وأحدث</small></span></a><p class="ver" data-v></p></div>
-          <div class="dlc"><a class="btn lg" id="win" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true"><use href="#i-win"/></svg><span><strong data-t="win">حمّل للويندوز</strong><small data-t="winSub">Windows 10 و 11 · 64-bit</small></span></a><p class="ver" data-v></p></div>
-        </div>
-      </div>
-      <div class="viewer-wrap" aria-hidden="true">
-        <div class="viewer lg">
-          <video class="vid" id="live" src="/assets/shots/reel.mp4" poster="/assets/shots/reel.jpg" muted loop playsinline autoplay preload="auto"></video>
-          <div class="vbar"><span class="vtc" dir="ltr">00:00:05:00</span><span class="vfmt" dir="ltr">9:16 · 4K · HEVC</span></div>
-        </div>
-        <span class="insp lg i1"><svg><use href="#i-check"/></svg><b data-t="fl1">كابشن عربي تلقائي</b></span>
-        <span class="insp lg i2" dir="ltr"><i>Scale</i><b class="sv">100%</b></span>
-        <span class="insp lg i3"><svg><use href="#i-spark"/></svg><b data-t="fl3">«شيل السكتات»</b></span>
-      </div>
-    </div>
-
-    <!-- the editor timeline under the hero; it shrinks into the dock as you leave -->
     <div class="wrap">
-      <div class="htl lg" id="htl" dir="ltr" aria-hidden="true">
-        <div class="htl-ruler"><i>00:00</i><i>00:04</i><i>00:08</i><i>00:12</i><i>00:16</i><i>00:20</i><i>00:24</i></div>
-        <div class="htl-lane t"><b class="hc tx" style="--l:6;--w:24" data-t="htx">مونتاج احترافي</b><b class="hc tx2" style="--l:52;--w:20" data-t="htx2">بيتكلم عربي</b></div>
-        <div class="htl-lane v">
-          <b class="hc im" style="--l:0;--w:17;background-image:url(/assets/shots/s4.jpg);background-image:image-set(url(/assets/shots/s4.webp) type('image/webp'),url(/assets/shots/s4.jpg) type('image/jpeg'))"></b>
-          <b class="hc im" style="--l:17.4;--w:15;background-image:url(/assets/shots/s1.jpg);background-image:image-set(url(/assets/shots/s1.webp) type('image/webp'),url(/assets/shots/s1.jpg) type('image/jpeg'))"></b>
-          <b class="hc im" style="--l:32.8;--w:19;background-image:url(/assets/shots/s2.jpg);background-image:image-set(url(/assets/shots/s2.webp) type('image/webp'),url(/assets/shots/s2.jpg) type('image/jpeg'))"></b>
-          <b class="hc im" style="--l:52.2;--w:14;background-image:url(/assets/shots/s3.jpg);background-image:image-set(url(/assets/shots/s3.webp) type('image/webp'),url(/assets/shots/s3.jpg) type('image/jpeg'))"></b>
-          <b class="hc im" style="--l:66.6;--w:17;background-image:url(/assets/shots/s5.jpg);background-image:image-set(url(/assets/shots/s5.webp) type('image/webp'),url(/assets/shots/s5.jpg) type('image/jpeg'))"></b>
-          <b class="hc im" style="--l:84;--w:16;background-image:url(/assets/shots/s6.jpg);background-image:image-set(url(/assets/shots/s6.webp) type('image/webp'),url(/assets/shots/s6.jpg) type('image/jpeg'))"></b>
-          <em class="trm" style="--l:17.2"></em><em class="trm" style="--l:52"></em><em class="trm" style="--l:83.8"></em>
+      <p class="tag"><b class="dot"></b><span data-t="tag">مجاني بالكامل · ماك وويندوز · من غير علامة مائية</span></p>
+      <h1 class="split" data-t="h1">مونتاج احترافي، بيتكلم عربي.</h1>
+      <p class="lead" data-t="lead">كابشن تلقائي كلمة بكلمة، قص السكتات بالمساعد، 567 حركة و495 ترانزيشن، ألوان، وتصدير لحد 4K. ببلاش، وكله على جهازك.</p>
+      <div class="dl" id="download">
+        <div class="dlc"><a class="btn lg" id="mac" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true"><use href="#i-mac"/></svg><span><strong data-t="mac">حمّل للماك</strong><small data-t="macSub">Apple Silicon · M1 وأحدث</small></span></a><p class="ver" data-v></p></div>
+        <div class="dlc"><a class="btn lg" id="win" href="https://github.com/moramadan91/maqto/releases/latest"><svg aria-hidden="true"><use href="#i-win"/></svg><span><strong data-t="win">حمّل للويندوز</strong><small data-t="winSub">Windows 10 و 11 · 64-bit</small></span></a><p class="ver" data-v></p></div>
+      </div>
+      <div class="app-stage">
+        <div class="app" id="app" dir="ltr" aria-hidden="true">
+          <div class="app-titlebar">
+            <div class="app-lights"><i></i><i></i><i></i></div>
+            <div class="app-brand"><img src="/assets/maqto-symbol.svg" alt="" width="24" height="6"><b>Maqto</b></div>
+            <span class="app-project">Untitled project</span>
+            <div class="app-actions">
+              <span class="app-history">↶ &nbsp;↷</span><span><svg><use href="#i-spark"/></svg> AI Tools</span><span><svg><use href="#i-spark"/></svg> Assistant</span>
+              <span>Settings</span><span>↻ Updates</span><span><svg><use href="#i-lang"/></svg> عربي</span>
+              <span>⊞ New</span><span><svg viewBox="0 0 24 24"><path d="M3 18V6h7l2 3h8l-2 9zM3 18l4-7h15l-4 7"/></svg> Open</span><span><svg viewBox="0 0 24 24"><path d="M4 3h13l3 3v15H4zM8 3v6h8V3M8 21v-8h8v8"/></svg> Save</span><span>☷ Render queue</span>
+            </div>
+            <span class="app-export"><svg viewBox="0 0 24 24"><path d="M12 15V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg><b data-t="exp">تصدير</b><i></i></span>
+          </div>
+          <div class="app-workspace">
+            <div class="app-pane app-media">
+              <div class="app-tabs"><span class="app-media-tab">Media</span><span class="app-ai-tab">AI Tools <b class="new-badge">NEW</b></span><span>Text</span><span>Captions</span><span>Filters</span><span>Ef…</span></div>
+              <div class="app-media-body">
+                <div class="app-control">＋ Import</div>
+                <div class="app-control"><svg><use href="#i-win"/></svg> Record screen &amp; camera</div>
+                <div class="app-markers">▸ Markers</div>
+                <div class="app-search"><span>Search media</span><span>Newest ↕</span><span>☷</span></div>
+                <div class="app-browser">
+                  <div class="app-media-grid">
+                    <div><i style="background-image:url(/assets/shots/s1.jpg);background-image:image-set(url(/assets/shots/s1.webp) type('image/webp'),url(/assets/shots/s1.jpg) type('image/jpeg'))"></i><span>Reel intro.mp4</span></div>
+                    <div><i style="background-image:url(/assets/shots/s2.jpg);background-image:image-set(url(/assets/shots/s2.webp) type('image/webp'),url(/assets/shots/s2.jpg) type('image/jpeg'))"></i><span>Studio.mp4</span></div>
+                    <div><i style="background-image:url(/assets/shots/s3.jpg);background-image:image-set(url(/assets/shots/s3.webp) type('image/webp'),url(/assets/shots/s3.jpg) type('image/jpeg'))"></i><span>Close-up.mp4</span></div>
+                    <div><i style="background-image:url(/assets/shots/s4.jpg);background-image:image-set(url(/assets/shots/s4.webp) type('image/webp'),url(/assets/shots/s4.jpg) type('image/jpeg'))"></i><span>Street.mp4</span></div>
+                    <div><i style="background-image:url(/assets/shots/s5.jpg);background-image:image-set(url(/assets/shots/s5.webp) type('image/webp'),url(/assets/shots/s5.jpg) type('image/jpeg'))"></i><span>Detail.mp4</span></div>
+                    <div><i style="background-image:url(/assets/shots/s6.jpg);background-image:image-set(url(/assets/shots/s6.webp) type('image/webp'),url(/assets/shots/s6.jpg) type('image/jpeg'))"></i><span>Outro.mp4</span></div>
+                  </div>
+                  <div class="app-models">
+                    <span><svg><use href="#i-spark"/></svg> Select &amp; track objects <small>SAM 2.1</small></span>
+                    <span><svg><use href="#i-spark"/></svg> Depth effects <small>Depth Anything V2</small></span>
+                    <span><svg><use href="#i-spark"/></svg> AI upscale <small>Real-ESRGAN</small></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="app-pane app-player">
+              <div class="app-panel-title">Player</div>
+              <div class="app-monitor">
+                <div class="app-frame">
+                  <video id="live" src="/assets/shots/reel.mp4" poster="/assets/shots/reel.jpg" muted loop playsinline preload="none"></video>
+                </div>
+              </div>
+              <div class="app-transport">
+                <div><b class="vtc">00:00:05:00</b> <span>/ 00:00:28:00</span></div>
+                <div class="app-play-controls">
+                  <svg viewBox="0 0 24 24"><path d="M5 5v14m14-14L8 12l11 7z"/></svg><svg><use href="#i-play"/></svg><svg viewBox="0 0 24 24"><path d="M19 5v14M5 5l11 7-11 7z"/></svg>
+                </div>
+                <div class="app-safe-zones">
+                  <svg viewBox="0 0 24 24"><path d="M14 3v13a4 4 0 1 1-4-4m4-9c0 4 2 6 6 6"/></svg>
+                  <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><path d="M17 7h.1"/></svg>
+                  <svg viewBox="0 0 24 24"><path d="M12 3c-3 0-5 2-5 5v4l-4 4 4 1 2 3 3-1 3 1 2-3 4-1-4-4V8c0-3-2-5-5-5z"/></svg>
+                </div>
+                <div class="app-ratio"><span>Ratio</span> <b>9:16</b><span class="app-reframe">Smart reframe</span></div>
+              </div>
+            </div>
+            <div class="app-pane app-inspector">
+              <div class="app-tabs"><span>Inspector</span><span>Scopes</span><span>Transcript</span><span>Multicam</span></div>
+              <div class="app-inspect-body">
+                <div class="app-selection"><i style="background-image:url(/assets/shots/s2.jpg);background-image:image-set(url(/assets/shots/s2.webp) type('image/webp'),url(/assets/shots/s2.jpg) type('image/jpeg'))"></i><div><b>Studio.mp4</b><small>Video · 9:16</small></div></div>
+                <div class="app-inspect-title">▾ &nbsp; Transform</div>
+                <dl class="app-properties">
+                  <div><dt>Position</dt><dd><span class="app-position">12, −6</span><i>◇</i></dd></div>
+                  <div><dt>Scale</dt><dd><span class="sv">112%</span><i class="app-diamond">◇<b>◆</b></i></dd></div>
+                  <div><dt>Rotation</dt><dd><span class="app-angle">−2°</span><i>◇</i></dd></div>
+                  <div><dt>Opacity</dt><dd><span class="app-opacity">96%</span><i>◇</i></dd></div>
+                </dl>
+              </div>
+            </div>
+          </div>
+          <div class="app-pane app-timeline">
+            <div class="app-panel-title">Timeline</div>
+            <div class="app-tools">
+              <div>
+                <span class="app-select-tool"><svg><use href="#i-cursor"/></svg></span>
+                <span class="app-blade"><svg><use href="#i-cut"/></svg></span>
+                <span><svg><use href="#i-tr"/></svg></span><span>⇄</span><span>⊡</span><span>↔</span>
+              </div>
+              <div>
+                <span class="app-magnet"><svg viewBox="0 0 24 24"><path d="M6 7V5h4v7a2 2 0 0 0 4 0V5h4v7a6 6 0 0 1-12 0zm0 1h4m4 0h4"/></svg></span>
+                <span class="app-link"><svg viewBox="0 0 24 24"><path d="m10 14 4-4m-6 6-1 1a3 3 0 0 1-4-4l4-4a3 3 0 0 1 4 0m2 6a3 3 0 0 0 4 0l4-4a3 3 0 0 0-4-4l-1 1"/></svg></span>
+                <span>−</span><i class="app-zoom"></i><span>＋</span>
+              </div>
+            </div>
+            <div class="app-tracks">
+              <div class="app-track-names"><span></span><span><i></i> Text</span><span><i></i> Main</span><span><i></i> Audio</span></div>
+              <div class="app-lanes">
+                <div class="app-ruler"><span>00:00</span><span>00:02</span><span>00:04</span><span>00:06</span><span>00:08</span><span>00:10</span><span>00:12</span><span>00:14</span><span>00:16</span><span>00:18</span><span>00:20</span><span>00:22</span><span>00:24</span><span>00:26</span><span>00:28</span></div>
+                <div class="app-lane app-text-lane">
+                  <b class="hc app-caption-clip" style="--l:27;--w:12" data-t="htx" dir="auto">مونتاج احترافي</b>
+                  <b class="hc app-caption-clip" style="--l:39;--w:16" data-t="htx2" dir="auto">بيتكلم عربي</b>
+                </div>
+                <div class="app-lane app-video-lane">
+                  <b class="hc im" style="--l:0;--w:14;background-image:url(/assets/shots/s1.jpg);background-image:image-set(url(/assets/shots/s1.webp) type('image/webp'),url(/assets/shots/s1.jpg) type('image/jpeg'))"><span>Reel intro.mp4</span></b>
+                  <b class="hc im app-selected" style="--l:14;--w:19;background-image:url(/assets/shots/s2.jpg);background-image:image-set(url(/assets/shots/s2.webp) type('image/webp'),url(/assets/shots/s2.jpg) type('image/jpeg'))"><span>Studio.mp4</span></b>
+                  <b class="hc im app-split-left" style="--l:14;--w:8;background-image:url(/assets/shots/s2.jpg);background-image:image-set(url(/assets/shots/s2.webp) type('image/webp'),url(/assets/shots/s2.jpg) type('image/jpeg'))"><span>Studio.mp4</span></b>
+                  <b class="hc im app-split-tail" style="--l:22;--w:11;background-image:url(/assets/shots/s2.jpg);background-image:image-set(url(/assets/shots/s2.webp) type('image/webp'),url(/assets/shots/s2.jpg) type('image/jpeg'))"><span>Studio.mp4</span></b>
+                  <b class="hc im app-snap-clip" style="--l:33;--w:16;background-image:url(/assets/shots/s3.jpg);background-image:image-set(url(/assets/shots/s3.webp) type('image/webp'),url(/assets/shots/s3.jpg) type('image/jpeg'))"><span>Close-up.mp4</span></b>
+                  <b class="hc im" style="--l:49;--w:17;background-image:url(/assets/shots/s4.jpg);background-image:image-set(url(/assets/shots/s4.webp) type('image/webp'),url(/assets/shots/s4.jpg) type('image/jpeg'))"><span>Street.mp4</span></b>
+                  <b class="hc im" style="--l:66;--w:16;background-image:url(/assets/shots/s5.jpg);background-image:image-set(url(/assets/shots/s5.webp) type('image/webp'),url(/assets/shots/s5.jpg) type('image/jpeg'))"><span>Detail.mp4</span></b>
+                  <b class="hc im" style="--l:82;--w:18;background-image:url(/assets/shots/s6.jpg);background-image:image-set(url(/assets/shots/s6.webp) type('image/webp'),url(/assets/shots/s6.jpg) type('image/jpeg'))"><span>Outro.mp4</span></b>
+                  <i class="app-cut-line"></i><i class="app-snap-line"></i><i class="app-keyframe"></i>
+                  <i class="app-transition"><svg><use href="#i-tr"/></svg></i>
+                </div>
+                <div class="app-lane app-audio-lane"><div class="hc app-wave"><div class="wave" data-bars="110"></div></div></div>
+                <i class="app-playhead" id="hph"></i>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="htl-lane a"><div class="wave" data-bars="140"></div></div>
-        <i class="hph" id="hph"><span></span></i>
       </div>
     </div>
   </section>
@@ -273,7 +357,7 @@
       <article class="card fc" data-ic="key"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="8" width="36" height="32" rx="6" class="o"/><rect class="gscr" x="10" y="12" width="28" height="24" rx="3"/><circle class="head" cx="24" cy="22" r="5"/><path class="body" d="M15 36c1-6 5-8 9-8s8 2 9 8"/></svg><h3 data-t="m2">كروما كي</h3><p data-t="m2p">شيل الشاشة الخضرا وحط أي خلفية في ثانية.</p></article>
       <article class="card fc" data-ic="cutout"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="6" y="8" width="36" height="32" rx="6" class="o"/><circle cx="24" cy="21" r="6" class="o"/><path d="M13 40c1-7 6-10 11-10s10 3 11 10" class="o"/><path class="scan" d="M6 10h36"/></svg><h3 data-t="m3">إزالة الخلفية AI</h3><p data-t="m3p">للأشخاص والمنتجات، من غير كروما ومن غير إنترنت.</p></article>
       <article class="card fc" data-ic="slow"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><circle class="d d1" cx="10" cy="24" r="4"/><circle class="d d2" cx="20" cy="24" r="4"/><circle class="d d3" cx="30" cy="24" r="4"/><circle class="d d4" cx="40" cy="24" r="4"/></svg><h3 data-t="m4">سلو موشن ناعم</h3><p data-t="m4p">فريمات وسطانية بالذكاء الاصطناعي (RIFE) عشان البطء ما يقطّعش.</p></article>
-      <article class="card fc" data-ic="mic"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="19" y="6" width="10" height="22" rx="5" class="o"/><path d="M12 22a12 12 0 0 0 24 0M24 34v8" class="o"/><g class="lv"><path d="M4 20v8M42 18v12M46 22v4"/></g></svg><h3 data-t="m5">تعليق صوتي ونقاوة صوت</h3><p data-t="m5p">سجّل جوه البرنامج، وشيل الدوشة بموديل RNNoise.</p></article>
+      <article class="card fc" data-ic="mic"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="19" y="6" width="10" height="22" rx="5" class="o"/><path d="M12 22a12 12 0 0 0 24 0M24 34v8" class="o"/><g class="lv"><path d="M4 20v8M42 18v12M46 22v4"/></g></svg><h3 data-t="m5">تعليق صوتي ونقاوة صوت</h3><p data-t="m5p">سجّل جوه البرنامج، وشيل الدوشة بموديل DeepFilterNet.</p></article>
       <article class="card fc" data-ic="track"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="4" y="6" width="40" height="36" rx="6" class="o"/><g class="tb"><rect x="10" y="12" width="14" height="14" rx="2" class="box"/><circle cx="17" cy="19" r="2.5" class="pk"/></g></svg><h3 data-t="m6">تتبّع حركة</h3><p data-t="m6p">النص أو الإستيكر يمشي ورا الحاجة اللي بتتحرك في الكادر.</p></article>
       <article class="card fc" data-ic="safe"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="13" y="3" width="22" height="42" rx="5" class="o"/><rect class="zone" x="16" y="10" width="13" height="26" rx="2"/><path class="ui" d="M31 14v2M31 20v2M31 26v2"/></svg><h3 data-t="m7">خطوط الأمان</h3><p data-t="m7p">شوف أماكن واجهة تيك توك وإنستجرام وسناب فوق الفيديو قبل ما تنشر.</p></article>
       <article class="card fc" data-ic="exp"><svg class="ic" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="10" width="38" height="28" rx="6" class="o"/><text x="24" y="28" text-anchor="middle" class="k4">4K</text><rect class="bar" x="10" y="33" width="28" height="2.5" rx="1"/></svg><h3 data-t="m8">تصدير لحد 4K</h3><p data-t="m8p">H.264 وHEVC، بتسريع هاردوير على الماك، لحد 60 فريم.</p></article>
@@ -284,10 +368,66 @@
     </div>
   </section>
 
+  <section class="sec" id="ai" data-clip="k9" data-thumb="/assets/shots/s2.jpg" data-tr="iris">
+    <div class="wrap">
+      <p class="eyebrow"><span class="tcode" dir="ltr">03</span><span data-t="aiEye">أدوات الذكاء الاصطناعي</span><span class="new-badge ai-badge"><b data-t="newBadge">جديد</b><i aria-hidden="true"></i></span></p>
+      <h2 class="split" data-t="aiTitle">أدوات ذكاء اصطناعي جديدة، شغّالة على جهازك.</h2>
+      <p class="sub" data-t="aiSub">9 موديلات جديدة جوه ماكتو. كل موديل بيتنزّل مرة واحدة ويشتغل من غير نت، وفيديوهاتك ما بتخرجش من جهازك.</p>
+      <div class="ai-rail" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="grid ai-grid">
+        <article class="card ai-card" data-ic="select">
+          <div class="ai-card-top"><code dir="ltr">SAM 2.1</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><rect class="ai-icon-base" x="4" y="5" width="40" height="38" rx="5"/><g class="ai-icon-active"><path d="M10 17v-5h5m6 0h5v5m0 6v5h-5m-6 0h-5v-5"/><circle cx="18" cy="20" r="3"/></g></svg></div>
+          <h3 data-t="a1">تحديد وتتبّع العناصر</h3>
+          <p data-t="a1p">اضغط على أي عنصر أو ارسم مربع حواليه، وماكتو يحدده ويتتبّعه طول الكليب. اعزله أو بكسله أو خلّي لونه بس اللي باين.</p>
+        </article>
+        <article class="card ai-card" data-ic="remove">
+          <div class="ai-card-top"><code dir="ltr">MI-GAN</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><rect class="ai-icon-base" x="5" y="7" width="38" height="34" rx="5"/><path class="ai-icon-base" d="m6 34 10-9 9 8 8-6 9 7"/><g class="ai-icon-active"><circle cx="26" cy="19" r="5" stroke-dasharray="2 3"/><path d="m33 11 4-4m1 8h5"/></g></svg></div>
+          <h3 data-t="a2">مسح العناصر</h3>
+          <p data-t="a2p">امسح عنصر أو علامة مائية من الكادر، والمكان يتملي لوحده.</p>
+        </article>
+        <article class="card ai-card" data-ic="depth">
+          <div class="ai-card-top"><code dir="ltr">Depth Anything V2</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><path class="ai-icon-base" d="m5 25 19 10 19-10M5 32l19 10 19-10"/><path class="ai-icon-active" d="m5 18 19-10 19 10-19 10z"/></svg></div>
+          <h3 data-t="a3">تأثيرات العمق</h3>
+          <p data-t="a3p">تمويه بورتريه زي الكاميرات، ضباب بيزيد مع المسافة، وحركة كاميرا 3D على صورة أو فيديو.</p>
+        </article>
+        <article class="card ai-card" data-ic="upscale">
+          <div class="ai-card-top"><code dir="ltr">Real-ESRGAN</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><rect class="ai-icon-base" x="5" y="5" width="38" height="38" rx="5"/><g class="ai-icon-active"><path d="m16 32 16-16m-9 0h9v9m-7 7h-9v-9"/></g></svg></div>
+          <h3 data-t="a4">رفع الدقة</h3>
+          <p data-t="a4p">كبّر الفيديو أو الصورة ضعفين أو 4 أضعاف، وصدّر مشروعك بـ 4K.</p>
+        </article>
+        <article class="card ai-card" data-ic="translate">
+          <div class="ai-card-top"><code dir="ltr">opus-mt</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><rect class="ai-icon-base" x="5" y="7" width="38" height="34" rx="5"/><path d="M24 8v32" class="ai-icon-base"/><g class="ai-icon-active"><path d="M12 17h21l-4-4m4 4-4 4M35 31H14l4-4m-4 4 4 4"/></g></svg></div>
+          <h3 data-t="a5">ترجمة الكابشن</h3>
+          <p data-t="a5p">ترجم الكابشن من عربي لإنجليزي أو العكس على جهازك، كتراك جديد بنفس التوقيت أو ملف SRT.</p>
+        </article>
+        <article class="card ai-card" data-ic="speak">
+          <div class="ai-card-top"><code dir="ltr">Piper</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><path class="ai-icon-base" d="M7 5h34a4 4 0 0 1 4 4v20a4 4 0 0 1-4 4H18l-9 8v-8H7a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4Z"/><g class="ai-icon-active"><path d="M12 16v6m6-10v14m6-16v18m6-14v10m6-8v6"/></g></svg></div>
+          <h3 data-t="a6">تعليق صوتي</h3>
+          <p data-t="a6p">حوّل أي نص أو تراك كابشن لصوت عربي أو إنجليزي، كل جملة في وقتها.</p>
+        </article>
+        <article class="card ai-card" data-ic="clean">
+          <div class="ai-card-top"><code dir="ltr">DeepFilterNet 3</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><path class="ai-icon-base" d="M4 18h5l3-4 4 7 3-13 4 21 5-23 4 17 3-7 3 2h6"/><path class="ai-icon-active" d="M5 35h11l4-6 4 10 5-9 3 5h11"/></svg></div>
+          <h3 data-t="a7">تنقية الكلام</h3>
+          <p data-t="a7p">شيل دوشة التكييف والشارع والهسهسة، وسيب الكلام واضح.</p>
+        </article>
+        <article class="card ai-card" data-ic="scenes">
+          <div class="ai-card-top"><code dir="ltr">TransNetV2</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><rect class="ai-icon-base" x="4" y="11" width="40" height="26" rx="4"/><path class="ai-icon-base" d="M5 18h38M5 30h38M15 12v6m18-6v6M15 30v7m18-7v7"/><path class="ai-icon-active" d="M24 5v38" stroke-dasharray="3 4"/></svg></div>
+          <h3 data-t="a8">كشف المشاهد</h3>
+          <p data-t="a8p">يلاقي كل قطع في الفيديو الطويل ويقسّمه لمشاهد بضغطة.</p>
+        </article>
+        <article class="card ai-card" data-ic="shorts">
+          <div class="ai-card-top"><code dir="ltr">Highlights → Shorts</code><svg class="ai-icon" viewBox="0 0 48 48" aria-hidden="true"><rect class="ai-icon-base" x="3" y="12" width="38" height="24" rx="4"/><g class="ai-icon-active"><rect x="18" y="5" width="20" height="38" rx="4"/><path d="m26 18 6 6-6 6z"/></g></svg></div>
+          <h3 data-t="a9">من فيديو طويل لشورتس</h3>
+          <p data-t="a9p">يطلّع أقوى اللحظات من كلامك، وكل لحظة تبقى شورت 9:16 من غير سكتات وعليه كابشن.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
   <!-- CLAUDE / ASSISTANT -->
   <section class="sec" id="claude" data-clip="k5" data-thumb="/assets/shots/s3.jpg" data-tr="split">
     <div class="wrap">
-      <p class="eyebrow"><span class="tcode" dir="ltr">03</span><span data-t="cEye">ماكتو + Claude</span></p>
+      <p class="eyebrow"><span class="tcode" dir="ltr">04</span><span data-t="cEye">ماكتو + Claude</span></p>
       <h2 class="split" data-t="cTitle">اكتب الفكرة، وشوف الفيديو بيتعمل قدامك.</h2>
       <p class="sub" data-t="cSub">ماكتو فيه مساعد جوه التطبيق وسيرفر MCP. Claude بيشتغل على التايملاين بتاعك لايف: يقص، يضيف نصوص وحركة وترانزيشن، يشوف الفريم ويراجع، ويصدّر.</p>
     <div class="card asst">
@@ -343,7 +483,7 @@
   <!-- INSTALL -->
   <section class="sec" id="install" data-clip="k6" data-thumb="/assets/shots/s6.jpg" data-tr="wipe">
     <div class="wrap">
-      <p class="eyebrow"><span class="tcode" dir="ltr">04</span><span data-t="iEye">التثبيت</span></p>
+      <p class="eyebrow"><span class="tcode" dir="ltr">05</span><span data-t="iEye">التثبيت</span></p>
       <h2 class="split" data-t="iTitle">دقيقة وتبدأ.</h2>
       <p class="sub" data-t="iSub">البرنامج مجاني ومش من متجر أبل أو مايكروسوفت، فالنظام هيسألك أول مرة بس.</p>
     <div class="os-grid">
@@ -392,15 +532,15 @@
   <!-- FAQ -->
   <section class="sec" id="faq" data-clip="k7" data-thumb="/assets/shots/s2.jpg" data-tr="iris">
     <div class="wrap">
-      <p class="eyebrow"><span class="tcode" dir="ltr">05</span><span data-t="qEye">أسئلة شائعة</span></p>
+      <p class="eyebrow"><span class="tcode" dir="ltr">06</span><span data-t="qEye">أسئلة شائعة</span></p>
       <h2 class="split" data-t="qTitle">قبل ما تسأل.</h2>
       <div class="faq">
-      <details class="card"><summary data-t="q1">هو مجاني فعلاً؟</summary><p data-t="a1">أيوه. من غير اشتراك، ومن غير إعلانات، ومن غير علامة مائية على الفيديو.</p></details>
-      <details class="card"><summary data-t="q2">محتاج إنترنت؟</summary><p data-t="a2">لا، المونتاج والتصدير بيشتغلوا من غير إنترنت. الإنترنت محتاجه بس للتحديثات، ولتحميل موديل الكابشن أول مرة (حوالي 550 ميجا للموديل المقترح).</p></details>
-      <details class="card"><summary data-t="q3">بيشتغل على أنهي أجهزة؟</summary><p data-t="a3">ماك بمعالج Apple (M1 أو أحدث) عليه macOS 13.4 أو أحدث، وويندوز 10 أو 11 بنظام 64-bit.</p></details>
-      <details class="card"><summary data-t="q6">قص السكتات بيشتغل إزاي؟</summary><p data-t="a6">عن طريق المساعد جوه ماكتو: تكتب «شيل السكتات» وClaude يلاقي الوقفات ويقصها على التايملاين. محتاج Claude Code واشتراك Claude Pro أو أعلى.</p></details>
-      <details class="card"><summary data-t="q4">التحديثات بتوصل إزاي؟</summary><p data-t="a4">أول ما تفتح البرنامج بيشوف لو فيه نسخة جديدة ويسألك. لو وافقت بيحمّلها ويقفل ويفتح تاني بالنسخة الجديدة.</p></details>
-      <details class="card"><summary data-t="q5">فيديوهاتي بتترفع في أي مكان؟</summary><p data-t="a5">لا. ملفاتك والصوت والتفريغ كله بيحصل على جهازك.</p></details>
+      <details class="card"><summary data-t="q1">هو مجاني فعلاً؟</summary><p data-t="faqA1">أيوه. من غير اشتراك، ومن غير إعلانات، ومن غير علامة مائية على الفيديو.</p></details>
+      <details class="card"><summary data-t="q2">محتاج إنترنت؟</summary><p data-t="faqA2">لا، المونتاج والتصدير بيشتغلوا من غير إنترنت. الإنترنت محتاجه بس للتحديثات، ولتحميل موديل الكابشن أول مرة (حوالي 550 ميجا للموديل المقترح).</p></details>
+      <details class="card"><summary data-t="q3">بيشتغل على أنهي أجهزة؟</summary><p data-t="faqA3">ماك بمعالج Apple (M1 أو أحدث) عليه macOS 13.4 أو أحدث، وويندوز 10 أو 11 بنظام 64-bit.</p></details>
+      <details class="card"><summary data-t="q6">قص السكتات بيشتغل إزاي؟</summary><p data-t="faqA6">عن طريق المساعد جوه ماكتو: تكتب «شيل السكتات» وClaude يلاقي الوقفات ويقصها على التايملاين. محتاج Claude Code واشتراك Claude Pro أو أعلى.</p></details>
+      <details class="card"><summary data-t="q4">التحديثات بتوصل إزاي؟</summary><p data-t="faqA4">أول ما تفتح البرنامج بيشوف لو فيه نسخة جديدة ويسألك. لو وافقت بيحمّلها ويقفل ويفتح تاني بالنسخة الجديدة.</p></details>
+      <details class="card"><summary data-t="q5">فيديوهاتي بتترفع في أي مكان؟</summary><p data-t="faqA5">لا. ملفاتك والصوت والتفريغ كله بيحصل على جهازك.</p></details>
       </div>
     </div>
   </section>
