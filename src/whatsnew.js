@@ -8,6 +8,9 @@
   const path = (d, attr = '') => `<path d="${d}" ${attr}/>`;
   const bars = (heights, x, y, gap, attr = '') => heights.map((h, i) => path(`M${x + i * gap} ${y - h}v${2 * h}`, attr)).join('');
   const scenes = {
+    textPresets: () => rect(46, 46, 268, 108) +
+      [62, 146, 230].map((x, i) => rect(x, 67, 68, 66, i === 1 ? accent : '') +
+        path(`M${x + 17} 115l17-32 17 32m-29-10h24`, i === 1 ? accent : '')).join(''),
     collect: () => rect(48, 56, 112, 88) + path('M64 78h80M64 98h80M64 118h50') + path('M176 100h40m-8-8 8 8-8 8', 'stroke="var(--accent)"') + rect(232, 70, 82, 60, 'stroke="var(--accent)"') + path('M246 92h54M246 108h34', 'stroke="var(--accent)"'),
     queue: () => [0, 1, 2].map((n) => rect(74, 39 + n * 43, 212, 34, n ? '' : accent) +
       path(`M91 ${55 + n * 43}h58m92 0 7 6 12-12`, n ? '' : accent)).join(''),
@@ -126,6 +129,10 @@
   }, {
     version: '1.0.42',
     steps: [
+      { id: 'textPresets', icon: 'type', art: art('textPresets'), target: '#textPresetGroup', panel: 'insp',
+        where: { ar: 'اختار نص ← الخصائص ← النص ← ستايلات جاهزة', en: 'Select a text clip → Inspector → Text → Preset styles' },
+        ar: { title: 'ستايلات جديدة للنص والكابشن', body: 'اتضاف ١٢٢ ستايل جديد وبقى عندك ١٥٠ ستايل، من الخطوط البسيطة والظلال والتدرّجات لستايلات بخطوط عربية. وسّع «ستايلات جاهزة» واختار الفئة اللي تناسب الفيديو.' },
+        en: { title: 'New text and caption presets', body: 'Explore 122 new styles, bringing the total to 150. Expand Preset styles and filter by family to find clean type, shadows, gradients, or Arabic typography.' } },
       { id: 'aiTools', icon: 'sparkles', art: art('ai'), target: '[data-dock-tab="aiTools"]', panel: 'aiTools',
         where: { ar: 'المكتبة ← أدوات الذكاء الاصطناعي', en: 'Library → AI Tools' },
         ar: { title: 'أدوات الذكاء الاصطناعي', body: 'كل أدوات الذكاء الاصطناعي في لوحة واحدة. شوف حالة النماذج، نزّل اللي تحتاجه، وافتح الأداة للكليب اللي اخترته.' },

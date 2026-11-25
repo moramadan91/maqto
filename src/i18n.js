@@ -1,6 +1,8 @@
 // UI strings. Add a key to both languages.
 window.MaqtoI18n = {
   ar: {
+    textFamilyLabel: 'فئات الستايلات', textFamily_all: 'الكل', textFamily_clean: 'بسيط', textFamily_outline: 'حدود', textFamily_shadow: 'ظلال', textFamily_glow: 'توهّج',
+    textFamily_color: 'ألوان', textFamily_gradient: 'تدرّجات', textFamily_box: 'خلفيات', textFamily_social: 'سوشيال وكابشن', textFamily_arabic: 'عربي',
     depthTitle: 'تأثيرات العمق (ذكاء اصطناعي)', depthDesc: 'اعزل الخلفية بالتمويه، أضف ضبابًا، أو حرّك الكاميرا باستخدام خريطة العمق.',
     depthBokeh: 'تمويه البورتريه (بوكيه)', depthBlur: 'قوة التمويه', depthRange: 'نطاق التركيز', depthProgressive: 'يزيد التمويه مع البعد عن التركيز',
     depthPick: 'اختار نقطة التركيز', depthRepick: 'غيّر نقطة التركيز', depthAuto: 'تركيز تلقائي', depthFocusHint: 'اضغط على نقطة في الكليب المعروض لاختيار عمق التركيز.',
@@ -127,7 +129,7 @@ window.MaqtoI18n = {
     font: 'الخط', size: 'الحجم', weight: 'السُمك', color: 'اللون', hl: 'الكلمة الحالية', stroke: 'الحدود', strokeColor: 'لون الحدود',
     bg: 'خلفية', horiz: 'أفقي', vert: 'رأسي', animIn: 'دخول', animOut: 'خروج',
     a_none: 'بدون', a_fade: 'ظهور', a_slide: 'طلوع', a_pop: 'نطّة', a_type: 'كتابة', o_fade: 'اختفاء',
-    w400: 'عادي', w600: 'متوسط', w800: 'عريض', w900: 'أعرض',
+    w200: 'خفيف جدًا', w400: 'عادي', w600: 'متوسط', w700: 'نصف عريض', w800: 'عريض', w900: 'أعرض',
     p_none: 'بدون', p_warm: 'دافي', p_cool: 'بارد', p_vivid: 'زاهي', p_matte: 'مطفي', p_bw: 'أبيض وأسود', p_cinema: 'سينمائي', p_vintage: 'قديم',
     tr_c1: 'كابشن', tr_t1: 'نصوص', tr_v2: 'فيديو ٢', tr_v1: 'الأساسي', tr_a1: 'صوت ١', tr_a2: 'صوت ٢',
     nothingSel: 'اختار كليب من التايملاين عشان تعدّله.', shortcuts: 'اختصارات',
@@ -260,6 +262,8 @@ window.MaqtoI18n = {
     image: 'صورة',
   },
   en: {
+    textFamilyLabel: 'Preset families', textFamily_all: 'All', textFamily_clean: 'Clean', textFamily_outline: 'Outlines', textFamily_shadow: 'Shadows', textFamily_glow: 'Glow',
+    textFamily_color: 'Colors', textFamily_gradient: 'Gradients', textFamily_box: 'Backgrounds', textFamily_social: 'Social & captions', textFamily_arabic: 'Arabic',
     depthTitle: 'Depth effects (AI)', depthDesc: 'Use a depth map to blur backgrounds, add fog, or move the camera.',
     depthBokeh: 'Portrait blur (bokeh)', depthBlur: 'Blur amount', depthRange: 'Focus range', depthProgressive: 'Increase blur with distance from focus',
     depthPick: 'Pick focus', depthRepick: 'Change focus point', depthAuto: 'Auto focus', depthFocusHint: 'Click a point on the clip in the viewer to set its focus depth.',
@@ -386,7 +390,7 @@ window.MaqtoI18n = {
     font: 'Font', size: 'Size', weight: 'Weight', color: 'Color', hl: 'Spoken word', stroke: 'Stroke', strokeColor: 'Stroke color',
     bg: 'Background', horiz: 'Horizontal', vert: 'Vertical', animIn: 'In', animOut: 'Out',
     a_none: 'None', a_fade: 'Fade', a_slide: 'Slide up', a_pop: 'Pop', a_type: 'Typewriter', o_fade: 'Fade',
-    w400: 'Regular', w600: 'Medium', w800: 'Bold', w900: 'Black',
+    w200: 'Extra Light', w400: 'Regular', w600: 'Medium', w700: 'Semi Bold', w800: 'Bold', w900: 'Black',
     p_none: 'None', p_warm: 'Warm', p_cool: 'Cool', p_vivid: 'Vivid', p_matte: 'Matte', p_bw: 'B&W', p_cinema: 'Cinematic', p_vintage: 'Vintage',
     tr_c1: 'Captions', tr_t1: 'Text', tr_v2: 'Video 2', tr_v1: 'Main', tr_a1: 'Audio 1', tr_a2: 'Audio 2',
     nothingSel: 'Select a clip on the timeline to edit it.', shortcuts: 'Shortcuts',

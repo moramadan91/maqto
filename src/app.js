@@ -355,7 +355,7 @@ function fontPicker(it) {
   input.focus({ preventScroll: true });
 }
 function closeFontPop() { const p = $('#fpop'); if (p) { p._off(); p.remove(); } }
-const ACCENT = '#5cd3c6';
+const { ACCENT, TEXT_STYLES, TEXT_STYLE_FAMILIES, textDefaults } = window.MaqtoTextStyles;
 let CHROME_ACCENT = ACCENT;
 const PANEL_GAP = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap'));
 const ROW = 37;
@@ -2588,45 +2588,6 @@ function drawGlTrans(ctx, gt, time, srcA, srcB, project = P) {
   catch (e) { console.error(e); ctx.drawImage(gt.q < 0.5 ? GLX.A : GLX.B, 0, 0, project.w, project.h); }
 }
 
-// Text presets ("Aa" styles). Each only sets the fields it cares about; the rest reset to defaults.
-const TEXT_STYLES = (() => { const W = '#ffffff', B = '#000000'; return [
-  { id: 'plain', s: {} },
-  { id: 'outline', s: { strokeW: 7 } },
-  { id: 'outlineW', s: { color: B, stroke: W, strokeW: 7 } },
-  { id: 'shadow', s: { shadowOn: true, shadowBlur: 18, shadowDist: 8 } },
-  { id: 'softGlow', s: { glowOn: true, glowColor: W, glowSize: 26 } },
-  { id: 'yellowOut', s: { color: '#ffe14d', strokeW: 7 } },
-  { id: 'redOut', s: { color: '#ff3b3b', stroke: W, strokeW: 7 } },
-  { id: 'orange', s: { color: '#ff9a2e', stroke: W, strokeW: 6 } },
-  { id: 'blue', s: { color: '#3aa0ff', stroke: W, strokeW: 6 } },
-  { id: 'green', s: { color: '#5cff6a', strokeW: 7 } },
-  { id: 'greyBox', s: { color: B, bgOn: true, bg: '#9a9a9a' } },
-  { id: 'whiteGreyBox', s: { bgOn: true, bg: '#b5b5b5' } },
-  { id: 'yellowBox', s: { color: B, bgOn: true, bg: '#ffd43b' } },
-  { id: 'purpleBox', s: { bgOn: true, bg: '#7b2cff' } },
-  { id: 'purpleOnWhite', s: { color: '#7b2cff', bgOn: true, bg: W } },
-  { id: 'box', s: { color: B, bgOn: true, bg: W } },
-  { id: 'blackBox', s: { bgOn: true, bg: B } },
-  { id: 'greenBlack', s: { color: '#5cff6a', bgOn: true, bg: B } },
-  { id: 'accent', s: { color: '#04201e', bgOn: true, bg: ACCENT } },
-  { id: 'glitchGreen', s: { color: B, shadowOn: true, shadowColor: '#22e05a', shadowBlur: 0, shadowDist: 7 } },
-  { id: 'retro', s: { color: '#ffcf3f', shadowOn: true, shadowColor: '#c2410c', shadowBlur: 0, shadowDist: 8 } },
-  { id: 'neonPink', s: { color: '#ffe6ef', glowOn: true, glowColor: '#ff2d6f', glowSize: 30 } },
-  { id: 'neonYellow', s: { color: '#fffbe0', glowOn: true, glowColor: '#ffd000', glowSize: 30 } },
-  { id: 'neonGreen', s: { color: '#eaffea', glowOn: true, glowColor: '#22e05a', glowSize: 30 } },
-  { id: 'gradient', s: { color: '#ffd84d', gradOn: true, fill2: '#ff4d8d', strokeW: 5 } },
-  { id: 'yellowHl', s: { strokeW: 6, hl: '#ffd400' } },
-  { id: 'serif', s: { font: 'Georgia', weight: 400 } },
-  { id: 'impact', s: { font: 'Impact', weight: 400, caseMode: 'upper', strokeW: 5, spacing: 2 } },
-]; })();
-function textDefaults(caption) {
-  return {
-    font: 'Cairo', size: caption ? 78 : 110, weight: 800, color: '#ffffff', stroke: '#000000', strokeW: caption ? 6 : 0,
-    bg: '#000000', bgOn: false, bgAlpha: 1, bgRadius: 0.22, hl: ACCENT, italic: false, underline: false, caseMode: 'none',
-    spacing: 0, lineH: 1.3, align: 'center', shadowOn: false, shadowColor: '#000000', shadowBlur: 12, shadowDist: 6,
-    glowOn: false, glowColor: ACCENT, glowSize: 24, gradOn: false, fill2: ACCENT,
-  };
-}
 // Caption templates: a style plus an animation, applied to one caption or all of them.
 const CAP_TPL = [
   { id: 'classic', s: { strokeW: 7, hl: '#ffe14d' } },
@@ -2666,7 +2627,25 @@ function applyTpl(it, id) {
   }
   refresh();
 }
-const presetStyle = (id, caption) => ({ ...textDefaults(caption), ...((TEXT_STYLES.find(s => s.id === id) || {}).s || {}) });
+const textStyleById = new Map(TEXT_STYLES.map(preset => [preset.id, preset]));
+function presetStyle(id, caption) {
+  const style = { ...textDefaults(caption), ...textStyleById.get(id)?.s };
+  // Inspector color/width inputs edit layers in place.
+  style.strokes = style.strokes.map(layer => ({ ...layer }));
+  style.shadows = style.shadows.map(layer => ({ ...layer }));
+  return style;
+}
+
+let inspectorStyleFamily = 'all', libraryStyleFamily = 'all';
+function textStyleChips(active) {
+  return ['all', ...TEXT_STYLE_FAMILIES].map(family =>
+    `<button type="button" data-style-family="${family}" aria-pressed="${family === active}">${tr('textFamily_' + family)}</button>`).join('');
+}
+function selectTextStyleFamily(button) {
+  const family = button.dataset.styleFamily;
+  for (const chip of button.parentElement.children) chip.setAttribute('aria-pressed', chip === button);
+  return family;
+}
 
 const ANIM_IN = ['none', 'fade', 'slideUp', 'slideDown', 'slideLeft', 'slideRight', 'pop', 'zoomIn', 'grow', 'drop', 'rotateIn', 'spin', 'wipe', 'type', 'wordPop', 'wordFade', 'wordRise',
   'flipIn', 'unfold', 'stretchIn', 'bounceIn', 'elastic', 'swingIn', 'rollIn', 'jackBox', 'blinkIn', 'glitchIn', 'wordDrop', 'wordZoom'];
@@ -4680,6 +4659,7 @@ $('#inspBody').addEventListener('pointerdown', e => {
   window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); inp.dispatchEvent(new Event('change', { bubbles: true })); }, { once: true });
 });
 function inspector() {
+  for (const button of $$('#textPresetGrid > button')) presetSwatchObserver.unobserve(button);
   kfSyncT = -1;
   if (depthPicker && (depthPicker.project !== P || item(sel) !== depthPicker.item || depthPicker.item.hidden)) endDepthPick();
   if (panelVisible('trans')) renderTrans();
@@ -4730,10 +4710,12 @@ function inspector() {
     else {
     h.push(`<div class="f"><textarea data-k="text" dir="auto">${esc(it.text)}</textarea></div>`, it.track === 'c1' ? capAllRow() : '', hideRow(it));
     const pOpen = (() => { try { return localStorage.getItem('kadr.presetsOpen') === '1'; } catch { return false; } })();
-    h.push(`<div class="grp"><div class="gh ghx"><span>${tr('presets')}</span><button class="ib pTog${pOpen ? ' open' : ''}" data-ptog title="${tr(pOpen ? 'showLess' : 'showMore')}">${icon('chevron-down')}</button></div>` +
-      `<div class="tpresets${pOpen ? '' : ' collapsed'}">${TEXT_STYLES.map(x => `<button data-tpreset="${x.id}" title="${x.id}"></button>`).join('')}</div></div>`);
+    h.push(`<div class="grp" id="textPresetGroup"><div class="gh ghx"><span>${tr('presets')}</span><button type="button" class="ib pTog${pOpen ? ' open' : ''}" data-ptog
+      aria-controls="textPresetGrid" aria-expanded="${pOpen}" aria-label="${tr('presets')}" title="${tr(pOpen ? 'showLess' : 'showMore')}">${icon('chevron-down')}</button></div>
+      <div class="text-style-filters" role="group" aria-label="${tr('textFamilyLabel')}" ${pOpen ? '' : 'hidden'}>${textStyleChips(inspectorStyleFamily)}</div>
+      <div id="textPresetGrid" class="tpresets"></div></div>`);
     h.push(grp('font', `<div class="f"><button class="fontbtn" id="fontBtn" style="font-family:'${esc(st.font)}',Cairo">${esc(st.font)}${icon('chevron-down')}</button></div>` +
-      `<div class="row2">${fld.range('style.size', 'size', 20, 260, 1, it)}${fld.select('style.weight', 'weight', [400, 600, 800, 900].map(w => [w, tr('w' + w)]), it)}</div>` +
+      `<div class="row2">${fld.range('style.size', 'size', 20, 260, 1, it)}${fld.select('style.weight', 'weight', [200, 400, 600, 700, 800, 900].map(w => [w, tr('w' + w)]), it)}</div>` +
       `<div class="tbar"><span>${tr('pattern')}</span><div class="tg">` +
         `<button data-tog="bold" class="${st.weight >= 700 ? 'on' : ''}" title="${tr('bold')}"><b>B</b></button>` +
         `<button data-tog="underline" class="${st.underline ? 'on' : ''}" title="${tr('underline')}"><u>U</u></button>` +
@@ -4911,10 +4893,7 @@ function inspector() {
   });
   const ta = $('#tplAll');
   if (ta) ta.onchange = () => lsSet('kadr.tplAll', ta.checked);
-  $$('#inspBody [data-tpreset]').forEach(b => {
-    const fake = { text: 'Aa', style: { ...presetStyle(b.dataset.tpreset, false), size: 96, strokeW: num(presetStyle(b.dataset.tpreset).strokeW, 0) * 1.1, shadowBlur: 10, shadowDist: 8, glowSize: 26 }, x: 0.5, y: 0.5, dur: 9 };
-    b.appendChild(cardCanvas(ctx => drawTextItem(ctx, { w: 240, h: 180 }, fake, 5), 64, 48));
-  });
+  if ($('#textPresetGrid')) renderInspectorStyles();
   if ($('#ccEd')) colorCurveEditor(it);
   if ($('.whls')) wheelsUI(it);
   if ($('.looks')) lookThumbs(it);
@@ -5444,20 +5423,33 @@ $('#inspBody').addEventListener('click', e => {
     refresh(); inspector();
     return;
   }
-  if (e.target.closest('[data-ptog]')) {
-    const g = $('#inspBody .tpresets'), open = g.classList.toggle('collapsed') === false;
-    const b = e.target.closest('[data-ptog]');
-    b.classList.toggle('open', open); b.title = tr(open ? 'showLess' : 'showMore');
+  const toggle = e.target.closest('[data-ptog]');
+  if (toggle) {
+    const open = toggle.getAttribute('aria-expanded') !== 'true';
+    toggle.setAttribute('aria-expanded', open);
+    toggle.classList.toggle('open', open);
+    toggle.title = tr(open ? 'showLess' : 'showMore');
+    $('#textPresetGroup .text-style-filters').hidden = !open;
     try { localStorage.setItem('kadr.presetsOpen', open ? '1' : '0'); } catch {}
+    renderInspectorStyles();
+    return;
+  }
+  const familyChip = e.target.closest('[data-style-family]');
+  if (familyChip) {
+    inspectorStyleFamily = selectTextStyleFamily(familyChip);
+    renderInspectorStyles();
     return;
   }
   const pr = e.target.closest('[data-tpreset]');
   if (pr) {
+    const id = pr.dataset.tpreset;
+    const hadFocus = document.activeElement === pr;
     snapshot();
-    const keep = { size: it.style.size, font: it.style.font, weight: it.style.weight, hl: it.style.hl };
-    const ps = TEXT_STYLES.find(x => x.id === pr.dataset.tpreset).s;
-    it.style = { ...presetStyle(pr.dataset.tpreset, it.track === 'c1'), size: keep.size, hl: keep.hl, ...(ps.font ? {} : { font: keep.font, weight: keep.weight }) };
+    const { size, font, weight, hl, dir } = it.style;
+    const ps = textStyleById.get(id).s;
+    it.style = { ...presetStyle(id, it.track === 'c1'), size, hl: ps.hl ?? hl, ...(dir ? { dir } : {}), ...(ps.font ? {} : { font, weight }) };
     refresh();
+    if (hadFocus) $(`[data-tpreset="${id}"]`)?.focus({ preventScroll: true });
   }
 });
 $('#inspBody').addEventListener('change', e => {
@@ -6721,18 +6713,70 @@ function sampleScene(ctx) {
   ctx.fillStyle = '#ffe7a8'; ctx.beginPath(); ctx.arc(170, 60, 26, 0, 7); ctx.fill();
   ctx.fillStyle = '#1f2a44'; ctx.beginPath(); ctx.moveTo(0, 180); ctx.lineTo(80, 100); ctx.lineTo(140, 150); ctx.lineTo(200, 110); ctx.lineTo(240, 140); ctx.lineTo(240, 180); ctx.fill();
 }
-function renderLibCards() {
-  const ts = $('#textStyles');
-  ts.innerHTML = '';
-  for (const id of favFirst('style', TEXT_STYLES.map(x => x.id))) {
-    const s = TEXT_STYLES.find(x => x.id === id), b = document.createElement('button');
-    b.className = 'card';
-    b.dataset.style = s.id;
-    b.innerHTML = `<i class="plus" title="${tr('addText')}">${icon('plus')}</i>` + favStar('style', s.id);
-    const fake = { text: LANG === 'ar' ? 'ماكتو' : 'Maqto', style: { ...presetStyle(s.id), size: 46, strokeW: (s.s.strokeW || 0) * 0.45, shadowBlur: 8, shadowDist: 5, glowSize: 16 }, x: 0.5, y: 0.5, dur: 9 };
-    b.prepend(cardCanvas(ctx => { ctx.fillStyle = '#20262f'; ctx.fillRect(0, 0, 240, 180); drawTextItem(ctx, { w: 240, h: 180 }, fake, 5); }));
-    ts.appendChild(b);
+const presetSwatches = { inspector: new Map(), library: new Map() };
+function presetSwatch(preset, surface) {
+  const cache = presetSwatches[surface];
+  if (cache.has(preset.id)) return cache.get(preset.id);
+
+  const w = surface === 'inspector' ? 96 : 144, scale = w / 240;
+  const style = presetStyle(preset.id);
+  style.size = 84;
+  style.shadowBlur *= scale;
+  style.shadowDist *= scale;
+  style.glowSize *= scale;
+  style.shadows = style.shadows.map(sh => ({ ...sh, blur: sh.blur * scale, dist: sh.dist * scale }));
+  const text = preset.family === 'arabic' ? 'نص' : 'Aa';
+  const sample = { text, style, x: 0.5, y: 0.5, dur: 9 };
+  if (preset.s.hl) sample.words = [{ w: text, s: 0, e: 9 }];
+  const paint = ctx => {
+    ctx.fillStyle = '#515865';
+    ctx.fillRect(0, 0, 240, 180);
+    drawTextItem(ctx, { w: 240, h: 180 }, sample, 5);
+  };
+  const canvas = cardCanvas(paint, w, w * 0.75);
+  canvas.setAttribute('aria-hidden', 'true');
+  cache.set(preset.id, canvas);
+  // Repaint the cached canvas after the sample's glyphs load.
+  const font = `${style.italic ? 'italic ' : ''}${style.weight} 40px "${style.font}"`;
+  if (!document.fonts.check(font, text)) document.fonts.load(font, text).then(() => paint(canvas.getContext('2d'))).catch(() => {});
+  return canvas;
+}
+
+const presetSwatchObserver = new IntersectionObserver(entries => {
+  for (const { target, isIntersecting } of entries) {
+    if (!isIntersecting) continue;
+    presetSwatchObserver.unobserve(target);
+    if (!target.isConnected) continue;
+    const { tpreset, style } = target.dataset;
+    target.prepend(presetSwatch(textStyleById.get(tpreset || style), tpreset ? 'inspector' : 'library'));
   }
+}, { rootMargin: '100px' });
+function renderPresetGrid(grid, html, surface) {
+  for (const button of grid.children) presetSwatchObserver.unobserve(button);
+  grid.innerHTML = html;
+  for (const button of grid.children) {
+    const cached = presetSwatches[surface].get(button.dataset.tpreset || button.dataset.style);
+    if (cached) button.prepend(cached);
+    else presetSwatchObserver.observe(button);
+  }
+}
+function renderInspectorStyles() {
+  const grid = $('#textPresetGrid');
+  const open = $('#textPresetGroup [data-ptog]').getAttribute('aria-expanded') === 'true';
+  const presets = !open ? TEXT_STYLES.slice(0, 8) : TEXT_STYLES.filter(p => inspectorStyleFamily === 'all' || p.family === inspectorStyleFamily);
+  renderPresetGrid(grid, presets.map(({ id }) => `<button type="button" data-tpreset="${id}" aria-label="${id}" title="${id}"></button>`).join(''), 'inspector');
+}
+function renderTextStyleCards() {
+  const presets = TEXT_STYLES.filter(p => libraryStyleFamily === 'all' || p.family === libraryStyleFamily);
+  renderPresetGrid($('#textStyles'), favFirst('style', presets.map(p => p.id)).map(id =>
+    `<button type="button" class="card" data-style="${id}" aria-label="${id}" title="${id}">
+      <i class="plus" title="${tr('addText')}">${icon('plus')}</i>${favStar('style', id)}</button>`).join(''), 'library');
+}
+function renderLibCards() {
+  const filters = $('#textStyleFilters');
+  filters.setAttribute('aria-label', tr('textFamilyLabel'));
+  filters.innerHTML = textStyleChips(libraryStyleFamily);
+  renderTextStyleCards();
   renderLookCards();
   renderStickers();
 }
@@ -6829,7 +6873,7 @@ document.addEventListener('click', e => {
   const k = st.dataset.favk, id = st.parentElement.dataset[k], l = favs[k] || [];
   favs = { ...favs, [k]: l.includes(id) ? l.filter(x => x !== id) : [...l, id] };
   lsSet('kadr.favs', favs);
-  if (k === 'tr') renderTrans(); else if (k === 'style') renderLibCards(); else renderLookCards();
+  if (k === 'tr') renderTrans(); else if (k === 'style') renderTextStyleCards(); else renderLookCards();
 }, true);
 function addAdj(kind, id) {
   const mid = 'adj_' + uid();
@@ -7110,6 +7154,12 @@ $('#stickerList').addEventListener('click', e => {
   sel = it.id; inspTab = 'tAnim'; dirty = true;
   refresh();
 });
+$('#textStyleFilters').addEventListener('click', e => {
+  const chip = e.target.closest('[data-style-family]');
+  if (!chip) return;
+  libraryStyleFamily = selectTextStyleFamily(chip);
+  renderTextStyleCards();
+});
 $('#textStyles').addEventListener('click', e => { const c = e.target.closest('[data-style]'); if (c) addText(c.dataset.style); });
 $('#filterCards').addEventListener('click', e => {
   const c = e.target.closest('[data-preset]'), it = sel && item(sel);
@@ -7349,7 +7399,7 @@ function showWhatsNew(steps, version, current) {
 function showWhatsNewTarget(step) {
   if (step.id === 'interchange') return exportTimelineDialog();
   if (step.panel) revealPanel(step.panel);
-  if (step.id === 'fonts' && sel && item(sel) && isText(item(sel))) { inspTab = 'tText'; inspector(); }
+  if ((step.id === 'fonts' || step.id === 'textPresets') && sel && item(sel) && isText(item(sel))) { inspTab = 'tText'; inspector(); }
   const control = step.target && $(step.target);
   const target = control?.getClientRects().length ? control : null;
   const el = target || (step.panel && dockPanels[step.panel]);
@@ -8821,37 +8871,41 @@ async function openRecorder() {
     ${REC_SOURCES.map(([k, label]) => `<label class="sam-field"><input type="checkbox" id="rcOn_${k}" ${k === 'screen' ? 'checked' : ''}><span>${tr(label)}</span><select id="rcSel_${k}" dir="auto"></select></label>`).join('')}
     <label class="sam-field"><input type="checkbox" id="rcAdd" ${pref('recAdd', 'true') !== 'false' ? 'checked' : ''}>${tr('recAdd')}</label>
     <div class="acts"><button id="rcClose">${tr('hlClose')}</button><span class="flex"></span><button class="primary" id="rcGo" disabled>${tr('recStart')}</button></div>`;
-  let cancelled = false; // the modal is only hidden on close, so #rcStatus stays connected during the countdown
+  const statusNode = $('#rcStatus'), go = $('#rcGo');
+  let cancelled = false;
+  const live = () => !cancelled && go.isConnected && !$('#modal').hidden;
   $('#rcClose').onclick = () => { cancelled = true; hideModal(); };
-  const status = txt => { $('#rcStatus').textContent = txt; };
+  const status = txt => { statusNode.textContent = txt; };
   try {
     const d = await inv('record_devices');
+    if (!live()) return;
     for (const [k, list] of [['screen', d.screens], ['camera', d.cameras], ['mic', d.mics]]) {
       $('#rcSel_' + k).innerHTML = list.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
       if (!list.length) { $('#rcOn_' + k).checked = false; $('#rcOn_' + k).disabled = $('#rcSel_' + k).disabled = true; }
     }
-  } catch (e) { return status(tr('error') + ': ' + cleanErr(e)); }
-  $('#rcGo').disabled = false;
-  $('#rcGo').onclick = async () => {
+  } catch (e) { if (live()) status(tr('error') + ': ' + cleanErr(e)); return; }
+  go.disabled = false;
+  go.onclick = async () => {
     const opts = {};
     for (const [k] of REC_SOURCES) if ($('#rcOn_' + k).checked) opts[k] = $('#rcSel_' + k).value;
     if (!Object.keys(opts).length) return status(tr('recPick'));
     const add = $('#rcAdd').checked;
     setPref('recAdd', add);
-    $('#rcGo').disabled = true;
-    for (let n = 3; n > 0; n--) { status(String(n)); await new Promise(r => setTimeout(r, 1000)); if (cancelled || $('#modal').hidden) return; }
+    go.disabled = true;
+    for (let n = 3; n > 0; n--) { status(String(n)); await new Promise(r => setTimeout(r, 1000)); if (!live()) return; }
     try {
       await inv('record_start', { opts, dir: projectPath ? projectPath.replace(/[\\/][^\\/]*$/, '') : null });
     } catch (e) {
+      if (!live()) return;
       const m = cleanErr(e);
-      $('#rcGo').disabled = false;
+      go.disabled = false;
       if (!/^permission/.test(m)) return status(tr('error') + ': ' + m);
       status(tr('recPerm'));
       const kind = /screen/.test(m) ? 'screen' : opts.camera ? 'camera' : 'mic';
       if (await TA.dialog.ask(tr('recPerm'), { title: tr('recScreen') })) inv('record_open_privacy', { kind });
       return;
     }
-    hideModal();
+    if (live()) hideModal();
     const t0 = Date.now(), pill = document.createElement('div');
     pill.id = 'recPill';
     pill.innerHTML = `<i></i><span dir="ltr">00:00</span><button class="primary">${tr('stopRec')}</button>`;
@@ -10197,9 +10251,10 @@ async function openHighlights() {
     <p class="hint" id="hlStatus" role="status"></p><div class="hl-list" id="hlList"></div>
     <label class="sam-field" id="hlQ" hidden><input type="checkbox" id="hlQueue">${tr('hlQueue')}</label>
     <div class="acts"><button id="hlClose">${tr('hlClose')}</button><span class="flex"></span><button id="hlGo">${tr('hlGo')}</button><button class="primary" id="hlCreate" hidden></button></div>`;
-  const len = $('#hlLen'), status = text => { const el = $('#hlStatus'); if (el && !run.stopped) el.textContent = text; };
+  const len = $('#hlLen'), statusNode = $('#hlStatus');
+  const live = () => !run.stopped && statusNode.isConnected;
+  const status = text => { if (live()) statusNode.textContent = text; };
   len.value = HL_LENGTHS.includes(lsGet('kadr.hlLen', 30)) ? lsGet('kadr.hlLen', 30) : 30;
-  const live = () => !run.stopped && $('#hlStatus'); // #mBox is shared by every modal, so check for our own node
   const syncCreate = () => {
     const n = $$('#hlList [data-hl]:checked').length;
     $('#hlCreate').textContent = tr('hlCreate', { n });
@@ -10245,8 +10300,9 @@ async function openHighlights() {
     $('#hlGo').disabled = $('#hlCreate').disabled = true;
     try {
       const made = await createShorts(chosen, status, run);
-      if (made) {
+      if (made && live()) {
         if ($('#hlQueue').checked) await queueShorts(made);
+        if (!live()) return;
         $('#hlQ').hidden = $('#hlCreate').hidden = true;
         status(tr('hlDone', { n: made.length }));
         $('#hlList').innerHTML = made.map((s, i) => `<div class="hl-row"><span><bdi>${esc(s.name)}</bdi></span><span class="flex"></span>
@@ -10283,7 +10339,7 @@ async function createShorts(picks, status, run) {
     if (run.stopped) throw new Error('cancelled');
     status(tr('hlMaking', { i: i + 1, n: picks.length, name: c.title }));
     const src = item(c.it);
-    if (P !== project || !src) throw new Error(tr('hlChanged'));
+    if (P !== project || !Array.isArray(src?.transcript)) throw new Error(tr('hlChanged'));
     const m = media(src), base = JSON.parse(JSON.stringify(src));
     for (const k of ['kf', 'trk', 'rotate', 'trans', 'grp', 'curve', 'fadeIn', 'fadeOut', 'afIn', 'afOut']) delete base[k];
     Object.assign(base, { id: uid(), start: 0, dur: c.dur, in: c.start, speed: 1,

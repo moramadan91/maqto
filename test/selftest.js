@@ -9,9 +9,55 @@ const ffprobe = require('@ffprobe-installer/ffprobe').path;
 const S = require('../src/shared');
 const interchange = require('../src/interchange');
 const WN = require('../src/whatsnew');
+const { TEXT_STYLES, TEXT_STYLE_FAMILIES, textDefaults } = require('../src/textstyles');
 const vm = require('node:vm');
 const { buildArgs, concatText, chapterMetadata, atempo, loudnormFilter, LOUDNESS_TARGETS, ENCODERS } = require('../src/graph');
 const writeConcat = (d, list, fps) => { const f = path.join(d, 'text.ffconcat'); fs.writeFileSync(f, concatText(list, fps)); return f; };
+
+// Text style presets: the original catalog order is stable, and styles use the renderer's schema.
+{
+  const originalIds = ['plain', 'outline', 'outlineW', 'shadow', 'softGlow', 'yellowOut', 'redOut', 'orange', 'blue', 'green',
+    'greyBox', 'whiteGreyBox', 'yellowBox', 'purpleBox', 'purpleOnWhite', 'box', 'blackBox', 'greenBlack', 'accent',
+    'glitchGreen', 'retro', 'neonPink', 'neonYellow', 'neonGreen', 'gradient', 'yellowHl', 'serif', 'impact'];
+  const ids = TEXT_STYLES.map(p => p.id);
+  assert.deepStrictEqual(ids.slice(0, originalIds.length), originalIds);
+  assert.ok(ids.length - originalIds.length >= 120, 'Expected at least 120 new text styles');
+  assert.strictEqual(new Set(ids).size, ids.length, 'Text style IDs must be unique');
+  assert.ok(ids.every(id => /^[a-z][a-zA-Z0-9]*$/.test(id)), 'Text style IDs must be camelCase');
+
+  const i18n = { window: {} };
+  vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/i18n.js'), 'utf8'), i18n);
+  for (const lang of ['ar', 'en']) {
+    for (const family of ['all', ...TEXT_STYLE_FAMILIES]) {
+      assert.ok(i18n.window.MaqtoI18n[lang]['textFamily_' + family]?.trim(), `Missing ${lang} label for ${family}`);
+    }
+  }
+
+  const defaults = textDefaults();
+  const colorKeys = ['color', 'stroke', 'bg', 'hl', 'shadowColor', 'glowColor', 'fill2'];
+  const hex = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+  const rgba = /^rgba\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d+(?:\.\d+)?|\.\d+)\s*\)$/i;
+  function validColor(value) {
+    if (typeof value !== 'string') return false;
+    if (hex.test(value)) return true;
+    const match = value.match(rgba);
+    return !!match && match.slice(1, 4).every(channel => +channel <= 255) && +match[4] <= 1;
+  }
+
+  const newFamilies = TEXT_STYLES.slice(originalIds.length).map(p => p.family);
+  assert.deepStrictEqual(newFamilies, TEXT_STYLE_FAMILIES.flatMap(family => newFamilies.filter(f => f === family)));
+  for (const { id, family, s } of TEXT_STYLES) {
+    assert.ok(TEXT_STYLE_FAMILIES.includes(family), `Unknown family ${family} in ${id}`);
+    for (const key of Object.keys(s)) assert.ok(Object.hasOwn(defaults, key), `Unknown style field ${id}.${key}`);
+    for (const key of colorKeys) {
+      if (Object.hasOwn(s, key)) assert.ok(validColor(s[key]), `Invalid color in ${id}.${key}`);
+    }
+    for (const key of ['strokes', 'shadows']) {
+      for (const layer of s[key] || []) assert.ok(validColor(layer.c), `Invalid layer color in ${id}.${key}`);
+    }
+  }
+  console.log('Text preset IDs, families, fields, and colors passed');
+}
 
 // Collect project: unique names, path rewrite, relative resolve; relink by name and size.
 {
