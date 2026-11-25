@@ -1197,9 +1197,9 @@ fn splash_show(app: AppHandle) {
 
 #[tauri::command]
 fn splash_done(app: AppHandle) {
-    let Some(s) = app.get_webview_window("splash") else { return };
+    // show the editor even if the splash window is already gone, so launch never stalls
     if let Some(w) = app.get_webview_window("main") { let _ = w.show(); let _ = w.set_focus(); }
-    let _ = s.destroy();
+    if let Some(s) = app.get_webview_window("splash") { let _ = s.destroy(); }
 }
 
 #[tauri::command]

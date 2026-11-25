@@ -8821,7 +8821,8 @@ async function openRecorder() {
     ${REC_SOURCES.map(([k, label]) => `<label class="sam-field"><input type="checkbox" id="rcOn_${k}" ${k === 'screen' ? 'checked' : ''}><span>${tr(label)}</span><select id="rcSel_${k}" dir="auto"></select></label>`).join('')}
     <label class="sam-field"><input type="checkbox" id="rcAdd" ${pref('recAdd', 'true') !== 'false' ? 'checked' : ''}>${tr('recAdd')}</label>
     <div class="acts"><button id="rcClose">${tr('hlClose')}</button><span class="flex"></span><button class="primary" id="rcGo" disabled>${tr('recStart')}</button></div>`;
-  $('#rcClose').onclick = hideModal;
+  let cancelled = false; // the modal is only hidden on close, so #rcStatus stays connected during the countdown
+  $('#rcClose').onclick = () => { cancelled = true; hideModal(); };
   const status = txt => { $('#rcStatus').textContent = txt; };
   try {
     const d = await inv('record_devices');
@@ -8838,7 +8839,7 @@ async function openRecorder() {
     const add = $('#rcAdd').checked;
     setPref('recAdd', add);
     $('#rcGo').disabled = true;
-    for (let n = 3; n > 0; n--) { status(String(n)); await new Promise(r => setTimeout(r, 1000)); if (!$('#rcStatus')?.isConnected) return; }
+    for (let n = 3; n > 0; n--) { status(String(n)); await new Promise(r => setTimeout(r, 1000)); if (cancelled || $('#modal').hidden) return; }
     try {
       await inv('record_start', { opts, dir: projectPath ? projectPath.replace(/[\\/][^\\/]*$/, '') : null });
     } catch (e) {
@@ -10136,7 +10137,10 @@ async function askAssistantText(prompt, run) {
     if (ev.type === 'assistant') for (const c of ev.message?.content || []) if (c.type === 'text') text += c.text + '\n';
     if (ev.type === 'result' && typeof ev.result === 'string') result = ev.result;
   });
-  try { await inv('assistant_ask', { prompt, session: '', job }); }
+  try {
+    if (run.stopped) return ''; // closed while the listener was being set up: run.job was still null so assistant_stop was skipped
+    await inv('assistant_ask', { prompt, session: '', job });
+  }
   finally { unlisten(); run.job = null; }
   return result || text;
 }
@@ -10216,15 +10220,15 @@ async function openHighlights() {
     <p class="hint" id="hlStatus" role="status"></p><div class="hl-list" id="hlList"></div>
     <label class="sam-field" id="hlQ" hidden><input type="checkbox" id="hlQueue">${tr('hlQueue')}</label>
     <div class="acts"><button id="hlClose">${tr('hlClose')}</button><span class="flex"></span><button id="hlGo">${tr('hlGo')}</button><button class="primary" id="hlCreate" hidden></button></div>`;
-  const len = $('#hlLen'), status = text => { if (box.isConnected) $('#hlStatus').textContent = text; };
+  const len = $('#hlLen'), status = text => { const el = $('#hlStatus'); if (el && !run.stopped) el.textContent = text; };
   len.value = HL_LENGTHS.includes(lsGet('kadr.hlLen', 30)) ? lsGet('kadr.hlLen', 30) : 30;
-  const live = () => box.isConnected && !$('#modal').hidden;
+  const live = () => !run.stopped && $('#hlStatus'); // #mBox is shared by every modal, so check for our own node
   const syncCreate = () => {
     const n = $$('#hlList [data-hl]:checked').length;
     $('#hlCreate').textContent = tr('hlCreate', { n });
     $('#hlCreate').disabled = busy || !n;
   };
-  const stop = () => { run.stopped = true; clearInterval(hlStop); if (run.job) inv('assistant_stop', { job: run.job }).catch(() => {}); };
+  const stop = () => { run.stopped = true; clearInterval(hlStop); if (run.job) inv('assistant_stop', { job: run.job }).catch(() => {}); if (run.reframe) inv('reframe_cancel', { job: run.reframe }).catch(() => {}); };
   $('#hlClose').onclick = () => { stop(); setPlaying(false); hideModal(); };
   $('#hlGo').onclick = async () => {
     if (busy) return;
@@ -10308,7 +10312,7 @@ async function createShorts(picks, status, run) {
     Object.assign(base, { id: uid(), start: 0, dur: c.dur, in: c.start, speed: 1,
       transcript: src.transcript.filter(x => (x.s + x.e) / 2 >= c.start - 0.05 && (x.s + x.e) / 2 < c.end + 0.05) });
     try {
-      const samples = await inv('reframe_analyze', { job: 'reframe-' + uid(), path: m.path, start: c.start, duration: c.dur });
+      const samples = await inv('reframe_analyze', { job: run.reframe = 'reframe-' + uid(), path: m.path, start: c.start, duration: c.dur });
       const { keys } = reframeClip(base, m, samples, c.start, w, h);
       base.fit = 'contain';
       for (const k of ['x', 'y', 'scale']) base[k] = keys[k][0][1];
