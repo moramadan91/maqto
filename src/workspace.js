@@ -1,6 +1,6 @@
 'use strict';
 (() => {
-  const library = ['media', 'text', 'captions', 'filters', 'effects', 'stickers', 'icons', 'trans', 'layers', 'sounds'];
+  const library = ['media', 'text', 'captions', 'filters', 'effects', 'stickers', 'icons', 'trans', 'layers', 'sounds', 'aiTools'];
   const panels = [...library, 'player', 'insp', 'tl', 'scopes', 'transcript', 'multicam'];
   const group = (...tabs) => ({ tabs, active: tabs[0] });
   const fractions = sizes => {
@@ -27,9 +27,12 @@
     return tree.split ? tree.children.map(node => find(node, tab)).find(Boolean) : tree.tabs.includes(tab) ? tree : null;
   }
   function withPanels(tree) {
+    const previous = panels.filter(id => id !== 'aiTools');
     for (const id of ['scopes', 'transcript', 'multicam']) {
-      if (valid(tree, panels.slice(0, panels.indexOf(id)))) find(tree, 'insp').tabs.push(id);
+      const required = previous.slice(0, previous.indexOf(id));
+      if (valid(tree, required) || valid(tree, [...required, 'aiTools'])) find(tree, 'insp').tabs.push(id);
     }
+    if (valid(tree, previous)) find(tree, 'media').tabs.push('aiTools');
     return tree;
   }
   function move(tree, tab, targetTab, zone) {

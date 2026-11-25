@@ -1,11 +1,21 @@
+mod depth;
+mod collect;
+mod scenes;
 mod mcp;
 mod assistant;
 mod rife;
+mod upscale;
+mod voice_clean;
+mod piper;
+mod translation;
 mod matte;
+mod sam2;
+mod migan;
 mod stems;
 mod media_server;
 mod reframe;
 mod multicam_sync;
+mod record;
 
 pub fn mcp_stdio() { mcp::serve_stdio() }
 
@@ -147,13 +157,14 @@ fn probe_one(p: &str) -> R<Value> {
     media["firstMarker"] = json!(j["chapters"].as_array().into_iter().flatten()
         .filter_map(|c| num(&c["start_time"])).filter(|t| t.is_finite() && *t >= 0.0)
         .min_by(f64::total_cmp));
+    media["size"] = json!(std::fs::metadata(p).map(|m| m.len()).ok());
+    if v.is_some() { media["sourceKey"] = json!(source_key); }
     if let Some(v) = v.filter(|_| !is_img) {
         let hdr = v["color_transfer"] == "arib-std-b67" || v["color_transfer"] == "smpte2084" || v["color_primaries"] == "bt2020";
         media["hdr"] = json!(hdr);
         media["codec"] = v["codec_name"].clone();
         let bitrate = num(&v["bit_rate"]).filter(|b| *b > 0.0).or_else(|| num(&j["format"]["bit_rate"]));
         media["bitrate"] = json!(bitrate);
-        media["sourceKey"] = json!(source_key);
         if hdr {
             for (key, stream_key) in [("trc", "color_transfer"), ("primaries", "color_primaries"), ("matrix", "color_space")] {
                 let value = v[stream_key].as_str().filter(|s| !matches!(*s, "unknown" | "unspecified"));
@@ -204,6 +215,18 @@ fn save_timeline(path: String, text: String) -> R<()> {
     std::fs::write(path, text).map_err(err)
 }
 
+#[tauri::command]
+fn save_srt(path: String, text: String) -> R<()> {
+    if !timeline_extension(&path, "srt") { return Err("Subtitle files end with .srt".into()); }
+    std::fs::write(path, text).map_err(err)
+}
+
+#[tauri::command]
+fn save_png(path: String, bytes: Vec<u8>) -> R<()> {
+    if !timeline_extension(&path, "png") { return Err("Frame files end with .png".into()); }
+    std::fs::write(path, bytes).map_err(err)
+}
+
 fn timeline_extension(path: &str, ext: &str) -> bool {
     Path::new(path).extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case(ext))
 }
@@ -223,13 +246,27 @@ async fn open_project(srv: State<'_, Arc<MediaServer>>, path: String) -> R<Value
     tauri::async_runtime::spawn_blocking(move || {
         let mut p: Value = serde_json::from_str(&std::fs::read_to_string(&path).map_err(err)?).map_err(err)?;
         let mut missing = vec![];
+        let mut missing_ids = vec![];
+        // Collected projects store paths relative to the .maqto; resolve them (absolute paths are untouched).
+        let dir = Path::new(&path).parent().unwrap_or(Path::new("")).to_path_buf();
+        if let Some(items) = p["items"].as_array_mut() {
+            for it in items {
+                if let Some(f) = it["color"]["lut"]["file"].as_str().map(|f| collect::resolve_rel(&dir, f)) { it["color"]["lut"]["file"] = json!(f); }
+            }
+        }
         if let Some(m) = p["media"].as_object_mut() {
-            for v in m.values_mut() {
+            for (id, v) in m.iter_mut() {
                 let Some(f) = v["path"].as_str() else { continue };
                 if f.is_empty() { continue; } // fill layers have no file
+                let f = collect::resolve_rel(&dir, f);
+                v["path"] = json!(f);
+                let f = f.as_str();
                 if Path::new(f).exists() {
+                    if v["size"].is_null() { if let Ok(md) = std::fs::metadata(f) { v["size"] = json!(md.len()); } }
                     srv.allow(f);
-                    if v["kind"] == "video" && (!v["hdr"].is_boolean()
+                    if v["kind"] == "image" {
+                        v["sourceKey"] = json!(media_source_key(f).ok());
+                    } else if v["kind"] == "video" && (!v["hdr"].is_boolean()
                         || v["sourceKey"].as_str() != media_source_key(f).ok().as_deref())
                     {
                         if let Ok(probed) = probe_one(f) {
@@ -240,10 +277,10 @@ async fn open_project(srv: State<'_, Arc<MediaServer>>, path: String) -> R<Value
                             }
                         }
                     }
-                } else { missing.push(v["name"].clone()); }
+                } else { missing.push(v["name"].clone()); missing_ids.push(json!(id)); }
             }
         }
-        Ok(json!({ "project": p, "missing": missing }))
+        Ok(json!({ "project": p, "missing": missing, "missingIds": missing_ids }))
     }).await.map_err(err)?
 }
 
@@ -710,11 +747,15 @@ async fn gray_frames(args: Vec<String>) -> R<tauri::ipc::Response> {
     }).await.map_err(err)?
 }
 
-/// Audio effects that need the whole file (d = RNNoise speech denoise with the bundled model,
-/// n = loudness normalize): the source's sound is processed once into a cached FLAC that both
-/// the preview and the export play instead of the original.
+/// Process whole-source audio into a FLAC shared by preview and export.
+/// Voice clean-up uses DeepFilterNet. Legacy keys request RNNoise (d), loudness normalization (n), or extraction (x).
 #[tauri::command]
-async fn audio_fx(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: String, fx: String) -> R<String> {
+async fn audio_fx(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: String, fx: String, job: Option<String>) -> R<String> {
+    if fx.starts_with("voice:") {
+        let path = voice_clean::prepare(app, path, fx, job).await?.to_string_lossy().into_owned();
+        srv.allow(&path);
+        return Ok(path);
+    }
     use std::hash::{Hash, Hasher};
     let mut chain = vec![];
     if fx.contains('d') { chain.push("highpass=f=70,arnndn=m=rnnoise.rnnn"); }
@@ -940,6 +981,18 @@ async fn video_stab(app: AppHandle, srv: State<'_, Arc<MediaServer>>, path: Stri
     let s = out.to_string_lossy().into_owned();
     srv.allow(&s);
     Ok(s)
+}
+
+fn remove_model_file(path: &Path) -> R<()> {
+    match std::fs::remove_file(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result.map_err(err),
+    }
+}
+
+#[tauri::command]
+fn model_remove(app: AppHandle, model: String) -> R<()> {
+    remove_model_file(&model_path(&app, &model)?)
 }
 
 #[tauri::command]
@@ -1349,11 +1402,23 @@ pub fn run() {
     b
         .manage(AppState::default())
         .manage(reframe::Reframe::default())
+        .manage(record::Recorder::default())
         .manage(MediaServer::start().expect("media server"))
         .invoke_handler(tauri::generate_handler![
+            collect::collect_sizes, collect::collect_run, collect::collect_cancel, collect::relink_search,
+            record::record_devices, record::record_start, record::record_stop, record::record_open_privacy,
             reframe::reframe_analyze, reframe::reframe_cancel,
-            probe, save_project, save_chapters, save_timeline, read_timeline, open_project, recovery_path, work_begin, work_end, write_frame, export_run, loudness_measure, audio_fx, sync_multicam, speech_regions, video_stab, proxy_render, write_work, read_lut, lut_library, lut_add, lut_remove, sfx_library, sfx_import, overlay_library,
-            cancel, take_open_file, model_ready, model_download, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, make_proxy, cancel_media_proxy, media_proxy_info, media_proxy_size, delete_media_proxies, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_make, stems::stems_ready, stems::stems_download, stems::stems_make, stems::stems_raw, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop, save_to_photos, speech_to_text, whisper_words, matte::cut_ready, matte::cut_download, matte::cut_raw, matte::slow_raw
+            scenes::scenes_ready, scenes::scenes_download, scenes::scenes_remove, scenes::scenes_detect, scenes::scenes_cancel,
+            depth::depth_ready, depth::depth_download, depth::depth_remove, depth::depth_cached, depth::depth_prepare, depth::depth_cancel,
+            upscale::upscale_ready, upscale::upscale_download, upscale::upscale_remove, upscale::upscale_cached, upscale::upscale_prepare, upscale::upscale_cancel, upscale::upscale_export,
+            migan::migan_ready, migan::migan_download, migan::migan_remove, migan::migan_render, migan::migan_cancel,
+            sam2::sam2_ready, sam2::sam2_download, sam2::sam2_remove, sam2::sam2_preview, sam2::sam2_track, sam2::sam2_cancel, sam2::sam2_matte, sam2::sam2_mask_for_frame, sam2::object_brush,
+            translation::translation_ready, translation::translation_download, translation::translation_remove,
+            translation::translation_run, translation::translation_cancel,
+            piper::piper_ready, piper::piper_download, piper::piper_remove, piper::piper_cancel, piper::piper_synthesize,
+            voice_clean::voice_clean_ready, voice_clean::voice_clean_download, voice_clean::voice_clean_remove, voice_clean::voice_clean_cancel,
+            probe, save_project, save_chapters, save_srt, save_png, save_timeline, read_timeline, open_project, recovery_path, work_begin, work_end, write_frame, export_run, loudness_measure, audio_fx, sync_multicam, speech_regions, video_stab, proxy_render, write_work, read_lut, lut_library, lut_add, lut_remove, sfx_library, sfx_import, overlay_library,
+            cancel, take_open_file, model_ready, model_download, model_remove, transcribe, save_recording, dev_demo, dev_log, media_base, quit_app, splash_show, splash_done, path_exists, gray_frames, make_proxy, cancel_media_proxy, media_proxy_info, media_proxy_size, delete_media_proxies, proxy_cancel, system_fonts, fonts_downloaded, font_fetch, mcp::mcp_reply, rife::rife_ready, rife::rife_download, rife::rife_remove, rife::rife_make, matte::matte_ready, matte::matte_download, matte::matte_remove, matte::matte_make, stems::stems_ready, stems::stems_download, stems::stems_remove, stems::stems_make, stems::stems_raw, assistant::assistant_ready, assistant::assistant_ask, assistant::assistant_stop, save_to_photos, speech_to_text, whisper_words, matte::cut_ready, matte::cut_download, matte::cut_raw, matte::slow_raw
         ])
         .setup(|app| {
             #[cfg(target_os = "macos")]
@@ -1374,6 +1439,7 @@ pub fn run() {
             tauri::WindowEvent::CloseRequested { api, .. } => { api.prevent_close(); let _ = w.emit("quit-requested", ()); }
             tauri::WindowEvent::Destroyed => {
                 w.state::<reframe::Reframe>().cancel(None);
+                let _ = w.state::<record::Recorder>().finish();
                 cleanup(&w.state::<AppState>());
             }
             _ => {}

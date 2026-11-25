@@ -8,6 +8,8 @@
   <string>Maqto saves your exported videos to Photos.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Maqto records voiceovers from your microphone.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Maqto records your camera for screen and camera recordings.</string>
   <!-- project files: same types as bundle.fileAssociations, plus the document icon -->
   <key>CFBundleDocumentTypes</key>
   <array>

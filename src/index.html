@@ -14,6 +14,7 @@
   <span class="flex" data-tauri-drag-region></span>
   <button class="ib" id="bUndo" data-command="undo" data-i="undo-2" data-tt="undo"></button>
   <button class="ib" id="bRedo" data-command="redo" data-i="redo-2" data-tt="redo"></button>
+  <button class="tb" id="bAITools" data-i="wand-sparkles" aria-controls="aiToolPanel"><span data-t="aiTools"></span></button>
   <button class="tb" id="bAsst" data-i="sparkles"><span data-t="asst"></span></button>
   <button class="ib" id="bWorkspaces" data-i="layout-dashboard" data-tt="workspaces" aria-expanded="false" aria-controls="workspaces"></button>
   <button class="ib" id="bKeys" data-command="shortcuts shortcutSearch" data-i="keyboard" data-tt="k_title"></button>
@@ -32,6 +33,7 @@
   <div id="lib" hidden>
     <section data-pane="media">
       <button class="wide accent-ghost" id="bImport" data-command="import" data-tt="import" data-i="plus"><span data-t="import"></span></button>
+      <button class="wide" id="bRecScreen" data-command="recordScreen" data-i="monitor"><span data-t="recScreen"></span></button>
       <details id="markerPanel"><summary data-t="markers"></summary><div id="markerList"></div>
         <p class="hint marker-warning" id="chapterWarning" role="status" hidden></p>
         <div class="marker-actions"><button id="copyChapters" data-t="copyChapters"></button><button id="saveChapters" data-t="saveChapters"></button></div>
@@ -43,6 +45,26 @@
     </section>
     <section data-pane="text" hidden>
       <button class="wide accent-ghost" id="bText" data-i="plus"><span data-t="addText"></span></button>
+      <details id="piperPanel" class="ai-card">
+        <summary data-t="piperTitle"></summary>
+        <p id="piperCaptions" class="hint" hidden></p>
+        <label class="f" id="piperTextField"><span data-t="piperTextLabel"></span>
+          <textarea id="piperText" dir="auto"></textarea></label>
+        <label class="f"><span data-t="piperVoice"></span><select id="piperVoice"></select></label>
+        <label class="f"><span data-t="piperSpeed"></span>
+          <input id="piperSpeed" type="number" dir="ltr" min="0.7" max="1.4" step="0.01" value="1"></label>
+        <label class="f"><span data-t="piperPause"></span>
+          <input id="piperPause" type="number" dir="ltr" min="0" max="3" step="0.01" value="0.2"></label>
+        <p id="piperHint" class="hint" data-t="piperTashkeel"></p>
+        <p id="piperStatus" class="hint" role="status"></p>
+        <div class="ai-actions">
+          <button type="button" id="piperDownload" data-t="aiDownload"></button>
+          <button type="button" id="piperCancel" data-t="cancel" hidden></button>
+          <button type="button" id="piperPreview" data-t="piperPreview"></button>
+          <button type="button" class="primary" id="piperAdd" data-t="piperAdd"></button>
+          <button type="button" id="piperBack" data-t="piperUseText" hidden></button>
+        </div>
+      </details>
       <h4 data-t="textStyles"></h4>
       <div id="textStyles" class="cards"></div>
     </section>
@@ -53,6 +75,7 @@
       <p class="hint" id="capModelHint"></p>
       <button class="wide primary" id="bCaps" data-i="wand-sparkles"><span data-t="genCaptions"></span></button>
       <p class="hint" data-t="capHint"></p>
+      <button class="wide" id="bTranslateCaptions" data-i="languages"><span data-t="translateCaptions"></span></button>
     </section>
     <section data-pane="filters" hidden>
       <p class="hint" data-t="filtersHint"></p>
@@ -86,10 +109,12 @@
       <div id="layerCards" class="trcards"></div>
     </section>
     <section data-pane="sounds" hidden>
+      <button type="button" class="wide" id="piperOpen" data-i="volume-2"><span data-t="piperTitle"></span></button>
       <div class="binbar"><input id="sfxQ" type="search" data-ph="sfxSearch"><select id="sfxCat"></select><button class="ib" id="sfxImport" data-i="folder-open" data-tt="sfxImport"></button></div>
       <div id="sfxList"></div>
       <p class="hint" data-t="sfxHint"></p>
     </section>
+    <section id="aiToolPanel" data-pane="aiTools" hidden></section>
   </div>
 
   <section class="panel" id="player">
@@ -128,6 +153,7 @@
       <div class="transcript-actions">
         <button id="transcribeClips" data-t="transcribeClips"></button>
         <button id="cutTranscript" data-t="cutTranscript" disabled></button>
+        <button id="findHighlights" data-t="hlFind"></button>
       </div>
       <details>
         <summary data-t="removeSilences"></summary>
@@ -226,6 +252,18 @@
 <div id="ctx" class="glass" hidden></div>
 <form id="markerEditor" class="glass" aria-labelledby="markerEditorTitle" hidden></form>
 <div id="modal" hidden><div class="glass box" id="mBox"></div></div>
+<dialog id="whatsNew" aria-labelledby="wnHeading">
+  <header><h2 id="wnHeading"></h2><button type="button" class="ib" id="wnClose" data-i="x" data-tt="close"></button></header>
+  <div class="wn-body">
+    <nav id="wnFeatures" aria-labelledby="wnHeading"></nav>
+    <article id="wnDetail"></article>
+  </div>
+  <footer>
+    <button type="button" id="wnPrev"><span data-t="wnBack"></span></button>
+    <span id="wnCount" role="status"></span>
+    <button type="button" id="wnNext"><span data-t="wnNext"></span></button>
+  </footer>
+</dialog>
 <dialog id="keysDialog" class="glass box" aria-labelledby="keysTitle">
   <h3 id="keysTitle" data-t="k_title"></h3>
   <div class="key-toolbar">

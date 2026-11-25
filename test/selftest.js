@@ -13,6 +13,226 @@ const vm = require('node:vm');
 const { buildArgs, concatText, chapterMetadata, atempo, loudnormFilter, LOUDNESS_TARGETS, ENCODERS } = require('../src/graph');
 const writeConcat = (d, list, fps) => { const f = path.join(d, 'text.ffconcat'); fs.writeFileSync(f, concatText(list, fps)); return f; };
 
+// Collect project: unique names, path rewrite, relative resolve; relink by name and size.
+{
+  const plan = S.collectPlan([{ path: '/a/clip.mp4', dir: 'Media' }, { path: '/b/clip.mp4', dir: 'Media' }, { path: '/a/clip.mp4', dir: 'Media' },
+    { path: 'C:\\x\\Clip.mp4', dir: 'Media' }, { path: '/l/warm.cube', dir: 'LUTs' }]);
+  assert.deepStrictEqual(plan.files.map(f => f.dest), ['Media/clip.mp4', 'Media/clip_2.mp4', 'Media/Clip_3.mp4', 'LUTs/warm.cube']);
+  const project = { media: { a: { path: '/a/clip.mp4' }, b: { path: '/b/clip.mp4' }, f: { path: '' } }, items: [{ color: { lut: { file: '/l/warm.cube' } } }, {}] };
+  const out = S.collectRewrite(project, plan.map);
+  assert.deepStrictEqual([out.media.a.path, out.media.b.path, out.media.f.path, out.items[0].color.lut.file], ['Media/clip.mp4', 'Media/clip_2.mp4', '', 'LUTs/warm.cube']);
+  assert.strictEqual(project.media.a.path, '/a/clip.mp4');
+  assert.strictEqual(S.resolveRelative('/p/Film', 'Media/a.mp4'), '/p/Film/Media/a.mp4');
+  assert.strictEqual(S.resolveRelative('/p/Film/', '/x/a.mp4'), '/x/a.mp4');
+  assert.strictEqual(S.resolveRelative('/p', 'C:\\a.mp4'), 'C:\\a.mp4');
+  assert.strictEqual(S.resolveRelative('C:\\p', 'Media/a.mp4'), 'C:\\p\\Media/a.mp4');
+  const missing = [{ id: 'a', path: '/old/a.mp4', size: 10 }, { id: 'b', path: '/old/b.mp4' }, { id: 'c', path: '/old/c.mp4', size: 5 }];
+  const found = [{ path: '/n/A.MP4', size: 11 }, { path: '/m/a.mp4', size: 10 }, { path: '/n/b.mp4', size: 99 }, { path: '/n/c.mp4' }];
+  assert.deepStrictEqual(S.relinkMatches(missing, found), [{ id: 'a', path: '/m/a.mp4' }, { id: 'b', path: '/n/b.mp4' }, { id: 'c', path: '/n/c.mp4' }]);
+  assert.deepStrictEqual(S.relinkMatches([{ id: 'x', path: '/o/x.mp4', size: 1 }], [{ path: '/n/x.mp4', size: 2 }]), []);
+  console.log('Collect plan, relative resolve and relink matching assertions passed');
+}
+
+// Smoke: two media files with one basename collect into one folder; the collected project's paths resolve to real files.
+{
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'maqto-collect-'));
+  const [a, b] = ['one', 'two'].map(n => { fs.mkdirSync(path.join(d, 'src', n), { recursive: true }); const f = path.join(d, 'src', n, 'clip.mp4'); fs.writeFileSync(f, n); return f; });
+  const project = { name: 'Smoke', media: { a: { path: a, size: 3 }, b: { path: b, size: 3 } }, items: [] };
+  const plan = S.collectPlan(Object.values(project.media).map(m => ({ path: m.path, dir: 'Media' })));
+  const root = path.join(d, 'out', 'Smoke');
+  for (const f of plan.files) { fs.mkdirSync(path.dirname(path.join(root, f.dest)), { recursive: true }); fs.copyFileSync(f.src, path.join(root, f.dest)); } // collect.rs does this part
+  fs.writeFileSync(path.join(root, 'Smoke.maqto'), JSON.stringify(S.collectRewrite(project, plan.map)));
+  const loaded = JSON.parse(fs.readFileSync(path.join(root, 'Smoke.maqto'), 'utf8'));
+  const resolved = Object.values(loaded.media).map(m => S.resolveRelative(root, m.path));
+  assert.deepStrictEqual(resolved.map(f => fs.readFileSync(f, 'utf8')), ['one', 'two']);
+  assert.notStrictEqual(resolved[0], resolved[1]);
+  fs.rmSync(d, { recursive: true, force: true });
+  console.log('Collect smoke: duplicate basenames collected and resolved');
+}
+
+// The translated SRT uses each source cue's timeline position and duration.
+{
+  assert.strictEqual(S.captionDirection(['مرحبا، كيف حالك؟', '2026']), 'ar-en');
+  assert.strictEqual(S.captionDirection(['Hello, how are you?', '١٢٣؟']), 'en-ar');
+  assert.strictEqual(S.captionDirection(['Hi، مرحبا']), 'ar-en');
+  assert.strictEqual(S.captionDirection(['123 !']), 'en-ar');
+  const cues = [{ start: 3599.9996, dur: 2, text: 'السطر الأول\nالسطر الثاني' },
+    { start: 1.25, dur: 2.375, text: 'Hello\n\nHow are you?' }];
+  assert.strictEqual(S.captionsToSrt(cues), '1\n00:00:01,250 --> 00:00:03,625\nHello\nHow are you?\n\n' +
+    '2\n01:00:00,000 --> 01:00:02,000\nالسطر الأول\nالسطر الثاني\n');
+  assert.strictEqual(cues[0].start, 3599.9996);
+  assert.strictEqual(S.captionsToSrt([]), '');
+  console.log('Caption script detection and SRT timing assertions passed');
+}
+
+// Upscale work is estimated from source frames and the chosen output dimensions.
+{
+  assert.deepStrictEqual(S.upscaleEstimate(64, 36, 30, 0, true, 2),
+    { frames: 1, width: 128, height: 72, pixels: 9216 });
+  assert.deepStrictEqual(S.upscaleEstimate(1920, 1080, 25, 2.01, false, 4),
+    { frames: 51, width: 7680, height: 4320, pixels: 1692057600 });
+  assert.strictEqual(S.upscaleEstimate(1280, 720, 0, 1, false, 2).frames, 30);
+  assert.deepStrictEqual(S.upscale4k(1920, 1080), [3840, 2160]);
+  assert.deepStrictEqual(S.upscale4k(720, 1280), [2160, 3840]);
+  assert.deepStrictEqual(S.upscale4k(1920, 820), [3840, 1640]);
+  assert.deepStrictEqual(S.upscale4k(2560, 1080), [3840, 1620]);
+  assert.strictEqual(S.upscale4k(2560, 1440), null);
+
+  const it = { id: 'clip', track: 'v1', media: 'src', start: 0, dur: 1, in: 0.25,
+    crop: { l: 0.25 }, speed: 2 };
+  const project = { w: 128, h: 72, fps: 24, tracks: [{ id: 'v1', kind: 'video' }], items: [it],
+    media: { src: { kind: 'video', path: 'original.mp4', w: 64, h: 36, hasAudio: true, hdr: true } } };
+  const { args } = buildArgs(project, { out: 'export.mp4', upscales: { clip: { path: 'cache.mp4', w: 128, h: 72 } } });
+  assert.strictEqual(args[args.indexOf('cache.mp4') - 1], '-i');
+  assert.strictEqual(args[args.indexOf('original.mp4') - 4], '0.250');
+  const graph = args[args.indexOf('-filter_complex') + 1];
+  assert(graph.includes('crop=96:72:32:0'));
+  assert(!graph.includes('tonemap='));
+  console.log('Upscale frame estimate, 4K dimensions, and cached export input passed');
+}
+
+// Voice clean-up overrides RNNoise and uses the preview cache key in the export graph.
+{
+  assert.strictEqual(S.fxKey({ denoise: true, norm: true }), 'dn');
+  assert.strictEqual(S.fxKey({ denoise: true, voiceClean: { on: false } }), 'd');
+  assert.strictEqual(S.fxKey({ voiceClean: { on: true } }), 'voice:24:0:');
+  assert.strictEqual(S.fxKey({ voiceClean: { on: true, strength: 12, room: 40 } }), 'voice:12:30:');
+  const clip = { id: 'clip', track: 'a1', media: 'src', start: 0, dur: 1, in: 0.25, denoise: true, norm: true,
+    voiceClean: { on: true, strength: 100, room: 15 } };
+  const key = S.fxKey(clip);
+  assert.strictEqual(key, 'voice:100:15:n');
+  const project = { w: 256, h: 144, fps: 24, tracks: [{ id: 'a1', kind: 'audio' }], items: [clip],
+    media: { src: { kind: 'audio', path: 'original.wav', fx: { dn: 'rnnoise.flac', [key]: 'clean.flac' } } } };
+  const { args } = buildArgs(project, { out: 'out.wav', audioOnly: true });
+  assert.strictEqual(args[args.indexOf('clean.flac') - 4], '0.250');
+  assert(!args.includes('rnnoise.flac'));
+  console.log('Voice clean-up settings and cached export input passed');
+}
+
+// Source mapping uses the actual clip drawing matrix, including a 90° turn and horizontal flip.
+{
+  const matrix = [0, -1, -1, 0, 260, 150];
+  const dest = { x: 10, y: 20, w: 100, h: 50 };
+  const crop = { x: 200, y: 100, w: 800, h: 400 };
+  const a = S.objectSourcePoint([230, 120], matrix, dest, crop);
+  const b = S.objectSourcePoint([200, 70], matrix, dest, crop);
+  assert.deepStrictEqual(a, [360, 180]);
+  assert.deepStrictEqual(S.objectPromptBox(b, a), [360, 180, 760, 420]);
+  assert.deepStrictEqual(S.objectPaddedPoint(a, 1280, 720), [288, 144]);
+  assert.deepStrictEqual(S.objectPaddedPoint(b, 1280, 720), [608, 336]);
+  assert.strictEqual(S.objectSourcePoint([250, 120], matrix, dest, crop), null);
+  assert.deepStrictEqual(S.objectSourcePoint([250, 120], matrix, dest, crop, true), [360, 100]);
+  const mask = Uint8Array.of(0, 255, 0, 0, 0, 255, 255, 0);
+  assert.deepStrictEqual(S.objectMaskGeometry(mask, 4, 2), { bbox: [1, 0, 3, 2], centroid: [11 / 6, 7 / 6] });
+  assert.strictEqual(S.objectMaskGeometry(new Uint8Array(4), 2, 2), null);
+  assert.deepStrictEqual(S.objectRleDecode(S.objectRleEncode(mask), mask.length), mask);
+  assert.deepStrictEqual(Array.from(S.objectRleEncode(Uint8Array.of(255, 255, 0))), [2, 0, 0, 0, 255, 1, 0, 0, 0, 0]);
+  assert.throws(() => S.objectRleDecode(Uint8Array.of(9, 0, 0, 0, 255), mask.length));
+  assert.strictEqual(S.objectBestMask([.51, .94, .92]), 1);
+  assert.strictEqual(S.objectBestMask([NaN, .94, .94]), 1);
+  assert.strictEqual(S.objectBestMask([]), -1);
+}
+
+
+// Verify all three object modes and that a short matte holds its last frame.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maqto-object-'));
+  const src = path.join(dir, 'source.png'), matte = path.join(dir, 'mask.mp4');
+  const run = (args, input) => execFileSync(ffmpeg, ['-v', 'error', ...args], { input });
+  const size = 64 * 64, rgb = Buffer.alloc(size * 3), mask = Buffer.alloc(size * 2);
+  try {
+    for (let i = 0; i < size; i++) {
+      rgb.set([i % 16 >= 8 ? 130 : 250, 20, 32], i * 3);
+      mask[i] = i % 64 < 32 ? 255 : 0;
+      mask[size + i] = 255 - mask[i];
+    }
+    run(['-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', '64x64', '-i', '-', '-frames:v', '1', src], rgb);
+    run(['-f', 'rawvideo', '-pix_fmt', 'gray', '-s', '64x64', '-framerate', '4', '-i', '-',
+      '-vf', 'scale=in_range=full:out_range=limited', '-color_range', 'tv', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', matte], mask);
+    const project = { w: 64, h: 64, fps: 4, tracks: [{ id: 'v1', kind: 'video' }],
+      media: { m: { path: src, w: 64, h: 64, kind: 'image' } },
+      items: [{ id: 'clip', start: 0, dur: 1, in: 0, track: 'v1', media: 'm' }] };
+    for (const mode of ['keep', 'pixel', 'pop']) {
+      const out = path.join(dir, mode + '.mp4');
+      run(buildArgs(project, { out, mattes: { clip: { object: { path: matte, origin: 0, last: .25, fps: 4, mode } } } }).args);
+      const data = run(['-i', out, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+      const sample = (f, x) => data.subarray((f * size + 16 * 64 + x) * 3, (f * size + 16 * 64 + x) * 3 + 3);
+      assert.strictEqual(data.length, 4 * size * 3);
+      if (mode === 'keep') {
+        assert.ok(sample(0, 6)[0] > 220 && sample(0, 54)[0] < 10);
+        assert.ok(sample(1, 6)[0] < 10 && sample(1, 54)[0] > 220);
+        assert.ok(sample(3, 6)[0] < 10 && sample(3, 54)[0] > 220);
+      } else if (mode === 'pop') {
+        assert.ok(sample(0, 6)[0] > 220 && Math.abs(sample(0, 54)[0] - sample(0, 54)[1]) < 10);
+        assert.ok(sample(1, 54)[0] > 220 && Math.abs(sample(1, 6)[0] - sample(1, 6)[1]) < 10);
+      } else {
+        assert.ok(sample(0, 12)[0] > 220 && sample(0, 60)[0] < 180);
+        assert.ok(sample(1, 12)[0] < 180 && sample(1, 60)[0] > 220);
+      }
+    }
+    const clip = path.join(dir, 'clip.mp4'), shifted = path.join(dir, 'shifted.mp4');
+    run(['-loop', '1', '-framerate', '4', '-i', src, '-t', '2', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', clip]);
+    project.media.m = { ...project.media.m, kind: 'video', path: clip };
+    Object.assign(project.items[0], { in: .5, speed: 2, dur: .5 });
+    const object = { path: matte, origin: .25, last: .5, fps: 4, mode: 'keep' };
+    run(buildArgs(project, { out: shifted, mattes: { clip: { object } } }).args);
+    const trimmed = run(['-i', shifted, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+    assert.strictEqual(trimmed.length, 2 * size * 3);
+    assert.ok(trimmed[(16 * 64 + 6) * 3] < 10 && trimmed[(16 * 64 + 54) * 3] > 220);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  console.log('Object matte helpers and FFmpeg export modes passed');
+}
+
+
+// The exact cached frames and their source timing reach the export graph, with the original sound.
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maqto-fill-'));
+  const run = args => execFileSync(ffmpeg, ['-v', 'error', ...args]);
+  try {
+    for (const [i, color] of ['red', 'lime', 'blue'].entries()) {
+      run(['-f', 'lavfi', '-i', `color=${color}:s=64x64,format=rgba`, '-frames:v', '1', path.join(dir, `00000000${i}.png`)]);
+    }
+    const manifest = path.join(dir, 'frames.ffconcat');
+    fs.writeFileSync(manifest, 'ffconcat version 1.0\n' + [0.35, 0.40, 0.25].map((len, i) =>
+      `file 00000000${i}.png\noption framerate 1000000\nduration ${len}\n`).join('') + 'file 000000002.png\noption framerate 1000000\n');
+    const source = path.join(dir, 'source.mp4');
+    const out = path.join(dir, 'out.mp4');
+    run(['-f', 'lavfi', '-i', 'color=black:s=64x64:d=2', '-f', 'lavfi', '-i', 'sine=d=2',
+      '-c:v', 'libx264', '-c:a', 'aac', source]);
+    const project = { w: 64, h: 64, fps: 4, tracks: [{ id: 'v1', kind: 'video' }],
+      media: { m: { path: source, w: 64, h: 64, kind: 'video', hasAudio: true } },
+      items: [{ id: 'clip', start: 0, dur: 1, in: 0.4, track: 'v1', media: 'm' }] };
+    const fills = { clip: { path: dir, manifest } };
+    const confirmFrames = expected => {
+      const pixels = run(['-i', out, '-an', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+      assert.strictEqual(pixels.length, expected.length * 64 * 64 * 3);
+      expected.forEach((channel, f) => {
+        const rgb = pixels.subarray(f * 64 * 64 * 3, f * 64 * 64 * 3 + 3);
+        assert(rgb[channel] > 170 && rgb.every((v, c) => c === channel || v < 60),
+          `frame ${f} expected channel ${channel}, got ${Array.from(rgb)}`);
+      });
+    };
+    run(buildArgs(project, { out, fills }).args);
+    confirmFrames([0, 0, 1, 2]);
+    const streams = JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-show_streams', '-of', 'json', out])).streams;
+    assert(streams.some(s => s.codec_type === 'audio'));
+    Object.assign(project.items[0], { speed: 2, dur: 0.5 });
+    run(buildArgs(project, { out, fills }).args);
+    confirmFrames([0, 1]);
+    project.media.m.kind = 'image';
+    project.media.m.hasAudio = false;
+    Object.assign(project.items[0], { speed: 1, dur: 1 });
+    run(buildArgs(project, { out, fills }).args);
+    confirmFrames([0, 0, 0, 0]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  console.log('Inpainting cache export timing, still image, and original audio passed');
+}
+
+
 {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maqto-multicam-'));
   try {
@@ -469,6 +689,25 @@ assert.deepStrictEqual(curvedPieces.map(c => [c.start, c.dur]), [[1, 1], [2, 2]]
 }
 console.log('Transcript and silence cut assertions passed');
 
+{
+  const E = [{ version: '1.0.40', steps: ['a'] }, { version: '1.0.41', steps: ['b', 'c'] }, { version: '1.0.9', steps: ['old'] }, { version: '1.0.42', steps: ['future'] }];
+  assert.deepStrictEqual(WN.pendingSteps(E, '', '1.0.41'), []); // fresh install
+  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.40', '1.0.41'), ['b', 'c']);
+  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.39', '1.0.41'), ['a', 'b', 'c']); // sorted, 1.0.9 < 1.0.39 so excluded, 1.0.42 not yet
+  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.41', '1.0.41'), []);
+  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.8', '1.0.40'), ['old', 'a']); // numeric, not string, compare
+  assert.deepStrictEqual(WN.replaySteps(E, '1.0.41'), ['b', 'c']);
+  assert.strictEqual(WN.whatsNewFrom('', false, E), '');
+  assert.strictEqual(WN.whatsNewFrom('1.0.39', true, E), '1.0.39');
+  assert.strictEqual(WN.whatsNewFrom('', true, []), '');
+  assert.strictEqual(WN.whatsNewFrom('', true, [E[1]]), '1.0.40');
+  assert.strictEqual(WN.whatsNewFrom('', true, E), '1.0.41');
+  assert.deepStrictEqual(WN.pendingSteps(E, WN.whatsNewFrom('', true, E), '1.0.42'), ['future']);
+  assert.ok(WN.WHATS_NEW.every(e => e.steps.every(x =>
+    x.id && x.icon && x.ar.title && x.ar.body && x.en.title && x.en.body && x.where.ar && x.where.en && x.art.startsWith('<svg'))));
+  console.log("What's New upgrade, replay, and release data assertions passed");
+}
+
 // Docking moves the original panel IDs through tab groups and nested splits.
 const W = require('../src/workspace');
 const allTabs = W.group(...W.panels);
@@ -508,6 +747,11 @@ const transcriptLayout = W.group(...W.panels.filter(id => id !== 'multicam'));
 transcriptLayout.active = 'transcript';
 assert.ok(W.valid(W.withPanels(transcriptLayout)));
 assert.strictEqual(W.find(transcriptLayout, 'multicam').active, 'transcript');
+const preAiLayout = W.move(allTabs, 'media', 'media', 'start');
+const previousLibrary = W.find(preAiLayout, 'aiTools');
+previousLibrary.tabs = previousLibrary.tabs.filter(id => id !== 'aiTools');
+assert.ok(W.valid(W.withPanels(preAiLayout)));
+assert.deepStrictEqual(W.find(preAiLayout, 'aiTools'), { tabs: ['media', 'aiTools'], active: 'media' });
 console.log('Workspace tree assertions passed');
 
 const { accumulate, rgbToCbCr } = require('../src/scopes');
@@ -708,6 +952,33 @@ assert.ok(Math.abs(+pr.format.duration - 3.5) < 0.1, 'duration ' + pr.format.dur
   console.log('Multicam FFmpeg angle switches and continuous audio passed');
 }
 
+// A prepared 3D photo is read as timeline-time video and keeps moving in export.
+{
+  const cache = path.join(dir, 'depth-cache.mp4'), out = path.join(dir, 'depth-export.mp4');
+  run(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=red:s=64x64:r=8:d=0.5',
+    '-f', 'lavfi', '-i', 'color=blue:s=64x64:r=8:d=0.5', '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0',
+    '-c:v', 'libx264', cache]);
+  const clip = { id: 'photo', track: 'v1', media: 'src', start: 0, dur: 1, in: 0, speed: 2 };
+  const project = { w: 64, h: 64, fps: 12, tracks: [{ id: 'v1', kind: 'video' }], items: [clip],
+    media: { src: { kind: 'image', path: 'missing-photo.png', w: 64, h: 64 } } };
+  const { args } = buildArgs(project, { out, visuals: { photo: { path: cache, depth: true, animatedStill: true, w: 64, h: 64 } } });
+  assert(!args.includes('-loop') && !args.includes('missing-photo.png'));
+  run(ffmpeg, args);
+  const frame = 64 * 64 * 3;
+  const rgb = execFileSync(ffmpeg, ['-v', 'error', '-i', out, '-pix_fmt', 'rgb24', '-f', 'rawvideo', 'pipe:1']);
+  assert.strictEqual(rgb.length, frame * 12);
+  assert(rgb[0] > 200 && rgb[2] < 30);
+  assert(rgb[11 * frame + 2] > 200 && rgb[11 * frame] < 30);
+
+  project.media.src = { kind: 'video', path: 'original.mp4', w: 64, h: 64, hasAudio: true, hdr: true };
+  Object.assign(clip, { in: 0.25, smooth: true, speed: 0.5 });
+  const videoArgs = buildArgs(project, { out, visuals: { photo: { path: cache, depth: true, w: 64, h: 64 } } }).args;
+  assert.strictEqual(videoArgs[videoArgs.indexOf('original.mp4') - 4], '0.250');
+  const filter = videoArgs[videoArgs.indexOf('-filter_complex') + 1];
+  assert(filter.includes('[1:a]') && !filter.includes('tonemap=') && !filter.includes('minterpolate='));
+  console.log('Depth cache export timing, animated still, and original audio routing passed');
+}
+
 const out4k = path.join(dir, 'out4k.mp4');
 run(ffmpeg, buildArgs(S.scaleProject(p, 2), { out: out4k, textList, codec: process.platform === 'darwin' ? 'hevc_hw' : 'hevc' }).args);
 const v4 = JSON.parse(run(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_streams', out4k])).streams.find(s => s.codec_type === 'video');
@@ -822,6 +1093,85 @@ assert.ok(late[0] > late[1] + 40 && late[0] > late[2] + 40, 'late: half-opaque r
   delete it.color;
 }
 
+// curves LUT, HSL qualifier, Lab colour match: pure helpers, then the same grade through the real export graph
+{
+  // monotone 256-entry curve LUT
+  assert.strictEqual(S.curveLut([[0, 0], [1, 1]]), null, 'identity curve has no LUT');
+  const cl = S.curveLut([[0, 0], [0.25, 0.1], [0.75, 0.9], [1, 1]]);
+  assert.strictEqual(cl.length, 256);
+  assert.ok(Math.abs(cl[0]) < 1e-9 && Math.abs(cl[255] - 1) < 1e-9, 'curve keeps its end points');
+  assert.ok(Math.abs(cl[64] - 0.1) < 0.01 && Math.abs(cl[191] - 0.9) < 0.01, 'curve passes through its points');
+  for (let i = 1; i < 256; i++) assert.ok(cl[i] >= cl[i - 1] - 1e-9, 'monotone spline never overshoots');
+  const flat = S.curveLut([[0, 0], [0.5, 0.5], [0.6, 0.5], [1, 1]]);
+  for (let i = 1; i < 256; i++) assert.ok(flat[i] >= flat[i - 1] - 1e-9 && flat[i] <= 1, 'flat stretch stays monotone');
+  assert.strictEqual(S.curvesFilter({ l: [[0, 0], [1, 1]] }), null);
+  assert.ok(/^curves=master='0\.0000\/0\.0000 .* 1\.0000\/1\.0000':red='/.test(S.curvesFilter({ l: [[0, 0], [0.5, 0.4], [1, 1]], r: [[0, 0.1], [1, 1]] })), 'curves filter args');
+
+  // qualifier weight: hue wraps at 360, ranges and softness
+  const red = [1, 0.1, 0.1], q = { on: true, h: 355, hw: 30, smin: 0.2, smax: 1, lmin: 0, lmax: 1, soft: 0 };
+  assert.strictEqual(S.qualWeight(q, ...red), 1, 'red hue 0 is inside a band centred on 355 that wraps past 360');
+  assert.strictEqual(S.qualWeight({ ...q, h: 120 }, ...red), 0, 'green band excludes red');
+  assert.strictEqual(S.qualWeight(q, 0.5, 0.5, 0.5), 0, 'grey is below the saturation range');
+  assert.strictEqual(S.qualWeight({ ...q, lmin: 0.9 }, ...red), 0, 'luma range excludes it');
+  const soft = S.qualWeight({ ...q, hw: 20, soft: 0.5 }, ...[1, 0.5, 0.1]); // hue ~ 26, centre 355, edge at 10 + softness
+  assert.ok(soft > 0 && soft < 1, 'soft edge gives a partial weight ' + soft);
+  assert.ok(S.hasColor({ color: { qual: { on: true, ds: 20 } } }) && !S.hasColor({ color: { qual: { on: true } } }) && !S.hasColor({ color: { qual: { ds: 20 } } }), 'qualifier needs on + an adjustment');
+  const mk = { color: { qual: { on: true, show: true, h: 0, hw: 60, soft: 0 } } };
+  assert.deepStrictEqual(S.colorFn(mk)(1, 0.1, 0.1), [1, 1, 1], 'show mask paints white');
+  S.colorFn(mk, null, { noMask: true })(1, 0.1, 0.1).forEach((v, i) => assert.ok(Math.abs(v - [1, 0.1, 0.1][i]) < 1e-9, 'export ignores show mask'));
+
+  // Lab round trip and Reinhard -> gain/offset
+  for (const c of [[0.1, 0.5, 0.9], [0.7, 0.2, 0.4], [1, 1, 1], [0, 0, 0]]) S.lab2rgb(...S.rgb2lab(...c)).forEach((v, i) => assert.ok(Math.abs(v - c[i]) < 0.002, 'Lab round trip'));
+  const frame = (r, g, b) => { const d = new Uint8ClampedArray(4 * 64); for (let i = 0; i < 64; i++) d.set([r + (i % 8) * 4, g + (i >> 3) * 4, b + (i % 5) * 3, 255], i * 4); return d; };
+  const same = S.labStats(frame(60, 90, 120));
+  const gi = S.reinhardGainOffset(same, same);
+  gi.gain.forEach(v => assert.ok(Math.abs(v - 1) < 0.02, 'matching a frame to itself keeps gain 1')); gi.off.forEach(v => assert.ok(Math.abs(v) < 0.02, 'and offset 0'));
+  const to = S.reinhardGainOffset(S.labStats(frame(40, 60, 90)), S.labStats(frame(150, 100, 60)));
+  const mapped = [0.2, 0.3, 0.4].map((v, i) => v * to.gain[i] + to.off[i]);
+  assert.ok(mapped[0] > 0.2 && mapped[2] < 0.4, 'a bluish dark frame is pushed toward the warm reference ' + mapped);
+  const half = S.colorFn({ color: { match: { ...to, amt: 50 } } })(0.2, 0.3, 0.4), none = S.colorFn({ color: { match: { ...to, amt: 0 } } })(0.2, 0.3, 0.4);
+  none.forEach((v, i) => assert.ok(Math.abs(v - [0.2, 0.3, 0.4][i]) < 1e-9, 'amount 0 is the original'));
+  assert.ok(Math.abs(half[0] - (0.2 + mapped[0]) / 2) < 1e-6, 'amount 50 is halfway');
+  assert.strictEqual(JSON.stringify(S.colorFn({ color: { match: to } })(0.2, 0.3, 0.4)), JSON.stringify(S.colorFn({ color: { match: { ...to, amt: 100 } } })(0.2, 0.3, 0.4)), 'old projects without amt = 100%');
+
+  // .cube writer: header, size, and a round trip
+  const tiny = S.cubeText(S.bakeLut({ id: 'k', color: { curves: { l: [[0, 0], [0.5, 0.6], [1, 1]] } } }, null, 5), 5);
+  assert.ok(tiny.startsWith('LUT_3D_SIZE 5\n') && tiny.trim().split('\n').length === 126, '.cube writer');
+  assert.strictEqual(S.parseCube(tiny).n, 5);
+
+  // the real export graph on 8 flat patches vs the JS math
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maqto-grade-')), W = 64, H = 8;
+  const patches = [[200, 40, 40], [30, 160, 60], [60, 90, 210], [128, 128, 128], [230, 210, 60], [20, 20, 30], [220, 120, 160], [90, 200, 200]];
+  const raw = Buffer.alloc(W * H * 3);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) raw.set(patches[x >> 3], (y * W + x) * 3);
+  const png = (name, buf) => { const f = path.join(dir, name); execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${W}x${H}`, '-i', '-', '-frames:v', '1', f], { input: buf }); return f; };
+  const grade = { curves: { l: [[0, 0], [0.5, 0.58], [1, 1]], b: [[0, 0.03], [1, 0.95]] }, match: { gain: [1.1, 0.95, 0.9], off: [0.02, 0, 0.03], amt: 60 },
+    qual: { on: true, h: 0, hw: 120, smin: 0, smax: 1, lmin: 0, lmax: 1, soft: 1, dh: 30, ds: 20, dl: 10, show: true } };
+  // Run a flat-patch PNG through the real export graph (cube via lut3d when given) and read the frame back as rgb24.
+  const render = (srcPng, color, luts) => {
+    const pj = { w: W, h: H, fps: 10, media: { m: { path: srcPng, kind: 'image', w: W, h: H } }, tracks: [{ id: 'v1', kind: 'video' }], items: [{ id: 'g1', track: 'v1', media: 'm', start: 0, dur: 1, color }] };
+    const { args } = buildArgs(pj, { out: path.join(dir, 'x.mp4'), luts });
+    const fi = args.indexOf('-filter_complex'), graph = args[fi + 1].split(';').filter(x => !x.endsWith('[aout]')).join(';').replace('format=yuv420p[vout]', 'format=rgb24[vout]');
+    return { graph, out: execFileSync(ffmpeg, ['-v', 'error', ...args.slice(0, fi), '-filter_complex', graph, '-map', '[vout]', '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1']) };
+  };
+  const it0 = { id: 'g1', color: grade }, cube = path.join(dir, 'g1.cube');
+  fs.writeFileSync(cube, S.cubeText(S.bakeLut(it0, null, S.LUT_N, { noMask: true })));
+  // The preview samples this same cube as a 3D texture (trilinear), so that is the JS math to compare with.
+  const tex = S.parseCube(fs.readFileSync(cube, 'utf8')), ideal = S.colorFn(it0, null, { noMask: true }), f = (r, g, b) => S.sampleLut(tex, r, g, b);
+  const graded = render(png('patches.png', raw), grade, { g1: cube });
+  assert.ok(graded.graph.includes('lut3d='), 'export graph uses the baked cube');
+  // The export converts to yuv, so the reference goes through the same graph with no grade: only the colour math is compared.
+  const want = Buffer.alloc(W * H * 3);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) want.set(f(...patches[x >> 3].map(v => v / 255)).map(v => Math.floor(v * 255 + 1e-4)), (y * W + x) * 3); // lut3d truncates to 8 bit
+  const ref = render(png('expected.png', want), undefined, undefined).out;
+  assert.strictEqual(graded.out.length, W * H * 3);
+  patches.forEach(pc => ideal(...pc.map(v => v / 255)).forEach((v, c) => assert.ok(Math.abs(v - f(...pc.map(x => x / 255))[c]) * 255 < 4, 'cube follows the exact grade within its grid error')));
+  let worst = 0;
+  patches.forEach((_, i) => { const o = ((H >> 1) * W + i * 8 + 4) * 3; for (let c = 0; c < 3; c++) worst = Math.max(worst, Math.abs(graded.out[o + c] - ref[o + c])); });
+  assert.ok(worst <= 2, 'export vs JS math within 2/255, worst ' + worst);
+  console.log('Curves / qualifier / colour match assertions passed (export vs JS worst error ' + worst.toFixed(2) + '/255)');
+}
+
 // mask (grey PNG through alphamerge) + chroma key
 {
   const mk = path.join(dir, 'mask.png');
@@ -908,6 +1258,22 @@ assert.ok(late[0] > late[1] + 40 && late[0] > late[2] + 40, 'late: half-opaque r
 }
 
 fs.rmSync(dir, { recursive: true, force: true });
+// Scene cuts: window padding, merging close cuts, split positions with speed and in/out
+{
+  const idx = (start, n) => Array.from({ length: 100 }, (_, s) => S.sceneWindowIndex(start, s, n));
+  assert.deepStrictEqual(idx(0, 100), [...Array(25).fill(0), ...Array(75).keys()]);
+  assert.deepStrictEqual(idx(50, 100), [...Array(75).keys()].map(i => i + 25).concat(Array(25).fill(99)));
+  assert.deepStrictEqual(idx(0, 1), Array(100).fill(0));
+  assert.deepStrictEqual(S.mergeSceneCuts([]), []);
+  assert.deepStrictEqual(S.mergeSceneCuts([{ t: 2, p: 0.9 }, { t: 1, p: 0.7 }, { t: 1.04, p: 0.9 }, { t: 1.2, p: 0.8 }, { t: 1.5, p: 0.7 }]), [1.04, 1.5, 2]);
+  // clip plays source 10..20 at 2x from timeline 5: dur 5
+  const clip = { start: 5, dur: 5, in: 10, speed: 2 };
+  assert.deepStrictEqual(S.sceneOffsets(clip, [3, 10, 12, 14.5, 20, 25]), [1, 2.25]);
+  assert.deepStrictEqual(S.sceneOffsets(clip, [10.05, 12, 19.98], 0.1), [1]);
+  assert.deepStrictEqual(S.sceneOffsets({ dur: 4 }, [1, 4]), [1]);
+  assert.deepStrictEqual(S.sceneOffsets({ dur: 4 }, undefined), []);
+  console.log('Scene cut helper assertions passed');
+}
 // DTW token times win over segment offsets (whisper's run early); words run on to the next start
 {
   const tk = (txt, d) => ({ text: txt, t_dtw: d });
@@ -917,15 +1283,126 @@ fs.rmSync(dir, { recursive: true, force: true });
   ] });
   assert.ok(Math.abs(w[0].s - 1.44) < 1e-6 && Math.abs(w[0].e - w[1].s) < 1e-6 && Math.abs(w[1].s - 1.68) < 1e-6, JSON.stringify(w));
 }
-console.log('selftest ok');
-
+// Highlights -> Shorts helpers
 {
-  const E = [{ version: '1.0.40', steps: ['a'] }, { version: '1.0.41', steps: ['b', 'c'] }, { version: '1.0.9', steps: ['old'] }, { version: '1.0.42', steps: ['future'] }];
-  assert.deepStrictEqual(WN.pendingSteps(E, '', '1.0.41'), []); // fresh install
-  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.40', '1.0.41'), ['b', 'c']);
-  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.39', '1.0.41'), ['a', 'b', 'c']); // sorted, 1.0.9 < 1.0.39 so excluded, 1.0.42 not yet
-  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.41', '1.0.41'), []);
-  assert.deepStrictEqual(WN.pendingSteps(E, '1.0.8', '1.0.40'), ['old', 'a']); // numeric, not string, compare
-  assert.deepStrictEqual(WN.replaySteps(E, '1.0.41'), ['b', 'c']);
-  assert.ok(WN.WHATS_NEW.every(e => e.steps.every(x => x.ar.title && x.ar.body && x.en.title && x.en.body)));
+  const say = (text, t0, per = 0.4) => text.split(' ').map((w, i) => ({ w, s: t0 + i * per, e: t0 + i * per + per * 0.9 }));
+  let at = 0;
+  const words = [];
+  for (const sentence of ['Why do most people fail at this?', 'Because they never start on day one.', 'Here is the secret nobody tells you!', 'It takes just ten minutes every single morning.',
+    'Then you repeat it.', 'That is the whole trick, and it works every time you try it.', 'Thanks for watching and see you next time.']) {
+    const ws = say(sentence, at);
+    words.push(...ws);
+    at = ws.at(-1).e + 0.3;
+  }
+  const sentences = S.transcriptSentences(words);
+  assert.strictEqual(sentences.length, 7);
+  assert.ok(sentences.every(x => /[.!?]$/.test(x.text)));
+  assert.strictEqual(S.transcriptSentences([{ w: 'a', s: 0, e: 1 }, { w: 'b', s: 3, e: 4 }]).length, 2); // a pause splits
+  assert.strictEqual(S.transcriptSentences(Array.from({ length: 120 }, (_, i) => ({ w: 'x', s: i * 0.5, e: i * 0.5 + 0.4 }))).length > 2, true); // no punctuation: forced split
+  const cands = S.highlightCandidates(words, { min: 8, target: 10, max: 14 });
+  assert.ok(cands.length && cands.every(c => c.dur >= 8 && c.dur <= 14 && c.words[0].s === c.start && c.words.at(-1).e === c.end), JSON.stringify(cands.map(c => c.dur)));
+  assert.deepStrictEqual(S.highlightCandidates(words, { min: 100, target: 120, max: 130 }), []);
+  assert.strictEqual(S.highlightCandidates([], {}).length, 0);
+  const hook = { words: say('Why do people fail at this?', 0), text: 'Why do people fail at this?', dur: 2.5, start: 0, end: 2.5 };
+  const dull = { words: say('and then we went to the next one', 0, 1), text: 'and then we went to the next one', dur: 8, start: 0, end: 8 };
+  const hs = S.heuristicScore(hook), ds = S.heuristicScore(dull);
+  assert.ok(hs > ds && hs >= 1 && hs <= 10 && ds >= 1, `${hs} ${ds}`);
+  assert.ok(S.heuristicScore(hook, { coverage: 1, loud: 1 }) > S.heuristicScore(hook, { coverage: 0.1, loud: 0.1 }));
+  const picked = S.pickHighlights([{ start: 0, end: 10, score: 9 }, { start: 5, end: 15, score: 8 }, { start: 20, end: 30, score: 5 }], 5);
+  assert.deepStrictEqual(picked.map(c => c.start), [0, 20]);
+  assert.strictEqual(S.pickHighlights([{ start: 0, end: 1, score: 1 }, { start: 2, end: 3, score: 2 }], 1)[0].score, 2);
+  // robust JSON out of LLM text
+  assert.deepStrictEqual(S.extractJson('Sure! ```json\n[{"id":0,"score":8,"title":"A {brace} ]"},]\n``` hope it helps'), [{ id: 0, score: 8, title: 'A {brace} ]' }]);
+  assert.deepStrictEqual(S.extractJson('text {"a":[1,2,]} tail'), { a: [1, 2] });
+  assert.strictEqual(S.extractJson('no json here [oops'), null);
+  assert.strictEqual(S.extractJson(undefined), null);
+  const rated = S.parseHighlightRatings('Here: {"ratings":[{"id":"1","score":"9.5","title":"  Big   idea "},{"id":2,"score":42,"title":"x"},{"id":2,"score":1},{"id":"z","score":3},{"id":3,"score":"n/a"}]}');
+  assert.deepStrictEqual([...rated], [[1, { score: 9.5, title: 'Big idea' }], [2, { score: 10, title: 'x' }]]);
+  assert.strictEqual(S.parseHighlightRatings('garbage').size, 0);
+  assert.ok(S.highlightPrompt([{ id: 4, text: 'hello\nworld' }]).includes('4: hello world'));
+  // visible transcript words and caption cues for a trimmed clip
+  const clip = { start: 10, dur: 2, in: 1, speed: 1, transcript: [{ w: 'a', s: 0.5, e: 0.9 }, { w: 'b', s: 1.2, e: 1.6 }, { w: 'c', s: 2.0, e: 2.4 }, { w: 'd', s: 3.5, e: 3.9 }] };
+  const shown = S.transcriptWords(clip);
+  assert.deepStrictEqual(shown.map(x => x.word.w), ['b', 'c']);
+  assert.ok(Math.abs(shown[0].start - 10.2) < 1e-6 && Math.abs(shown[1].end - 11.4) < 1e-6);
+  const cues = S.captionCues(shown.map(x => ({ w: x.word.w, s: x.start, e: x.end })));
+  assert.strictEqual(cues.length, 1);
+  assert.strictEqual(cues[0].text, 'b c');
+  assert.ok(Math.abs(cues[0].words[0].s) < 1e-9 && cues[0].dur >= 0.2);
+  const main = { version: 2, w: 1920, h: 1080, fps: 30, media: { m: { path: '/x.mp4', kind: 'video' }, n: {} }, items: [{ id: 'src', media: 'm', start: 0, dur: 600 }], groups: {}, markers: [] };
+  const before = JSON.stringify(main);
+  const sp = S.buildShortProject(main, 'm', { name: 'T', w: 1080, h: 1920, pieces: [{ id: 'p', media: 'm', start: 0, dur: 5 }], cues: [{ start: 1, dur: 1, text: 'hi', words: [] }], style: { size: 78 } });
+  assert.strictEqual(JSON.stringify(main), before); // the long edit is untouched
+  assert.deepStrictEqual([sp.w, sp.h, sp.name, Object.keys(sp.media)], [1080, 1920, 'T', ['m']]);
+  assert.deepStrictEqual(sp.items.map(i => [i.id, i.track]), [['p', 'v1'], ['cap0', 'c1']]);
+  sp.media.m.path = 'changed';
+  assert.strictEqual(main.media.m.path, '/x.mp4'); // media entries are copies
+  console.log('Highlights helper assertions passed');
 }
+
+// Transparent video, GIF and image sequences
+{
+  const proj = { w: 64, h: 64, fps: 8, tracks: [{ id: 'v1', kind: 'video' }],
+    items: [{ id: 'sq', track: 'v1', media: 'sq', start: 0, dur: 0.5, in: 0, scale: 0.25 }],
+    media: { sq: { kind: 'image', path: '', w: 16, h: 16 } } };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'maqto-alpha-'));
+  const img = path.join(dir, 'sq.png'); proj.media.sq.path = img;
+  execFileSync(ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=red:s=16x16', '-frames:v', '1', img]);
+  const A = (codec, extra) => buildArgs(proj, { out: path.join(dir, 'o'), codec, ...extra }).args;
+  const fcOf = a => a[a.indexOf('-filter_complex') + 1];
+  // args
+  let a = A('prores4444');
+  assert(a.join(' ').includes('-c:v prores_ks -profile:v 4444 -pix_fmt yuva444p10le') && a.includes('pcm_s16le'));
+  assert(fcOf(a).includes('color=c=black@0:') && fcOf(a).includes('format=yuva420p[b0]') && fcOf(a).includes('overlay=format=auto:') && fcOf(a).includes('format=yuva444p10le[vout]'));
+  a = A('vp9a');
+  assert(a.join(' ').includes('-c:v libvpx-vp9 -pix_fmt yuva420p') && a.includes('libopus') && !a.includes('-movflags') && fcOf(a).includes('format=yuva420p[vout]'));
+  assert(!fcOf(A('prores4444', { transparent: false })).includes('black@0') && fcOf(A('h264')).includes('color=c=black:'));
+  a = A('gif', { gifFps: 10, gifWidth: 32 });
+  assert(fcOf(a).includes('fps=10,scale=32:-1') && fcOf(a).includes('split[ga][gb];[ga]palettegen=stats_mode=diff[gp];[gb][gp]paletteuse=dither=sierra2_4a[vout]'));
+  assert(a.includes('-an') && !a.includes('[aout]') && !fcOf(a).includes('[aout]') && a.join(' ').includes('-c:v gif -loop 0'));
+  a = A('png'); assert(a.join(' ').includes('-c:v png -pix_fmt rgba') && a.includes('-an') && fcOf(a).includes('format=rgba[vout]') && fcOf(a).includes('black@0'));
+  a = A('jpg'); assert(a.includes('mjpeg') && !fcOf(a).includes('black@0'));
+  // real ffmpeg
+  const probe = f => JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-print_format', 'json', '-show_streams', f])).streams;
+  const enc = execFileSync(ffmpeg, ['-hide_banner', '-encoders']).toString();
+  const px = (f, x, y) => { // RGBA bytes of one pixel of the first frame
+    const raw = execFileSync(ffmpeg, ['-v', 'error', '-i', f, '-frames:v', '1', '-pix_fmt', 'rgba', '-f', 'rawvideo', 'pipe:1']);
+    return [...raw.subarray((y * 64 + x) * 4, (y * 64 + x) * 4 + 4)];
+  };
+  if (enc.includes('prores_ks')) {
+    const mov = path.join(dir, 'a.mov');
+    execFileSync(ffmpeg, buildArgs(proj, { out: mov, codec: 'prores4444' }).args);
+    assert(/^yuva/.test(probe(mov).find(s => s.codec_type === 'video').pix_fmt)); // ffprobe reports ProRes 4444 as yuva444p12le
+    assert.strictEqual(px(mov, 0, 0)[3], 0); assert(px(mov, 32, 32)[3] > 250 && px(mov, 32, 32)[0] > 200);
+    assert(probe(mov).some(s => s.codec_type === 'audio'));
+  } else console.log('SKIP prores_ks alpha');
+  if (enc.includes('libvpx-vp9')) {
+    const webm = path.join(dir, 'a.webm');
+    execFileSync(ffmpeg, buildArgs(proj, { out: webm, codec: 'vp9a' }).args);
+    const vs = probe(webm).find(s => s.codec_type === 'video');
+    assert.strictEqual(vs.codec_name, 'vp9'); assert(probe(webm).some(s => s.codec_name === 'opus'));
+    const raw = execFileSync(ffmpeg, ['-v', 'error', '-c:v', 'libvpx-vp9', '-i', webm, '-frames:v', '1', '-pix_fmt', 'rgba', '-f', 'rawvideo', 'pipe:1']);
+    assert.strictEqual(raw[3], 0); // libvpx decoder keeps the alpha plane
+  } else console.log('SKIP libvpx-vp9 alpha');
+  const gif = path.join(dir, 'a.gif');
+  execFileSync(ffmpeg, buildArgs(proj, { out: gif, codec: 'gif', gifFps: 10, gifWidth: 32 }).args);
+  const gs = probe(gif); assert.strictEqual(gs.length, 1); assert.strictEqual(gs[0].codec_name, 'gif'); assert.strictEqual(gs[0].width, 32);
+  const seq = path.join(dir, 'seq'); fs.mkdirSync(seq);
+  execFileSync(ffmpeg, buildArgs(proj, { out: path.join(seq, 'n_%05d.png'), codec: 'png' }).args);
+  assert.strictEqual(fs.readdirSync(seq).length, 4); // 0.5 s at 8 fps
+  assert.strictEqual(px(path.join(seq, 'n_00001.png'), 0, 0)[3], 0);
+  execFileSync(ffmpeg, buildArgs(proj, { out: path.join(seq, 'j_%05d.jpg'), codec: 'jpg' }).args);
+  assert.strictEqual(fs.readdirSync(seq).filter(f => f.endsWith('.jpg')).length, 4);
+  console.log('Alpha, GIF and image-sequence export passed');
+}
+{ // recording placement: screen V1, camera PiP bottom-right on V2, mic A1
+  const r = S.recordPlacement([{ role: 'screen', media: 's', w: 1920, h: 1080 }, { role: 'camera', media: 'c', w: 1280, h: 720 }, { role: 'mic', media: 'm' }], 1920, 1080, 4);
+  assert.deepStrictEqual(r.map(x => [x.role, x.track, x.start]), [['screen', 'v1', 4], ['camera', 'v2', 4], ['mic', 'a1', 4]]);
+  const c = r[1].extra; // 28% of the frame, 3% margin (32px) from the bottom-right corner
+  assert.strictEqual(c.scale, 0.28); assert.strictEqual(c.x, Math.round((1920 - 1920 * 0.28) / 2 - 32)); assert.strictEqual(c.y, Math.round((1080 - 1080 * 0.28) / 2 - 32));
+  assert.ok(c.x > 0 && c.y > 0);
+  assert.deepStrictEqual(S.recordPlacement([{ role: 'camera', media: 'c', w: 1280, h: 720 }], 1920, 1080, 0)[0], { role: 'camera', media: 'c', track: 'v1', start: 0, extra: {} }); // camera alone is the main picture
+  console.log('Recording placement assertions passed');
+}
+
+console.log('selftest ok');

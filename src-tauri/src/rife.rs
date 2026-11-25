@@ -28,6 +28,14 @@ pub fn rife_ready(app: AppHandle) -> R<bool> {
 }
 
 #[tauri::command]
+pub fn rife_remove(app: AppHandle) -> R<()> {
+    match std::fs::remove_dir_all(root(&app)?.join("tool")) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result.map_err(err),
+    }
+}
+
+#[tauri::command]
 pub async fn rife_download(app: AppHandle) -> R<()> {
     tauri::async_runtime::spawn_blocking(move || {
         let dir = tool(&app)?.parent().unwrap().to_path_buf();

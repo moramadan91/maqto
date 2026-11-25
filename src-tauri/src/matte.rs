@@ -30,6 +30,11 @@ pub fn matte_ready(app: AppHandle, kind: Option<String>) -> R<bool> {
 }
 
 #[tauri::command]
+pub fn matte_remove(app: AppHandle, kind: Option<String>) -> R<()> {
+    super::remove_model_file(&model(&app, &kind)?)
+}
+
+#[tauri::command]
 pub async fn matte_download(app: AppHandle, kind: Option<String>) -> R<()> {
     tauri::async_runtime::spawn_blocking(move || {
         let url = if is_obj(&kind) { "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model.onnx" } else { "https://huggingface.co/Xenova/modnet/resolve/main/onnx/model.onnx" };
@@ -37,27 +42,61 @@ pub async fn matte_download(app: AppHandle, kind: Option<String>) -> R<()> {
     }).await.map_err(err)?
 }
 
+// Files being downloaded by `fetch`, so a double click cannot run the same download twice.
+static FETCHING: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+static PART: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+struct Fetching(PathBuf);
+impl Drop for Fetching {
+    fn drop(&mut self) { FETCHING.lock().unwrap().retain(|p| p != &self.0); }
+}
+
 /// Download `url` to `file` (through a .part file), with "progress" events under `label`.
 pub fn fetch(app: &AppHandle, url: &str, file: &std::path::Path, label: &str) -> R<()> {
+    let _busy = {
+        let mut active = FETCHING.lock().unwrap();
+        if active.iter().any(|p| p == file) { return Err("This model is already downloading".into()); }
+        active.push(file.to_path_buf());
+        Fetching(file.to_path_buf())
+    };
+    fetch_segment(app, url, file, label, 0., 1.)
+}
+
+pub fn fetch_segment(app: &AppHandle, url: &str, file: &std::path::Path, label: &str, start: f64, span: f64) -> R<()> {
     std::fs::create_dir_all(file.parent().unwrap()).map_err(err)?;
-    let res = ureq::get(url).call().map_err(err)?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(20)).timeout_read(std::time::Duration::from_secs(60)).build();
+    let res = agent.get(url).call().map_err(err)?;
     let total: f64 = res.header("content-length").and_then(|s| s.parse().ok()).unwrap_or(0.0);
-    let part = file.with_extension("part");
-    let mut w = std::fs::File::create(&part).map_err(err)?;
-    let (mut r, mut buf) = (res.into_reader(), vec![0u8; 1 << 16]);
-    let (mut got, mut last) = (0f64, 0f64);
-    loop {
-        let n = r.read(&mut buf).map_err(err)?;
-        if n == 0 { break; }
-        w.write_all(&buf[..n]).map_err(err)?;
-        got += n as f64;
-        if total > 0.0 && got / total - last > 0.005 {
-            last = got / total;
-            let _ = app.emit("progress", json!({ "label": label, "p": last }));
+    let part = part_path(file);
+    let result = (|| -> R<()> {
+        let mut w = std::fs::File::create(&part).map_err(err)?;
+        let (mut r, mut buf) = (res.into_reader(), vec![0u8; 1 << 16]);
+        let (mut got, mut last) = (0f64, 0f64);
+        loop {
+            let n = r.read(&mut buf).map_err(err)?;
+            if n == 0 { break; }
+            w.write_all(&buf[..n]).map_err(err)?;
+            got += n as f64;
+            if total > 0.0 && got / total - last > 0.005 {
+                last = got / total;
+                let _ = app.emit("progress", json!({ "label": label, "p": start + span * last.clamp(0., 1.) }));
+            }
         }
-    }
-    drop(w);
-    std::fs::rename(part, file).map_err(err)
+        drop(w);
+        if total > 0.0 && got != total { return Err(format!("Download incomplete ({got} of {total} bytes)")); }
+        std::fs::rename(&part, file).map_err(err)
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&part); }
+    result
+}
+
+// A name no other download (or earlier crashed one) shares.
+fn part_path(file: &std::path::Path) -> PathBuf {
+    let n = PART.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut name = file.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".{}-{n}.part", std::process::id()));
+    file.with_file_name(name)
 }
 
 /// Matte for the whole of `path`. Cached per file.
@@ -235,4 +274,18 @@ pub async fn slow_raw(request: tauri::ipc::Request<'_>) -> R<tauri::ipc::Respons
         }
         Ok(tauri::ipc::Response::new(out))
     }).await.map_err(err)?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn part_names_are_unique() {
+        let f = std::path::Path::new("/m/model.onnx");
+        let (a, b) = (part_path(f), part_path(f));
+        assert_ne!(a, b);
+        assert_eq!(a.parent(), f.parent());
+        assert!(a.to_string_lossy().ends_with(".part"));
+    }
 }

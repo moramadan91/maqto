@@ -8,3 +8,6 @@ src-tauri/binaries/
 Maqto_*.dmg
 .vercel/
 Kadr_*.dmg
+
+# local AI model fixtures for dev tests
+.models/

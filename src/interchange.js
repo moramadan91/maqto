@@ -93,7 +93,7 @@
       if (format !== 'fcpxml' && speed !== 1) warn('speed', name);
       if (hasAudio && volume !== 1 && volume !== 0 && format !== 'fcpxml') warn('volume', name);
       if (S.hasKf(it) || S.hasVa(it) || S.fxOf(it) || S.hasColor(it) || S.hasMask(it) || S.hasKey(it) ||
-          it.trk || it.fadeIn || it.fadeOut || it.afIn || it.afOut || it.duck?.on || it.denoise || it.norm || it.pitch ||
+          it.trk || it.fadeIn || it.fadeOut || it.afIn || it.afOut || it.duck?.on || S.fxKey(it) || it.pitch ||
           it.crop || it.flipH || it.flipV || it.rotate || it.x || it.y || (it.fit && it.fit !== 'contain') ||
           (it.blend && it.blend !== 'normal') || S.num(it.scale, 1) !== 1 || S.num(it.opacity, 1) !== 1) warn('effects', name);
       if (it.grp) warn('groups', project.groups?.[it.grp]?.name || name);

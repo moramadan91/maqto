@@ -35,6 +35,11 @@ pub fn stems_ready(app: AppHandle) -> R<bool> {
 }
 
 #[tauri::command]
+pub fn stems_remove(app: AppHandle) -> R<()> {
+    super::remove_model_file(&model(&app)?)
+}
+
+#[tauri::command]
 pub async fn stems_download(app: AppHandle) -> R<()> {
     tauri::async_runtime::spawn_blocking(move || {
         let f = model(&app)?;

@@ -27,8 +27,17 @@
     hevc_hw: q => ['-c:v', 'hevc_videotoolbox', '-q:v', String({ low: 50, rec: 65, high: 80 }[q] ?? 65), '-pix_fmt', 'yuv420p', '-tag:v', 'hvc1'],
     prores: () => ['-c:v', 'prores_ks', '-profile:v', '2', '-pix_fmt', 'yuv422p10le',
       '-bsf:v', 'prores_metadata=color_primaries=bt709:color_trc=bt709:colorspace=bt709'], // tag frame headers as well as the MOV container
+    // alpha formats: see ALPHA. GIF and image sequences have no audio; GIF palette passes live in the graph.
+    prores4444: () => ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le',
+      '-bsf:v', 'prores_metadata=color_primaries=bt709:color_trc=bt709:colorspace=bt709'],
+    vp9a: q => ['-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-b:v', '0', '-crf', String({ low: 38, rec: 32, high: 26 }[q] ?? 32), '-auto-alt-ref', '0', '-row-mt', '1'], // alt-ref frames drop alpha
+    gif: () => ['-c:v', 'gif', '-loop', '0'],
+    png: () => ['-c:v', 'png', '-pix_fmt', 'rgba'],
+    jpg: () => ['-c:v', 'mjpeg', '-q:v', '2', '-pix_fmt', 'yuvj420p'],
     proxy: () => ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-g', '12', '-pix_fmt', 'yuv420p'], // preview only: quick to make, quick to seek
   };
+  const ALPHA = { prores4444: 'yuva444p10le', vp9a: 'yuva420p', png: 'rgba' }; // codec -> pixel format that keeps alpha
+  const STILLS = ['gif', 'png', 'jpg']; // no audio track, no colour tags
   const SDR_TAGS = ['-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709', '-color_range', 'tv'];
   const LOUDNESS_TARGETS = [-14, -16, -23];
 
@@ -78,7 +87,7 @@
 
   // colour: a baked 3D LUT (advanced colour) or the basic grade as lutrgb + saturation
   function gradeChain(it, g, lut) {
-    if (lut) return [`lut3d=file='${lut.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, '')}'`];
+    if (lut) return [`lut3d=file='${lut.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, '')}':interp=trilinear`]; // trilinear = what the preview's 3D texture does
     if (g.identity) return [];
     const e = c => `'clip(val*${c.slope.toFixed(5)}${signed(c.intercept * 255)},0,255)'`;
     return [`lutrgb=r=${e(g.ch[0])}:g=${e(g.ch[1])}:b=${e(g.ch[2])}`, ...(Math.abs(g.s - 1) > 1e-4 ? [`hue=s=${g.s.toFixed(4)}`] : [])];
@@ -94,8 +103,10 @@
     const vis = audioOnly ? [] : p.items
       .filter(i => vt.includes(i.track) && !i.hidden && !i.audioOnly && i.media && p.media[i.media] && p.media[i.media].kind !== 'audio')
       .sort((a, b) => vt.indexOf(a.track) - vt.indexOf(b.track) || a.start - b.start);
-    const aud = p.items.filter(i => audible(p, i));
+    const noAudio = !audioOnly && STILLS.includes(o.codec); // GIF / image sequences: no sound graph at all
+    const aud = noAudio ? [] : p.items.filter(i => audible(p, i));
 
+    const alpha = !audioOnly && !!ALPHA[o.codec] && o.transparent !== false;
     const args = ['-y', '-hide_banner', '-nostats'];
     const even = v => Math.max(2, Math.round(v / 2) * 2);
     const fc = [];
@@ -103,19 +114,33 @@
     let n = 0;
     const chapterInput = !audioOnly && o.chapterFile ? n++ : -1;
     if (chapterInput >= 0) args.push('-f', 'ffmetadata', '-i', o.chapterFile);
+    const visuals = o.visuals || o.upscales;
     const input = it => {
       if (idx.has(it.id)) return idx.get(it.id);
       const m = p.media[it.media];
-      if (m.kind === 'image') args.push('-loop', '1', '-framerate', String(fps), '-t', f3(it.dur), '-i', m.path);
+      const fill = o.fills?.[it.id], visual = visuals?.[it.id];
+      if (!fill && visual?.animatedStill) args.push('-i', visual.path);
+      else if (m.kind === 'image') args.push('-loop', '1', '-framerate', String(fps), '-t', f3(it.dur), '-i', fill ? fill.path + '/000000000.png' : visual?.path || m.path);
+      else if (fill) args.push('-f', 'concat', '-safe', '0', '-i', fill.manifest);
+      else if (visual) args.push('-i', visual.path);
       else if (o.rife && o.rife[it.id]) args.push('-i', o.rife[it.id]); // AI copy already covers [in, in + srcLen]
       else args.push('-ss', f3(num(it.in, 0)), '-t', f3(S.srcLen(it)), '-i', m.path);
       idx.set(it.id, n);
       return n++;
     };
 
+    // Combine mattes with the alpha already present in the source.
+    const multiplyAlpha = (video, mask, label) => {
+      fc.push(`[${video}]split[${label}c][${label}a0]`,
+        `[${label}a0]alphaextract[${label}a]`,
+        `[${label}a][${mask}]blend=all_mode=multiply[${label}m]`,
+        `[${label}c][${label}m]alphamerge[${label}]`);
+      return label;
+    };
+
     if (!audioOnly) {
       let base = 'b0';
-      fc.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${f3(T)},format=yuv420p[b0]`);
+      fc.push(`color=c=black${alpha ? '@0' : ''}:s=${W}x${H}:r=${fps}:d=${f3(T)},format=${alpha ? 'yuva420p' : 'yuv420p'}[b0]`);
       // text layers (rasterized per group of adjacent text tracks) go in at their track's place in the stack
       const stack = p.tracks.filter(x => x.kind !== 'audio').map(x => x.id).reverse(), pos = id => id == null ? Infinity : stack.indexOf(id);
       const tls = [...(o.textLists || (o.textList ? [{ path: o.textList, track: null }] : [])).map(x => ({ ...x, at: pos(x.track) })),
@@ -161,23 +186,73 @@
         // animated scale: lay out at the largest scale, then shrink per frame
         const smax = (kf && kf.scale ? Math.max(...kf.scale.map(q => q[1])) : num(it.scale, 1)) * (LP && LP.smax || 1);
         const L = S.layout({ ...it, scale: smax }, m, W, H);
-        const ai = !!(o.rife && o.rife[it.id]);
+        const fill = o.fills?.[it.id], visual = !fill && visuals?.[it.id], ai = !!(o.rife && o.rife[it.id]);
         // RIFE's PNG frames are already tone-mapped. Its RGB-to-YUV encode uses the default BT.601 matrix.
-        const color = ai ? (m.hdr ? 'zscale=min=170m:m=709' : '') : toneMap(m);
-        const ch = timeChain(it, fps, ai);
+        const color = fill || visual ? '' : ai ? (m.hdr ? 'zscale=min=170m:m=709' : '') : toneMap(m);
+        const ch = visual?.animatedStill ? ['setpts=PTS-STARTPTS', `fps=${fps}`, `trim=duration=${it.dur.toFixed(8)}`]
+          : timeChain(it, fps, ai || !!fill || !!visual?.depth);
+        const isFilledVideo = fill && m.kind === 'video';
+        if (isFilledVideo) {
+          ch.splice(-1, 1, `fps=${fps}:round=up`, `trim=duration=${it.dur.toFixed(8)}`);
+          ch.unshift("setpts='max(0,PTS-STARTPTS-1)'");
+        }
         const TI = S.transIn(p, it0), TO = S.transOut(p, it0), d3 = v => (+v).toFixed(4);
         if (TO && !S.GLT.includes(TO.id)) ch.push(`tpad=stop_mode=clone:stop_duration=${f3(TO.d)}`); // hold the last frame under the next clip's transition
+        const factor = visual?.w / m.w || 1;
+        const sourceSize = `${m.w * factor}:${m.h * factor}`;
         let vin = `${k}:v`;
-        const mt = o.mattes && o.mattes[it0.id];
-        if (mt) { // remove background: the AI matte (same timing as the source) becomes alpha before crop and scale
-          const mi = n++;
-          args.push('-ss', f3(num(it.in, 0)), '-t', f3(S.srcLen(it)), '-i', mt);
-          fc.push(`[${k}:v]${color ? color + ',' : ''}${ch.join(',')},scale=${m.w}:${m.h},format=yuva420p[bg${j}]`, `[${mi}:v]${ch.join(',')},scale=${m.w}:${m.h},format=gray[bgm${j}]`, `[bg${j}][bgm${j}]alphamerge[bgo${j}]`);
-          vin = `bgo${j}`; ch.length = 0; ch.push('null');
+        const matte = o.mattes?.[it0.id], object = matte?.object;
+        const mt = typeof matte === 'string' ? matte : matte?.background;
+        if (object || mt) {
+          const colorChain = color ? color + ',' : '';
+          if (object) {
+            const mi = n++, start = m.kind === 'image' ? 0 : num(it.in, 0);
+            const seek = Math.max(0, Math.min(start, object.last) - object.origin);
+            const sourceLen = S.srcLen(it);
+            const head = Math.min(sourceLen, Math.max(0, object.origin - start));
+            const duration = f3(sourceLen + 1 / object.fps);
+            args.push('-ss', seek.toFixed(6), '-t', duration, '-i', object.path);
+            const pad = `tpad=start_mode=clone:start_duration=${f3(head)}:stop_mode=clone:stop_duration=${duration}`;
+            const tail = TO && !S.GLT.includes(TO.id) ? [`tpad=stop_mode=clone:stop_duration=${f3(TO.d)}`] : [];
+            const mtTime = [...timeChain({ ...it, smooth: false }, fps, false), ...tail];
+            fc.push(`[${k}:v]${colorChain}${ch.join(',')},scale=${sourceSize},format=gbrap[ob${j}]`,
+              `[${mi}:v]${pad},trim=duration=${f3(sourceLen)},${mtTime.join(',')},scale=${sourceSize}:in_range=limited:out_range=full,format=gray[om${j}]`);
+            if (object.mode === 'pixel' || object.mode === 'pop') {
+              const gray = 'colorchannelmixer=.299:.587:.114:0:.299:.587:.114:0:.299:.587:.114';
+              const block = ['X', 'Y'].map(v => `floor(${v}/${16 * factor})*${16 * factor}+${7 * factor}`).join(',');
+              const pixel = `geq=r='r(${block})':g='g(${block})':b='b(${block})'`;
+              const pop = object.mode === 'pop';
+              fc.push(`[ob${j}]split[oc${j}][of${j}]`, `[of${j}]${pop ? gray : pixel}[oe${j}]`,
+                `[om${j}]format=gbrap[og${j}]`,
+                `[${pop ? 'oe' : 'oc'}${j}][${pop ? 'oc' : 'oe'}${j}][og${j}]maskedmerge=planes=7[oo${j}]`);
+              // For colour pop the filtered branch carries the original alpha too.
+              vin = `oo${j}`;
+            } else vin = multiplyAlpha(`ob${j}`, `om${j}`, `oo${j}`);
+          }
+          if (mt) {
+            const mi = n++;
+            args.push('-ss', f3(num(it.in, 0)), '-t', f3(S.srcLen(it)), '-i', mt);
+            const bgTime = fill ? timeChain(it, fps, false) : ch;
+            if (fill && TO && !S.GLT.includes(TO.id)) bgTime.push(`tpad=stop_mode=clone:stop_duration=${f3(TO.d)}`);
+            fc.push(`[${mi}:v]${bgTime.join(',')},scale=${sourceSize},format=gray[bgm${j}]`);
+            if (object) vin = multiplyAlpha(vin, `bgm${j}`, `bgo${j}`);
+            else {
+              fc.push(`[${k}:v]${colorChain}${ch.join(',')},scale=${sourceSize},format=yuva420p[bg${j}]`);
+              if (fill) vin = multiplyAlpha(`bg${j}`, `bgm${j}`, `bgo${j}`);
+              else {
+                fc.push(`[bg${j}][bgm${j}]alphamerge[bgo${j}]`);
+                vin = `bgo${j}`;
+              }
+            }
+          }
+          ch.length = 0; ch.push('null');
         } else if (color) ch.unshift(color);
-        if (it.logo && it.logo.on) { const b = S.logoBox(it.logo, m); ch.push(`delogo=x=${b.x}:y=${b.y}:w=${b.w}:h=${b.h}`); }
+        if (it.logo && it.logo.on) { const b = S.logoBox(it.logo, m); ch.push(`delogo=x=${b.x * factor}:y=${b.y * factor}:w=${b.w * factor}:h=${b.h * factor}`); }
         if (S.hasKey(it)) { const K = it.chroma; ch.push('format=yuva444p', `chromakey=color=${String(K.color || '#00ff00').replace('#', '0x')}:similarity=${num(K.sim, 0.3).toFixed(3)}:blend=${num(K.blend, 0.1).toFixed(3)}`); }
-        if (C.any) ch.push(`scale=${m.w}:${m.h}`, `crop=${C.w}:${C.h}:${C.x}:${C.y}`);
+        if (C.any) {
+          if (!visual || visual.depth) ch.push(`scale=${sourceSize}`);
+          ch.push(`crop=${C.w * factor}:${C.h * factor}:${C.x * factor}:${C.y * factor}`);
+        }
         if (it.flipH) ch.push('hflip');
         if (it.flipV) ch.push('vflip');
         ch.push(`scale=${L.sw}:${L.sh}:flags=bicubic`, `crop=${L.cw}:${L.ch}:${L.cx}:${L.cy}`, 'setsar=1');
@@ -186,7 +261,9 @@
         if (mk) { // mask: grey PNG at the box size, its brightness becomes the clip's alpha
           const mi = n++;
           args.push('-loop', '1', '-framerate', String(fps), '-t', f3(it.dur + 3), '-i', mk);
-          fc.push(`[${vin}]${ch.join(',')},format=yuva420p[pm${j}]`, `[${mi}:v]scale=${L.cw}:${L.ch},format=gray[mm${j}]`, `[pm${j}][mm${j}]alphamerge[ma${j}]`);
+          fc.push(`[${vin}]${ch.join(',')},format=yuva420p[pm${j}]`, `[${mi}:v]scale=${L.cw}:${L.ch},format=gray[mm${j}]`);
+          if (object || fill) multiplyAlpha(`pm${j}`, `mm${j}`, `ma${j}`);
+          else fc.push(`[pm${j}][mm${j}]alphamerge[ma${j}]`);
           ch.length = 0; ch.push('null');
         }
         ch.push('format=yuva420p');
@@ -266,13 +343,18 @@
         base = `b${j + 1}`;
       });
       flush(Infinity);
-      fc.push(`[${base}]format=yuv420p[vout]`);
+      // shortcut: blend-mode layers flatten to opaque in the blend branch; upgrade if blends over transparency matter
+      if (o.codec === 'gif') {
+        const gw = Math.max(2, Math.round(num(o.gifWidth, Math.min(W, 480))));
+        fc.push(`[${base}]fps=${num(o.gifFps, 15)},scale=${gw}:-1:flags=lanczos,split[ga][gb]`, '[ga]palettegen=stats_mode=diff[gp]', '[gb][gp]paletteuse=dither=sierra2_4a[vout]');
+      } else fc.push(`[${base}]format=${alpha ? ALPHA[o.codec] : 'yuv420p'}[vout]`);
+      if (alpha) for (let i = 0; i < fc.length; i++) fc[i] = fc[i].replace(/overlay=/g, 'overlay=format=auto:'); // default overlay output drops alpha
     }
 
     const al = [];
     aud.forEach((it, j) => {
       const am = p.media[it.media], fk = S.fxKey(it), fx = fk && am.fx && am.fx[fk]; // processed copy of the same source
-      const asrc = fx || (o.rife && o.rife[it.id] && p.media[it.media].path); // the AI copy has no sound
+      const asrc = fx || ((o.fills?.[it.id] || o.rife?.[it.id] || visuals?.[it.id]) && am.path); // the AI copy has no sound
       const k = asrc ? (args.push('-ss', f3(num(it.in, 0)), '-t', f3(S.srcLen(it)), '-i', asrc), n++) : input(it), v = num(it.volume, 1);
       const fi = Math.max(num(it.fadeIn, 0), num(it.afIn, 0)), fo = Math.max(num(it.fadeOut, 0), num(it.afOut, 0));
       const ch = ['aresample=48000', 'aformat=sample_fmts=fltp:channel_layouts=stereo', 'asetpts=PTS-STARTPTS'];
@@ -303,7 +385,7 @@
       : o.loudnessStats && loudnormFilter(o.loudnessTarget, o.loudnessStats);
     // The filter must see the same complete timeline in both passes, before the muxer's duration limit.
     const master = norm ? `,atrim=duration=${f3(T)},${norm},aformat=sample_rates=48000:channel_layouts=stereo` : '';
-    fc.push(`${mix}${master}[aout]`);
+    if (!noAudio) fc.push(`${mix}${master}[aout]`);
 
     args.push('-filter_complex', fc.join(';'));
     if (o.loudnessAnalysis) {
@@ -316,9 +398,13 @@
     } else {
       if (chapterInput >= 0) args.push('-map_metadata', String(chapterInput));
       args.push('-map_chapters', String(chapterInput));
-      args.push('-map', '[vout]', '-map', '[aout]', ...(ENCODERS[o.codec] || ENCODERS.h264)(o.quality),
-        ...SDR_TAGS, '-r', String(fps), '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart',
-        '-t', f3(T), '-progress', 'pipe:1', o.out);
+      const still = STILLS.includes(o.codec), enc = (ENCODERS[o.codec] || ENCODERS.h264)(o.quality);
+      if (still) args.push('-map', '[vout]', ...enc, ...(o.codec === 'gif' ? [] : ['-r', String(fps)]), '-an', '-t', f3(T), '-progress', 'pipe:1', o.out);
+      else {
+        const audio = o.codec === 'vp9a' ? ['-c:a', 'libopus', '-b:a', '160k'] : o.codec === 'prores4444' ? ['-c:a', 'pcm_s16le'] : ['-c:a', 'aac', '-b:a', '192k'];
+        args.push('-map', '[vout]', '-map', '[aout]', ...enc, ...SDR_TAGS, '-r', String(fps), ...audio,
+          ...(o.codec === 'vp9a' ? [] : ['-movflags', '+faststart']), '-t', f3(T), '-progress', 'pipe:1', o.out);
+      }
     }
     return { args, duration: T };
   }
@@ -346,7 +432,7 @@
     }).join('');
   }
 
-  const api = { buildArgs, concatText, chapterMetadata, atempo, audible, ENCODERS, SDR_TAGS, toneMap, LOUDNESS_TARGETS, loudnormFilter };
+  const api = { buildArgs, concatText, chapterMetadata, atempo, audible, ENCODERS, ALPHA, STILLS, SDR_TAGS, toneMap, LOUDNESS_TARGETS, loudnormFilter };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MaqtoGraph = api;
 })(this);

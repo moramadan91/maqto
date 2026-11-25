@@ -607,13 +607,71 @@
   }
   const hueDist = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
 
+  // 256-entry table of a curve (null for the identity), the same spline the 3D bake uses.
+  function curveLut(pts) {
+    const f = curveFn(pts);
+    return f && Float32Array.from({ length: 256 }, (_, i) => f(i / 255));
+  }
+  // ffmpeg `curves` filter text for a clip's curves ({l,r,g,b}), knots sampled from the LUT; null when all identity.
+  function curvesFilter(cv) {
+    const knots = pts => { const L = curveLut(pts); return L && Array.from({ length: 17 }, (_, i) => `${(i / 16).toFixed(4)}/${L[Math.round(i / 16 * 255)].toFixed(4)}`).join(' '); };
+    const o = [['master', cv && cv.l], ['red', cv && cv.r], ['green', cv && cv.g], ['blue', cv && cv.b]].map(([k, v]) => { const t = knots(v); return t && `${k}='${t}'`; }).filter(Boolean);
+    return o.length ? 'curves=' + o.join(':') : null;
+  }
+  // HSL qualifier weight 0..1: hue centre q.h with full width q.hw (degrees, wraps at 360), sat/luma ranges, softness q.soft 0..1.
+  function qualWeight(q, r, g, b) {
+    const [h, s] = rgb2hsl(r, g, b), l = lum(r, g, b), f = clamp(num(q.soft, 0.2), 0, 1);
+    const edge = (d, soft) => { if (d <= 1e-6) return 1; if (soft <= 1e-6 || d >= soft) return 0; const t = 1 - d / soft; return t * t * (3 - 2 * t); };
+    const wh = edge(hueDist(h, num(q.h, 0)) - clamp(num(q.hw, 40), 0, 360) / 2, f * 60);
+    const range = (x, lo, hi) => edge(Math.max(lo - x, x - hi), f * 0.25);
+    return wh * range(s, num(q.smin, 0.1), num(q.smax, 1)) * range(l, num(q.lmin, 0), num(q.lmax, 1));
+  }
+  const qualOn = q => !!(q && q.on && (q.show || num(q.dh, 0) || num(q.ds, 0) || num(q.dl, 0)));
+
+  // sRGB 0..1 <-> CIE Lab (D65), for the Reinhard colour transfer.
+  const lin = c => c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  const unlin = c => c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  function rgb2lab(r, g, b) {
+    const R = lin(r), G = lin(g), B = lin(b);
+    const f = t => t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116;
+    const x = f((0.4124564 * R + 0.3575761 * G + 0.1804375 * B) / 0.95047), y = f(0.2126729 * R + 0.7151522 * G + 0.072175 * B), z = f((0.0193339 * R + 0.119192 * G + 0.9503041 * B) / 1.08883);
+    return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+  }
+  function lab2rgb(L, a, b) {
+    const fy = (L + 16) / 116, fx = fy + a / 500, fz = fy - b / 200, inv = t => t * t * t > 216 / 24389 ? t * t * t : (116 * t - 16) / (24389 / 27);
+    const X = inv(fx) * 0.95047, Y = inv(fy), Z = inv(fz) * 1.08883;
+    return [3.2404542 * X - 1.5371385 * Y - 0.4985314 * Z, -0.969266 * X + 1.8760108 * Y + 0.041556 * Z, 0.0556434 * X - 0.2040259 * Y + 1.0572252 * Z].map(c => clamp(unlin(clamp(c, 0, 1)), 0, 1));
+  }
+  // Per-channel Lab mean/std of RGBA bytes.
+  function labStats(d) {
+    const n = d.length / 4, m = [0, 0, 0], q = [0, 0, 0];
+    for (let i = 0; i < d.length; i += 4) { const v = rgb2lab(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255); for (let k = 0; k < 3; k++) { m[k] += v[k] / n; q[k] += v[k] * v[k] / n; } }
+    return { mean: m, sd: q.map((x, k) => Math.sqrt(Math.max(0, x - m[k] * m[k]))) };
+  }
+  // Reinhard: move the source's Lab mean/std onto the reference's, then fit that as RGB gain/offset per channel (least squares over an RGB grid).
+  function reinhardGainOffset(src, ref) {
+    const sc = [0, 1, 2].map(k => clamp(ref.sd[k] / Math.max(1, src.sd[k]), 0.25, 4)), X = [[], [], []], Y = [[], [], []];
+    for (let i = 0; i < 6; i++) for (let j = 0; j < 6; j++) for (let k = 0; k < 6; k++) {
+      const v = [i / 5, j / 5, k / 5], lb = rgb2lab(...v), o = lab2rgb(...lb.map((x, c) => (x - src.mean[c]) * sc[c] + ref.mean[c]));
+      for (let c = 0; c < 3; c++) { X[c].push(v[c]); Y[c].push(o[c]); }
+    }
+    const fit = c => {
+      const n = X[c].length, mx = X[c].reduce((a, b) => a + b) / n, my = Y[c].reduce((a, b) => a + b) / n;
+      let sxy = 0, sxx = 0; for (let i = 0; i < n; i++) { sxy += (X[c][i] - mx) * (Y[c][i] - my); sxx += (X[c][i] - mx) ** 2; }
+      const g = clamp(sxy / sxx, 0.4, 2.5);
+      return [+g.toFixed(4), +clamp(my - g * mx, -0.5, 0.5).toFixed(4)];
+    };
+    const f = [0, 1, 2].map(fit);
+    return { gain: f.map(x => x[0]), off: f.map(x => x[1]) };
+  }
+
   // Does the clip use anything beyond the basic grade?
   function hasColor(it) {
     const c = it.color;
     if (presetFn(it)) return true;
     if (!c) return false;
     if (c.look && c.look !== 'none' && num(c.lookMix, 1) > 0) return true;
-    if (c.auto || c.match) return true;
+    if (c.auto || c.match || qualOn(c.qual)) return true;
     if (c.lut && c.lut.file && num(c.lut.mix, 1) > 0) return true;
     if (c.hsl && Object.values(c.hsl).some(v => v && (num(v.h, 0) || num(v.s, 0) || num(v.l, 0)))) return true;
     if (c.curves && Object.values(c.curves).some(curveFn)) return true;
@@ -621,7 +679,8 @@
     return false;
   }
   // One clip's whole colour pipeline as f(r,g,b) -> [r,g,b]. userLut: parsed .cube {n, d} when c.lut.file is set.
-  function colorFn(it, userLut) {
+  // opts.noMask: the export never paints the "show mask" preview.
+  function colorFn(it, userLut, opts = {}) {
     const c = it.color || {}, g = grade(it);
     const look = c.look && LOOKS[c.look], lm = clamp(num(c.lookMix, 1), 0, 1), pf = presetFn(it);
     const ul = c.lut && c.lut.file && userLut, um = clamp(num(c.lut && c.lut.mix, 1), 0, 1);
@@ -630,11 +689,12 @@
     const lift = wheelRgb(W.lift).map(v => v * 0.15 * mixW), gam = wheelRgb(W.gamma).map(v => v * 0.35 * mixW), gain = wheelRgb(W.gain).map(v => v * 0.3 * mixW), off = wheelRgb(W.offset).map(v => v * 0.1 * mixW);
     const liftL = num(W.lift && W.lift.l, 0) * 0.15 * mixW, gamL = num(W.gamma && W.gamma.l, 0) * 0.5 * mixW, gainL = num(W.gain && W.gain.l, 0) * 0.5 * mixW, offL = num(W.offset && W.offset.l, 0) * 0.15 * mixW;
     const bands = HSL_BANDS.map(([k, hc]) => { const v = (c.hsl || {})[k]; return v && (num(v.h, 0) || num(v.s, 0) || num(v.l, 0)) ? [hc, num(v.h, 0) / 100, num(v.s, 0) / 100, num(v.l, 0) / 100] : null; }).filter(Boolean);
-    const A = c.auto, M = c.match; // auto levels (per-channel black/white points), colour match (gain + offset)
+    const A = c.auto, M = c.match; // auto levels (per-channel black/white points), colour match (gain + offset, scaled by amt)
+    const ma = M ? clamp(num(M.amt, 100), 0, 100) / 100 : 1, Q = qualOn(c.qual) ? c.qual : null;
     return (r, gg, b) => {
       let v = [r, gg, b];
       if (A) v = v.map((x, i) => (x - A.lo[i]) / Math.max(0.05, A.hi[i] - A.lo[i]));
-      if (M) v = v.map((x, i) => x * M.gain[i] + M.off[i]);
+      if (M) v = v.map((x, i) => x * (1 + (M.gain[i] - 1) * ma) + M.off[i] * ma);
       if (A || M) v = v.map(x => clamp(x, 0, 1));
       if (ul) { const u = sampleLut(ul, v[0], v[1], v[2]); v = v.map((x, i) => x + (u[i] - x) * um); }
       if (pf) v = pf(v[0], v[1], v[2]);
@@ -660,6 +720,15 @@
         }
         h = (h + dh + 360) % 360; s = clamp(s * (1 + ds), 0, 1); l = clamp(l + dl, 0, 1);
         v = hsl2rgb(h, s, l);
+      }
+      if (Q) {
+        const w = qualWeight(Q, clamp(v[0], 0, 1), clamp(v[1], 0, 1), clamp(v[2], 0, 1));
+        if (Q.show && !opts.noMask) return [w, w, w];
+        if (w > 0) {
+          let [h, s, l] = rgb2hsl(clamp(v[0], 0, 1), clamp(v[1], 0, 1), clamp(v[2], 0, 1));
+          h = (h + num(Q.dh, 0) * 1.8 * w + 360) % 360; s = clamp(s * (1 + num(Q.ds, 0) / 100 * w), 0, 1); l = clamp(l + num(Q.dl, 0) / 100 * 0.3 * w, 0, 1);
+          v = hsl2rgb(h, s, l);
+        }
       }
       return v.map(x => clamp(x, 0, 1));
     };
@@ -689,8 +758,8 @@
     return { n, d: new Float32Array(d) };
   }
   // N^3 table (red fastest, like .cube) of the clip's colour.
-  function bakeLut(it, userLut, n = LUT_N) {
-    const f = colorFn(it, userLut), out = new Float32Array(n * n * n * 3);
+  function bakeLut(it, userLut, n = LUT_N, opts) {
+    const f = colorFn(it, userLut, opts), out = new Float32Array(n * n * n * 3);
     let o = 0;
     for (let b = 0; b < n; b++) for (let g = 0; g < n; g++) for (let r = 0; r < n; r++) {
       const v = f(r / (n - 1), g / (n - 1), b / (n - 1));
@@ -731,7 +800,15 @@
   }
 
   // Whole-file audio effects a clip asks for ('' = none): key of the cached processed copy in media.fx.
-  const fxKey = it => (it.denoise ? 'd' : '') + (it.norm ? 'n' : '');
+  const voiceSettings = voice => ({
+    on: !!voice?.on,
+    strength: [12, 24, 100].includes(Number(voice?.strength)) ? Number(voice.strength) : 24,
+    room: Math.round(clamp(num(voice?.room, 0), 0, 30)),
+  });
+  function fxKey(it) {
+    const voice = voiceSettings(it.voiceClean), norm = it.norm ? 'n' : '';
+    return voice.on ? `voice:${voice.strength}:${voice.room}:${norm}` : (it.denoise ? 'd' : '') + norm;
+  }
   // Sound fades: a video clip's picture fades also fade its sound; afIn/afOut fade only the sound.
   function audioFade(it, lt) {
     const fi = Math.max(num(it.fadeIn, 0), num(it.afIn, 0)), fo = Math.max(num(it.fadeOut, 0), num(it.afOut, 0));
@@ -788,6 +865,8 @@
     instagram: { aspect: [4, 5], res: 1080 },
     podcast: { video: false, audio: true, afmt: 'mp3', loudnessTarget: -16 },
     master: { codec: 'prores', format: 'mov', quality: 'high', loudnessTarget: 0 },
+    transparent: { codec: 'prores4444', format: 'mov', quality: 'high', transparent: true, loudnessTarget: 0 },
+    gif: { codec: 'gif', format: 'gif', gifFps: 15, gifWidth: 480, loudnessTarget: 0 },
   };
 
   function exportPresetSettings(preset, project, encoders) {
@@ -802,6 +881,18 @@
       aspectHint: aspect && Math.abs((project.w / project.h) / (aspect[0] / aspect[1]) - 1) > 0.001
         ? aspect.join(':') : '',
     };
+  }
+
+  function upscaleEstimate(w, h, fps, len, still, scale) {
+    const frames = still ? 1 : Math.max(1, Math.ceil(len * (fps > 0 ? fps : 30) - 1e-6));
+    const width = w * scale, height = h * scale;
+    return { frames, width, height, pixels: frames * width * height };
+  }
+
+  function upscale4k(w, h) {
+    if (!(w > 0 && h > 0) || Math.max(w, h) >= 3840 || Math.min(w, h) > 1080) return null;
+    const k = Math.min(3840 / Math.max(w, h), 2160 / Math.min(w, h));
+    return [Math.round(w * k / 2) * 2, Math.round(h * k / 2) * 2];
   }
 
   function snapshotExport(project, settings, paths) {
@@ -2195,7 +2286,7 @@
       meta.bitrate > 50_000_000);
   }
 
-  const api = { multicamTime, cutIndex, recordCut, switchSegment, cutsToSegments, multicamAngle, multicamClips, expandMulticam, needsProxy, FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, fxKey, projectDur, markerTitle, normalizeMarkers, youtubeChapters, groupSpan, SOCIAL_EXPORT_PRESETS, exportPresetSettings, snapshotExport, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, DUCK_DEFAULTS, duckGainKeys, writeDuckKeys, speechTimelineRegions, hasKf, animAt, shiftTimes };
+  const api = { rgb2hsl, curveLut, curvesFilter, qualWeight, rgb2lab, lab2rgb, labStats, reinhardGainOffset, multicamTime, cutIndex, recordCut, switchSegment, cutsToSegments, multicamAngle, multicamClips, expandMulticam, needsProxy, FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, voiceSettings, fxKey, projectDur, markerTitle, normalizeMarkers, youtubeChapters, groupSpan, SOCIAL_EXPORT_PRESETS, exportPresetSettings, upscaleEstimate, upscale4k, snapshotExport, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, DUCK_DEFAULTS, duckGainKeys, writeDuckKeys, speechTimelineRegions, hasKf, animAt, shiftTimes };
   const KEY_CODES = {
     Space: 'Space', Backspace: 'Delete', Delete: 'Delete', Escape: 'Escape', Home: 'Home', End: 'End',
     ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown',
@@ -2241,8 +2332,295 @@
     }
     return bindings;
   }
+  // The affine matrix is the one used to draw the clip, including rotation, flips and motion.
+  function objectSourcePoint(point, matrix, dest, crop, clampToClip = false) {
+    const [a, b, c, d, e, f] = matrix, [x, y] = point;
+    const det = a * d - b * c;
+    if (!det || !dest.w || !dest.h) return null;
+    const u = ((d * (x - e) - c * (y - f)) / det - dest.x) / dest.w;
+    const v = ((a * (y - f) - b * (x - e)) / det - dest.y) / dest.h;
+    if (!clampToClip && (u < 0 || v < 0 || u > 1 || v > 1)) return null;
+    return [crop.x + crop.w * clamp(u, 0, 1), crop.y + crop.h * clamp(v, 0, 1)];
+  }
+  function objectPaddedPoint([x, y], w, h) {
+    const scale = 1024 / Math.max(w, h);
+    return [x * Math.max(1, Math.round(w * scale)) / w, y * Math.max(1, Math.round(h * scale)) / h];
+  }
+  function objectPromptBox([x, y], [u, v]) {
+    return [Math.min(x, u), Math.min(y, v), Math.max(x, u), Math.max(y, v)];
+  }
+  function objectMaskGeometry(mask, w, h) {
+    let x0 = w, y0 = h, x1 = 0, y1 = 0, sx = 0, sy = 0, n = 0;
+    for (let i = 0; i < mask.length; i++) {
+      if (mask[i] < 128) continue;
+      const x = i % w, y = Math.floor(i / w);
+      x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x + 1); y1 = Math.max(y1, y + 1);
+      sx += x + .5; sy += y + .5; n++;
+    }
+    return n ? { bbox: [x0, y0, x1, y1], centroid: [sx / n, sy / n] } : null;
+  }
+  function objectRleEncode(mask) {
+    const out = [];
+    for (let i = 0; i < mask.length;) {
+      let end = i + 1;
+      while (end < mask.length && mask[end] === mask[i]) end++;
+      const n = end - i;
+      out.push(n & 255, n >>> 8 & 255, n >>> 16 & 255, n >>> 24, mask[i]);
+      i = end;
+    }
+    return Uint8Array.from(out);
+  }
+  function objectRleDecode(bytes, size) {
+    if (bytes.length % 5) throw new Error('Invalid object matte RLE');
+    const data = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), mask = new Uint8Array(size);
+    let pos = 0;
+    for (let i = 0; i < bytes.length; i += 5) {
+      const end = pos + data.getUint32(i, true);
+      if (end > size || end === pos) throw new Error('Invalid object matte RLE');
+      mask.fill(bytes[i + 4], pos, end);
+      pos = end;
+    }
+    if (pos !== size) throw new Error('Invalid object matte RLE');
+    return mask;
+  }
+  function objectBestMask(scores) {
+    let best = -1;
+    for (let i = 0; i < scores.length; i++) {
+      if (Number.isFinite(scores[i]) && (best < 0 || scores[i] > scores[best])) best = i;
+    }
+    return best;
+  }
+  Object.assign(api, { objectSourcePoint, objectPaddedPoint, objectPromptBox, objectMaskGeometry, objectRleEncode, objectRleDecode, objectBestMask });
   Object.assign(api, { normalizeKey, lookupKey, validShortcut, shortcutConflict, mergeKeymap, trackOffset, smoothPath, thinKeys, cropKeyframes,
     rollEdit, slipClip, slideClip, rippleTrim, trimAudioEdge, wordsToRanges, cutRanges, trimTranscript, cutMarkers, silencesToCuts, normalizeArabic });
+  function captionDirection(lines) {
+    let ar = 0, en = 0;
+    for (const line of lines) {
+      for (const letter of line.match(/\p{L}/gu) || []) {
+        if (/\p{Script=Arabic}/u.test(letter)) ar++;
+        else if (/\p{Script=Latin}/u.test(letter)) en++;
+      }
+    }
+    return ar > 0 && ar >= en ? 'ar-en' : 'en-ar';
+  }
+
+  function captionsToSrt(cues) {
+    const time = seconds => {
+      const ms = Math.round(seconds * 1000);
+      const parts = [Math.floor(ms / 3600000), Math.floor(ms / 60000) % 60, Math.floor(ms / 1000) % 60];
+      return parts.map(n => String(n).padStart(2, '0')).join(':') + ',' + String(ms % 1000).padStart(3, '0');
+    };
+    return [...cues].sort((a, b) => a.start - b.start).map(({ start, dur, text }, i) =>
+      `${i + 1}\n${time(start)} --> ${time(start + dur)}\n${text.split(/\r\n?|\n/).filter(line => line.trim()).join('\n')}\n`).join('\n');
+  }
+
+  Object.assign(api, { captionDirection, captionsToSrt });
+
+  // TransNetV2 scene cuts. Mirrors scenes.rs: window slot -> frame index, the edge frames repeat as padding.
+  const sceneWindowIndex = (start, slot, frames) => Math.min(Math.max(start + slot - 25, 0), frames - 1);
+  // cuts: [{ t, p }] by time; of cuts closer than `gap` seconds the strongest one stays.
+  function mergeSceneCuts(cuts, gap = 0.3) {
+    const out = [];
+    let prev = -Infinity, best = null;
+    for (const c of [...cuts].sort((a, b) => a.t - b.t)) {
+      if (c.t - prev >= gap - 1e-9) { if (best) out.push(best.t); best = c; }
+      else if (c.p > best.p) best = c;
+      prev = c.t;
+    }
+    if (best) out.push(best.t);
+    return out;
+  }
+  // Timeline offsets (seconds from the clip start) of the source-time cuts inside the clip's in..out,
+  // by its speed. `edge` drops cuts that would leave a sliver at either end.
+  function sceneOffsets(it, cuts, edge = 0) {
+    const from = num(it.in, 0), speed = num(it.speed, 1) || 1;
+    return (cuts || []).map(c => (c - from) / speed).filter(o => o > edge + 1e-9 && o < it.dur - edge - 1e-9).sort((a, b) => a - b);
+  }
+  Object.assign(api, { sceneWindowIndex, mergeSceneCuts, sceneOffsets });
+
+  // ---- Highlights → Shorts. Words are {w, s, e} in source seconds.
+  const SENTENCE_END = /[.!?؟…]["')\]]*$/;
+  // Sentences end at . ! ? ؟, at a pause of `gap` seconds, or (no punctuation from Whisper) after `maxLen` seconds.
+  function transcriptSentences(words, gap = 0.8, maxLen = 20) {
+    const out = [];
+    let cur = null;
+    for (const w of words || []) {
+      if (!(w && w.e > w.s && typeof w.w === 'string')) continue;
+      if (cur && (w.s - cur.end >= gap || w.e - cur.start > maxLen)) cur = null;
+      if (!cur) out.push(cur = { start: w.s, end: w.e, words: [] });
+      cur.words.push(w);
+      cur.end = w.e;
+      if (SENTENCE_END.test(w.w.trim())) cur = null;
+    }
+    return out.map(s => ({ ...s, text: s.words.map(w => w.w).join(' ') }));
+  }
+  // One candidate per start sentence: whole sentences are added until `target` seconds, never beyond `max`, never below `min`.
+  function highlightCandidates(words, { min = 15, target = 30, max = Math.min(60, Math.round(target * 1.4)) } = {}) {
+    const sentences = transcriptSentences(words), out = [];
+    for (let i = 0; i < sentences.length; i++) {
+      let j = i;
+      while (j + 1 < sentences.length && sentences[j].end - sentences[i].start < target
+        && sentences[j + 1].end - sentences[i].start <= max) j++;
+      const start = sentences[i].start, end = sentences[j].end, dur = end - start;
+      if (dur < min || dur > max) continue;
+      const ws = sentences.slice(i, j + 1).flatMap(s => s.words);
+      out.push({ id: out.length, start, end, dur, words: ws, text: ws.map(w => w.w).join(' ') });
+    }
+    return out;
+  }
+  const HOOK_WORDS = ['secret', 'never', 'always', 'mistake', 'stop', 'best', 'worst', 'free', 'why', 'how', 'truth', 'only', 'biggest',
+    'سر', 'اسرار', 'ابدا', 'غلط', 'اغلاط', 'اوقف', 'افضل', 'احسن', 'اسوا', 'مجان', 'ليه', 'ازاي', 'كيف', 'لماذا', 'الحقيقه', 'اهم', 'لازم', 'اوعي'];
+  // Heuristic hook/standalone score 1..10. `coverage` (0..1 share of the span that is speech) and `loud` (0..1 mean peak loudness) are optional.
+  function heuristicScore(c, { coverage, loud } = {}) {
+    const n = c.words.length, dur = Math.max(0.5, c.dur ?? c.end - c.start);
+    const text = c.text || '';
+    const pace = clamp((n / dur) / 3, 0, 1);
+    const marks = clamp(((text.match(/[?!؟]/g) || []).length / Math.max(1, n)) * 40, 0, 1);
+    const norm = normalizeArabic(text).toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    const keys = norm.filter(w => HOOK_WORDS.some(k => w.startsWith(normalizeArabic(k)))).length;
+    const keyword = clamp((keys / Math.max(1, norm.length)) * 25, 0, 1);
+    const first = (c.words[0] && c.text.split(/(?<=[.!?؟])\s/)[0]) || '';
+    const hook = /[?؟]/.test(first) || /\d/.test(first) ? 1 : 0;
+    const parts = [[pace, 3], [marks, 2], [keyword, 2], [hook, 1.5]];
+    if (Number.isFinite(coverage)) parts.push([clamp(coverage, 0, 1), 2]);
+    if (Number.isFinite(loud)) parts.push([clamp(loud * 1.4, 0, 1), 1.5]);
+    const sum = parts.reduce((a, [, w]) => a + w, 0);
+    return +(1 + 9 * parts.reduce((a, [v, w]) => a + v * w, 0) / sum).toFixed(2);
+  }
+  // Highest score first; a later candidate that overlaps a kept one is dropped.
+  function pickHighlights(cands, n) {
+    const out = [];
+    for (const c of [...cands].sort((a, b) => b.score - a.score || a.start - b.start)) {
+      if (out.length >= n) break;
+      if (!out.some(k => c.start < k.end && k.start < c.end)) out.push(c);
+    }
+    return out;
+  }
+  // The first JSON value in LLM text: skips prose and ``` fences, tolerates trailing commas; null when nothing parses.
+  function extractJson(text) {
+    const src = String(text ?? '').replace(/```[a-z]*/gi, ' ');
+    for (let from = 0; from < src.length; from++) {
+      const open = src[from];
+      if (open !== '[' && open !== '{') continue;
+      let depth = 0, quote = false;
+      for (let i = from; i < src.length; i++) {
+        const ch = src[i];
+        if (quote) { if (ch === '\\') i++; else if (ch === '"') quote = false; continue; }
+        if (ch === '"') quote = true;
+        else if (ch === '[' || ch === '{') depth++;
+        else if (ch === ']' || ch === '}') {
+          if (--depth === 0) {
+            const piece = src.slice(from, i + 1);
+            try { return JSON.parse(piece); } catch {}
+            try { return JSON.parse(piece.replace(/,\s*([\]}])/g, '$1')); } catch {}
+            break;
+          }
+        }
+      }
+    }
+    return null;
+  }
+  // Ratings from the assistant: [{id, score, title}] (or {ratings|items|results: [...]}) -> Map id -> {score 1..10, title}.
+  function parseHighlightRatings(text) {
+    let data = extractJson(text);
+    if (data && !Array.isArray(data)) data = data.ratings || data.items || data.results || data.highlights || Object.values(data).find(Array.isArray);
+    const out = new Map();
+    if (!Array.isArray(data)) return out;
+    for (const r of data) {
+      const id = Number(r?.id), score = Number(r?.score ?? r?.rating);
+      if (!Number.isInteger(id) || !Number.isFinite(score) || out.has(id)) continue;
+      out.set(id, { score: clamp(score, 1, 10), title: String(r.title ?? '').replace(/\s+/g, ' ').trim().slice(0, 80) });
+    }
+    return out;
+  }
+  // Compact batch prompt: strict JSON in, strict JSON out.
+  function highlightPrompt(batch) {
+    const lines = batch.map(c => `${c.id}: ${c.text.replace(/\s+/g, ' ').slice(0, 420)}`).join('\n');
+    return 'Rate each transcript excerpt 1-10 as a standalone short video (strong hook, makes sense alone, one clear idea) and give a title of at most 6 words in the excerpt\'s language. ' +
+      'Do not use any tools. Reply with ONLY a JSON array, no prose: [{"id":0,"score":7,"title":"..."}].\n' + lines;
+  }
+  // Words of one clip as the timeline shows them (the transcript panel rule: a word belongs to the piece holding its midpoint).
+  function transcriptWords(it) {
+    if (!Array.isArray(it.transcript)) return [];
+    const from = num(it.in, 0), to = from + srcLen(it), out = [];
+    it.transcript.forEach((word, index) => {
+      const mid = (word.s + word.e) / 2;
+      if (!(word.e > word.s && mid >= from && mid < to)) return;
+      out.push({ word, index, start: it.start + ltAt(it, Math.max(word.s, from) - from), end: it.start + ltAt(it, Math.min(word.e, to) - from) });
+    });
+    return out;
+  }
+  // Caption cues from timeline words {w, s, e}; words keep times relative to the cue.
+  function captionCues(words) {
+    const groups = groupWords(words);
+    return groups.map((g, i) => {
+      const next = groups[i + 1];
+      const end = next && next.start - g.end < 0.5 ? next.start : g.end + 0.25;
+      return { start: g.start, dur: Math.max(0.2, end - g.start), text: g.text, words: g.words.map(w => ({ w: w.w, s: w.s - g.start, e: w.e - g.start })) };
+    });
+  }
+  // A short as a project of its own (9:16, v1 + caption lane c1). `main` is only read: its media entry is copied.
+  function buildShortProject(main, mediaId, { name, w, h, pieces, cues, style }) {
+    const q = JSON.parse(JSON.stringify({
+      version: main.version, w, h, fps: main.fps, name, media: { [mediaId]: main.media[mediaId] }, markers: [], groups: {}, loudnessTarget: 0,
+      tracks: [{ id: 'c1', kind: 'text' }, { id: 't1', kind: 'text' }, { id: 'v2', kind: 'video' }, { id: 'v1', kind: 'video' }, { id: 'a1', kind: 'audio' }, { id: 'a2', kind: 'audio' }],
+      items: [...pieces.map(p => ({ ...p, track: 'v1' })), ...cues.map((c, i) => ({ id: 'cap' + i, type: 'text', track: 'c1', start: c.start, dur: c.dur, text: c.text, words: c.words,
+        style: { ...style }, x: 0.5, y: 0.72, anim: 'pop', out: 'none' }))],
+    }));
+    return q;
+  }
+  // ---- Collect project / relink ----
+  const baseName = p => String(p).split(/[\\/]/).pop();
+  // entries [{path, dir}] -> { files: [{src, dest}], map: src -> dest }. Same file once; same name from another folder gets _2, _3.
+  function collectPlan(entries) {
+    const map = new Map(), taken = new Set(), files = [];
+    for (const { path: src, dir } of entries) {
+      if (!src || map.has(src)) continue;
+      const name = baseName(src), dot = name.lastIndexOf('.'), stem = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+      let dest = `${dir}/${name}`, n = 1;
+      while (taken.has(dest.toLowerCase())) dest = `${dir}/${stem}_${++n}${ext}`;
+      taken.add(dest.toLowerCase());
+      map.set(src, dest);
+      files.push({ src, dest });
+    }
+    return { files, map };
+  }
+  // Copy of the project whose media paths and LUT files point at the collected (relative) names.
+  function collectRewrite(project, map) {
+    const q = JSON.parse(JSON.stringify(project));
+    for (const m of Object.values(q.media || {})) if (m.path && map.has(m.path)) m.path = map.get(m.path);
+    for (const it of q.items || []) if (it.color?.lut?.file && map.has(it.color.lut.file)) it.color.lut.file = map.get(it.color.lut.file);
+    return q;
+  }
+  // Mirror of collect.rs resolve_rel: a relative path means "next to the project file".
+  function resolveRelative(dir, p) {
+    if (!p || /^([\\/]|[a-zA-Z]:)/.test(p)) return p;
+    return dir.replace(/[\\/]+$/, '') + (dir.includes('\\') && !dir.includes('/') ? '\\' : '/') + p;
+  }
+  // missing [{id, path, size?}], found [{path, size?}] -> [{id, path}]: same file name, and same size when both are known.
+  function relinkMatches(missing, found) {
+    const out = [];
+    for (const m of missing) {
+      const name = baseName(m.path).toLowerCase();
+      const hit = found.find(f => baseName(f.path).toLowerCase() === name && (m.size == null || f.size == null || m.size === f.size));
+      if (hit) out.push({ id: m.id, path: hit.path });
+    }
+    return out;
+  }
+  // Where a finished recording lands: screen on V1, camera as a bottom-right picture-in-picture on V2 (V1 when
+  // there is no screen), microphone on A1. files [{role, media, w, h}], project size pw x ph, playhead `at`.
+  function recordPlacement(files, pw, ph, at) {
+    const pip = files.some(f => f.role === 'screen');
+    return files.map(f => {
+      if (f.role === 'mic') return { role: 'mic', media: f.media, track: 'a1', start: at, extra: {} };
+      if (f.role === 'screen' || !pip) return { role: f.role, media: f.media, track: 'v1', start: at, extra: {} };
+      const scale = 0.28, k = Math.min(pw / f.w, ph / f.h) * scale, m = Math.round(Math.min(pw, ph) * 0.03);
+      return { role: 'camera', media: f.media, track: 'v2', start: at,
+        extra: { scale, x: Math.round((pw - f.w * k) / 2 - m), y: Math.round((ph - f.h * k) / 2 - m) } };
+    });
+  }
+  Object.assign(api, { recordPlacement, baseName, collectPlan, collectRewrite, resolveRelative, relinkMatches });
+  Object.assign(api, { buildShortProject, transcriptSentences, highlightCandidates, heuristicScore, pickHighlights, extractJson, parseHighlightRatings, highlightPrompt, transcriptWords, captionCues });
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.MaqtoShared = api;
 })(this);

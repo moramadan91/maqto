@@ -29,6 +29,18 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const icon = n => `<svg class="ic" viewBox="0 0 24 24">${ICONS[n] || ''}</svg>`;
 const IS_MAC = /Mac/.test(navigator.userAgent);
+const AI_TOOLS_NEW = true;
+const seenVersionKey = 'kadr.seenVersion';
+// Startup persists language and workspace defaults even on a fresh install.
+const hasOldMaqtoState = (() => {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('kadr.') && key !== seenVersionKey) return true;
+    }
+  } catch {}
+  return false;
+})();
 if (IS_MAC) document.documentElement.classList.add('mac');
 
 const ASPECTS = Object.fromEntries(['9:16', '16:9', '1:1', '4:5', '4:3', '3:4', '21:9'].map(r => [r, dimsFor(r)]));
@@ -376,6 +388,7 @@ function newProject() {
   };
 }
 let P = newProject(), projectPath = null, dirty = false;
+let offline = new Set(); // media ids whose file is gone; drawn as a "Media offline" card, never dropped
 const msel = new Set(); // timeline multi-selection (always includes sel when used)
 let openGrp = null, sel = null, t = 0, playing = false, pps = 60, lastTick = 0, needsDraw = true, cancelled = false;
 let playRate = 1;
@@ -393,6 +406,7 @@ const markerTimes = () => P.markers.map(m => m.time);
 const fmt = s => { s = Math.max(0, s); const m = Math.floor(s / 60), x = Math.floor(s % 60), f = Math.floor((s % 1) * P.fps + 1e-6); return `${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}:${String(f).padStart(2, '0')}`; };
 const renderOrder = (pr, kind) => pr.tracks.filter(x => x.kind === kind).map(x => x.id).reverse();
 let MEDIA_BASE = '';
+const piperAudio = new Audio();
 const urlOf = m => MEDIA_BASE + encodeURIComponent(m.path);
 const cleanErr = e => String(e && e.message || e).replace(/^Error: /, '');
 
@@ -409,6 +423,7 @@ function restore(from, to) {
   dirty = true;
   syncSettings();
   refresh();
+  scanOffline();
 }
 
 /* ---------- media elements ---------- */
@@ -470,6 +485,850 @@ function rifeFor(it, m = media(it)) {
   }
   return '';
 }
+const upscaleCaches = new Map();
+let upscaleTask = null;
+
+function upscaleMedia(it) {
+  const m = it && media(it);
+  return m?.path && !m.angles && !m.fill && !m.adj && !it.audioOnly && ['video', 'image'].includes(m.kind) ? m : null;
+}
+const upscaleScale = it => [2, 4].includes(it.upscale?.scale) ? it.upscale.scale : 0;
+const upscaleType = it => it.upscale?.model === 'animation' ? 'animation' : 'footage';
+function upscaleRequest(it, m, settings = { scale: upscaleScale(it), model: upscaleType(it) }) {
+  if (!m?.path || !['video', 'image'].includes(m.kind) || it.audioOnly || !settings.scale) return null;
+  const still = m.kind === 'image', start = still ? 0 : num(it.in, 0), len = still ? 0 : S.srcLen(it);
+  return { path: m.path, start, len, still, ...settings, toneMap: G.toneMap(m) || null };
+}
+const upscaleRange = req => JSON.stringify([req.start, req.len]);
+const upscaleKey = (m, req) => JSON.stringify([m.sourceKey, req]);
+function upscaleState(it, m) {
+  const req = upscaleRequest(it, m);
+  if (!req || it.upscale?.prepared !== upscaleRange(req)) return null;
+  const key = upscaleKey(m, req);
+  let state = upscaleCaches.get(key);
+  if (!state) {
+    state = {};
+    upscaleCaches.set(key, state);
+    state.wait = inv('upscale_cached', { request: req }).then(path => (state.path = path), () => null).finally(() => {
+      needsDraw = true;
+      if (item(sel)?.id === it.id && inspTab === 'tVideo') paintUpscaleStatus();
+    });
+  }
+  return state;
+}
+function upscaleVisual(it, m) {
+  const path = upscaleState(it, m)?.path;
+  if (!path) return null;
+  const factor = upscaleScale(it);
+  return { ...m, path, w: m.w * factor, h: m.h * factor, hdr: false,
+    dur: m.kind === 'video' ? S.srcLen(it) : m.dur };
+}
+const depthDrafts = new WeakMap(), depthCaches = new Map();
+let depthTask = null, depthPicker = null, depthGeometry = null;
+const DEPTH_DEFAULTS = { blur: 0, range: 0.12, progressive: true, focus: null, fog: 0, color: '#d5e3ee', parallax: 0, motion: 'zoomIn' };
+function depthSettings(it) {
+  const fx = it.depth || {}, point = fx.focus;
+  const amount = key => clamp(num(fx[key], DEPTH_DEFAULTS[key]), 0, 1);
+  const focus = point && [point.x, point.y, point.time].every(Number.isFinite)
+    ? { x: clamp(point.x, 0, 1), y: clamp(point.y, 0, 1), time: Math.max(0, point.time) } : null;
+  return { blur: amount('blur'), range: amount('range'), progressive: fx.progressive !== false, focus,
+    fog: amount('fog'), color: /^#[0-9a-f]{6}$/i.test(fx.color) ? fx.color : DEPTH_DEFAULTS.color,
+    parallax: amount('parallax'), motion: ['zoomIn', 'leftRight', 'circle'].includes(fx.motion) ? fx.motion : DEPTH_DEFAULTS.motion };
+}
+const depthEnabled = fx => fx.blur > 0 || fx.fog > 0 || fx.parallax > 0;
+const depthDraft = it => depthDrafts.get(it) || depthSettings(it);
+function depthRequest(it, m, project, fx = depthSettings(it)) {
+  if (!m?.path || m.angles || m.fill || m.adj || it.audioOnly || !['video', 'image'].includes(m.kind) || !depthEnabled(fx)) return null;
+  const still = m.kind === 'image', start = still ? 0 : num(it.in, 0), len = still ? it.dur : S.srcLen(it);
+  const motionTiming = !still && fx.parallax > 0 && S.hasCurve(it)
+    ? Array.from({ length: 65 }, (_, i) => clamp(S.ltAt(it, len * i / 64) / it.dur, 0, 1)) : null;
+  const { color, focus, blur, range, progressive, fog, parallax, motion } = fx;
+  const rgb = parseInt(color.slice(1), 16);
+  const upscale = upscaleVisual(it, m);
+  return { path: m.path, start, len, still, width: m.w, height: m.h,
+    upscale: upscale ? { path: upscale.path, width: upscale.w, height: upscale.h } : null,
+    fps: clamp(still ? (parallax ? project.fps : 1) : m.fps || 30, 1, 240), toneMap: G.toneMap(m) || null,
+    effects: { blur, range, progressive, focus, fog, color: [rgb >> 16, rgb >> 8 & 255, rgb & 255], parallax, motion, motionTiming } };
+}
+const depthKey = (m, request) => JSON.stringify([m?.sourceKey, request]);
+function depthState(it, m, project = P) {
+  if (!it.depth) return null;
+  const request = depthRequest(it, m, project);
+  if (!request) return null;
+  const key = depthKey(m, request);
+  let state = depthCaches.get(key);
+  if (!state) {
+    state = {};
+    depthCaches.set(key, state);
+    state.wait = inv('depth_cached', { request }).then(({ path }) => (state.path = path), () => null).finally(() => {
+      needsDraw = true;
+      if (sel === it.id) paintDepthStatus();
+    });
+  }
+  return state;
+}
+function depthVisual(it, m, project = P) {
+  const path = depthState(it, m, project)?.path;
+  if (!path) return null;
+  const upscale = upscaleVisual(it, m);
+  const animatedStill = m.kind === 'image' && depthSettings(it).parallax > 0;
+  return { ...m, path, depth: true, animatedStill, hdr: false, w: upscale?.w || m.w, h: upscale?.h || m.h,
+    kind: animatedStill ? 'video' : m.kind, fps: clamp(animatedStill ? project.fps : m.fps || 30, 1, 240),
+    dur: m.kind === 'video' ? S.srcLen(it) : it.dur };
+}
+const preparedVisual = (it, m, project = P) => depthVisual(it, m, project) || upscaleVisual(it, m);
+function depthStatus(it, m) {
+  if (depthTask?.item === it) {
+    const task = depthTask, pct = Math.round(task.p * 100);
+    const label = tr(task.cancelled ? 'cancelled' : aiTransfers.has('depth_dl') ? 'p_depth_dl' : task.stage === 'map' ? 'depthEstimating' : 'depthRendering', { p: pct });
+    return `<div class="pxb insp" role="progressbar" aria-label="${tr('depthTitle')}" aria-valuenow="${pct}" style="--p:${task.p}"><i></i><em>${label}</em></div>`;
+  }
+  if (depthPicker?.item === it) return `<p class="hint">${tr('depthFocusHint')}</p>`;
+  const draft = depthDraft(it);
+  if (!it.depth && !depthEnabled(draft)) return '';
+  const ready = !depthDrafts.has(it) && depthState(it, m)?.path;
+  return `<p class="hint">${tr(ready ? 'depthReady' : 'depthNeedsPrepare')}</p>`;
+}
+function paintDepthStatus() {
+  const node = $('#depthStatus'), it = item(sel), m = upscaleMedia(it);
+  if (node && m) node.innerHTML = depthStatus(it, m);
+}
+function depthInspector(it, m) {
+  const fx = depthDraft(it), busy = depthTask?.item === it;
+  const field = (key, title, type, attrs, value) => `<label class="f"><span>${tr(title)}</span><input aria-label="${tr(title)}" type="${type}" data-depth-field="${key}" ${attrs} value="${esc(String(value))}"${busy ? ' disabled' : ''}></label>`;
+  const amount = (key, title) => field(key, title, 'range', 'min="0" max="1" step="0.01"', fx[key]);
+  const button = (key, title, disabled = false) => `<button class="wide" id="depth${key}"${disabled ? ' disabled' : ''}>${tr(title)}</button>`;
+  return grp('depthTitle', `<div id="depthControls"><div class="gh">${tr('depthBokeh')}</div>` +
+    amount('blur', 'depthBlur') + amount('range', 'depthRange') +
+    `<label class="sam-field"><input type="checkbox" data-depth-field="progressive"${fx.progressive ? ' checked' : ''}${busy ? ' disabled' : ''}>${tr('depthProgressive')}</label>` +
+    `<div class="inl">${button('Pick', fx.focus ? 'depthRepick' : 'depthPick', busy || it.hidden)}${button('Auto', 'depthAuto', busy || !fx.focus)}</div>` +
+    `<div class="gh">${tr('depthFog')}</div>` + amount('fog', 'depthDensity') +
+    field('color', 'color', 'color', '', fx.color) +
+    `<div class="gh">${tr('depthParallax')}</div><label class="f"><span>${tr('depthMotion')}</span><select data-depth-field="motion"${busy ? ' disabled' : ''}>` +
+    ['zoomIn', 'leftRight', 'circle'].map(key => `<option value="${key}"${key === fx.motion ? ' selected' : ''}>${tr('depth_' + key)}</option>`).join('') +
+    `</select></label>` + amount('parallax', 'depthAmount') +
+    `<p class="hint">${tr('depthDuration', { time: it.dur.toFixed(2) })}</p><div id="depthStatus">${depthStatus(it, m)}</div>` +
+    (busy ? button('Cancel', 'cancel', depthTask.cancelled) : button('Apply', 'depthPrepare', !depthEnabled(fx) && !it.depth)) + '</div>');
+}
+function setDepthDraft(it, patch) {
+  const next = { ...depthDraft(it), ...patch };
+  if (JSON.stringify(next) === JSON.stringify(depthSettings(it))) depthDrafts.delete(it);
+  else depthDrafts.set(it, next);
+  paintDepthStatus();
+  const apply = $('#depthApply');
+  if (apply) apply.disabled = !depthEnabled(depthDraft(it)) && !it.depth;
+}
+function endDepthPick() {
+  depthPicker = depthGeometry = null;
+  $('#stage').classList.remove('depth-picking');
+  needsDraw = true;
+  paintDepthStatus();
+}
+function startDepthPick(it) {
+  if (pickInput) endPick();
+  if (playing) setPlaying(false);
+  if (!active(it, t)) seek(it.start);
+  depthPicker = { item: it, project: P };
+  $('#stage').classList.add('depth-picking');
+  paintDepthStatus();
+  needsDraw = true;
+}
+function depthPointer(e) {
+  if (!depthPicker || e.button !== 0) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const { item: it } = depthPicker, g = depthGeometry;
+  if (!g || g.item !== it || item(sel) !== it || !active(it, t)) return;
+  const r = view.getBoundingClientRect();
+  const point = S.objectSourcePoint([(e.clientX - r.left) * P.w / r.width, (e.clientY - r.top) * P.h / r.height], g.matrix, g.dest, g.crop);
+  if (!point) return;
+  setDepthDraft(it, { focus: { x: clamp(point[0] / g.m.w, 0, 1), y: clamp(point[1] / g.m.h, 0, 1), time: g.time } });
+  endDepthPick();
+  inspector();
+}
+function stopDepth(task) {
+  if (!task || task.cancelled) return;
+  task.cancelled = true;
+  if (task.running) inv('depth_cancel', { job: task.job }).catch(e => toast(cleanErr(e)));
+  inspector();
+}
+async function prepareDepth(it, fx = depthDraft(it), download = true) {
+  const m = upscaleMedia(it);
+  if (!m) throw new Error(tr('upscalePick'));
+  if (depthTask || exporting) throw new Error(tr('depthBusy'));
+  endDepthPick();
+  const project = P;
+  await upscaleState(it, m)?.wait;
+  if (depthTask || exporting || project !== P || item(it.id) !== it || upscaleMedia(it) !== m) throw new Error(tr('depthBusy'));
+  const request = depthRequest(it, m, P, fx);
+  if (!request) {
+    depthDrafts.delete(it);
+    if (it.depth) { snapshot(); delete it.depth; dirty = true; refresh(); }
+    else inspector();
+    return { enabled: false };
+  }
+  const original = it.depth, key = depthKey(m, request);
+  const task = depthTask = { item: it, project, job: uid(), stage: 'map', p: 0 };
+  const current = () => project === P && item(it.id) === it && it.depth === original &&
+    depthKey(upscaleMedia(it), depthRequest(it, upscaleMedia(it), P, fx)) === key;
+  inspector();
+  try {
+    let { path, hasMap } = await inv('depth_cached', { request });
+    if (!path && !hasMap && !await depthModel.ready()) {
+      if (!download) throw new Error(tr('depthModelMissing'));
+      if (task.cancelled || !current() || !await TA.dialog.ask(tr('depthDownloadAsk'), { title: tr('depthTitle') })) return;
+      if (task.cancelled || !current()) return;
+      await depthModel.download();
+    }
+    if (task.cancelled || !current()) return;
+    if (!path) {
+      task.running = true;
+      path = await inv('depth_prepare', { request, job: task.job });
+    }
+    if (task.cancelled || !current()) return;
+    depthCaches.set(key, { path, wait: Promise.resolve(path) });
+    depthDrafts.delete(it);
+    if (JSON.stringify(fx) !== JSON.stringify(original)) {
+      snapshot();
+      it.depth = fx;
+      dirty = true;
+    }
+    return { enabled: true };
+  } catch (e) {
+    if (!task.cancelled) throw e;
+  } finally {
+    depthTask = null;
+    refresh();
+  }
+}
+TA.event.listen('depthprog', ({ payload: { job, stage, p } }) => {
+  const task = depthTask;
+  if (task?.job !== job) return;
+  if (task.cancelled) {
+    inv('depth_cancel', { job }).catch(() => {});
+    return;
+  }
+  Object.assign(task, { stage, p });
+  paintDepthStatus();
+});
+function upscaleEta(eta) {
+  if (eta == null) return '';
+  const time = eta >= 60 ? tr('upscaleMinutes', { n: Math.ceil(eta / 60) }) : tr('upscaleSeconds', { n: Math.ceil(eta) });
+  return tr(eta >= 300 ? 'upscaleLong' : 'upscaleEta', { time });
+}
+function upscaleStatus(it, m) {
+  const task = upscaleTask?.item === it ? upscaleTask : null;
+  if (task) {
+    const transfer = aiTransfers.get('upscale_dl');
+    const p = transfer?.p ?? task.p;
+    const label = task.cancelled ? tr('cancelled') : transfer ? tr('upscaleDownload') : tr('upscaleProgress', { p: Math.round(p * 100) });
+    const eta = !task.cancelled && upscaleEta(task.eta);
+    return `<div class="pxb insp" style="--p:${p}" role="progressbar" aria-label="${tr('upscaleTitle')}" aria-valuenow="${Math.round(p * 100)}"><i></i><em>${label}</em></div>` +
+      (eta ? `<p class="hint">${eta}</p>` : '');
+  }
+  if (upscaleState(it, m)?.path) return `<p class="hint">${tr('upscaleReady')}</p>`;
+  const req = upscaleRequest(it, m);
+  if (!req) return '';
+  const estimate = S.upscaleEstimate(m.w, m.h, m.fps, req.len, req.still, req.scale);
+  const workPixels = req.model === 'footage' && req.scale === 2 ? estimate.pixels * 4 : estimate.pixels;
+  if (workPixels >= 2e9) return `<p class="hint">${tr('upscaleLarge', estimate)}</p>`;
+  return it.upscale?.prepared ? `<p class="hint">${tr('upscaleNeedsPrepare')}</p>` : '';
+}
+function paintUpscaleStatus() {
+  const node = $('#upscaleStatus'), it = item(sel), m = upscaleMedia(it);
+  if (node && m) node.innerHTML = upscaleStatus(it, m);
+}
+function upscaleInspector(it, m) {
+  const busy = upscaleTask?.item === it, scale = upscaleScale(it), model = upscaleType(it);
+  const select = (id, label, options, value, disabled) =>
+    `<label class="f"><span>${tr(label)}</span><select id="${id}"${disabled ? ' disabled' : ''}>${options.map(([v, text]) =>
+      `<option value="${v}"${v === value ? ' selected' : ''}>${text}</option>`).join('')}</select></label>`;
+  return grp('upscaleTitle',
+    select('upscaleScale', 'upscaleScale', [[0, tr('upscaleOff')], [2, '2×'], [4, '4×']], scale, busy) +
+    select('upscaleModel', 'upscaleModel', [['footage', tr('upscaleFootage')], ['animation', tr('upscaleAnimation')]], model, busy || !scale) +
+    `<div id="upscaleStatus">${upscaleStatus(it, m)}</div>` +
+    (busy ? `<button class="wide" id="upscaleCancel"${upscaleTask.cancelled ? ' disabled' : ''}>${tr('cancel')}</button>`
+      : `<button class="wide" id="upscalePrepare"${scale ? '' : ' disabled'}>${tr('upscalePrepare')}</button>`));
+}
+function setUpscale(it, settings) {
+  if (settings.scale === upscaleScale(it) && settings.model === upscaleType(it)) return;
+  snapshot();
+  it.upscale = settings;
+  dirty = true;
+  refresh();
+}
+function stopUpscale(task) {
+  if (!task || task.cancelled) return;
+  task.cancelled = true;
+  if (task.running) inv('upscale_cancel', { job: task.job }).catch(e => toast(cleanErr(e)));
+  if (task.item && item(sel) === task.item) inspector();
+}
+async function prepareUpscale(it, settings, download = true) {
+  const m = upscaleMedia(it), request = upscaleRequest(it, m, settings);
+  if (!request) throw new Error(tr('upscalePick'));
+  if (upscaleTask || exporting) throw new Error(tr('upscaleBusy'));
+  const project = P, original = it.upscale, key = upscaleKey(m, request);
+  const task = upscaleTask = { item: it, project, job: uid(), p: 0 };
+  const current = () => project === P && item(it.id) === it && it.upscale === original &&
+    upscaleKey(m, upscaleRequest(it, upscaleMedia(it), settings)) === key;
+  if (sel === it.id) inspector();
+  try {
+    let path = await inv('upscale_cached', { request });
+    if (!path && !await upscaleModel.ready()) {
+      if (!download) throw new Error(tr('upscaleModelMissing'));
+      if (task.cancelled || !current() || !await TA.dialog.ask(tr('upscaleAsk'), { title: tr('upscaleTitle') })) return;
+      if (task.cancelled || !current()) return;
+      await upscaleModel.download();
+    }
+    if (task.cancelled || !current()) return;
+    if (!path) {
+      task.running = true;
+      path = await inv('upscale_prepare', { request, job: task.job });
+    }
+    if (task.cancelled || !current()) return;
+    upscaleCaches.set(key, { path, wait: Promise.resolve(path) });
+    const prepared = upscaleRange(request);
+    if (original?.prepared !== prepared || original.scale !== request.scale || original.model !== request.model) {
+      snapshot();
+      it.upscale = { scale: request.scale, model: request.model, prepared };
+      dirty = true;
+    }
+    return { path };
+  } catch (e) {
+    if (!task.cancelled) throw e;
+  } finally {
+    upscaleTask = null;
+    if (P === project) refresh();
+  }
+}
+TA.event.listen('upscaleprog', ({ payload: { job, p, eta } }) => {
+  const task = upscaleTask;
+  if (task?.job !== job) return;
+  if (task.cancelled) {
+    // A progress event also confirms registration if Cancel arrived while the command was starting.
+    if (!task.cancelRetried) {
+      task.cancelRetried = true;
+      inv('upscale_cancel', { job }).catch(() => {});
+    }
+    return;
+  }
+  Object.assign(task, { p, eta });
+  if (task.item) paintUpscaleStatus();
+  else progress(upscaleEta(eta) || tr('upscaleTitle'), p);
+});
+
+const objectMattes = new Map(), fillCaches = new Map(), fillJobs = new Map(), fillImages = new Map(), fillLast = new Map();
+let exportFill = null;
+const objectRaster = new WeakMap();
+const objectProjects = new WeakMap();
+let objectDraft = null, objectGeometry = null, objectDrawing = false, objectJob = null;
+function objectMedia(it) {
+  const m = it && media(it);
+  return m?.path && !m.angles && !m.fill && !m.adj && !it.audioOnly && !it.hidden && ['video', 'image'].includes(m.kind) ? m : null;
+}
+const objectMode = it => it.objectMask?.mode || 'keep';
+const objectEdges = it => ({
+  invert: Boolean(it.objectMask?.invert),
+  feather: clamp(Math.round(num(it.objectMask?.feather, objectMode(it) === 'fill' ? 2 : 0)), 0, 128),
+  expand: clamp(Math.round(num(it.objectMask?.expand, 0)), -128, 128),
+});
+const objectEdit = it => objectDraft?.project === P && objectDraft.id === it?.id && sel === it?.id &&
+  objectDraft.path === media(it)?.path ? objectDraft : null;
+const objectSourceTime = (it, lt) => num(it.in, 0) + S.srcAt(it, clamp(lt, 0, it.dur));
+const objectFrame = (m, time) => m.kind === 'image' ? 0 : Math.floor(time * (m.fps >= 1 ? m.fps : 30) + 0.0001);
+
+function fillRequest(it, m) {
+  if (objectMode(it) !== 'fill' || !it.objectMask?.key || !m?.path || it.hidden || it.audioOnly) return null;
+  const start = m.kind === 'image' ? 0 : num(it.in, 0);
+  return { path: m.path, start, end: m.kind === 'image' ? 0 : start + S.srcLen(it), key: it.objectMask.key,
+    edges: objectEdges(it), smooth: m.kind === 'video' && it.objectMask.smooth !== false, toneMap: G.toneMap(m) || null };
+}
+const fillKey = (m, request) => JSON.stringify([m?.sourceKey, request]);
+function fillState(it, m, immediate = false, retry = false) {
+  const request = fillRequest(it, m);
+  if (!request) return null;
+  const key = fillKey(m, request);
+  let state = fillCaches.get(key);
+  if (state && !retry) {
+    if (immediate) state.start();
+    return state;
+  }
+  state = { p: 0, job: uid(), key };
+  const update = () => {
+    needsDraw = true;
+    if (inspTab === 'tVideo' && item(sel)?.objectMask?.key === request.key) inspector();
+  };
+  state.start = () => {
+    if (state.wait) return;
+    clearTimeout(state.timer);
+    fillJobs.set(state.job, state);
+    state.wait = inv('migan_render', { request: { ...request, job: state.job } }).then(cache => (state.cache = cache),
+      error => {
+        state.error = cleanErr(error);
+        if (state.error === 'MI-GAN model is missing') state.needsModel = true;
+        return null;
+      }).finally(() => { fillJobs.delete(state.job); update(); });
+  };
+  state.cancel = () => {
+    state.cancelled = true;
+    clearTimeout(state.timer);
+    if (!state.wait) state.wait = Promise.resolve(null);
+    else inv('migan_cancel', { job: state.job }).catch(e => toast(cleanErr(e)));
+  };
+  fillCaches.set(key, state);
+  if (immediate) state.start();
+  else state.timer = setTimeout(() => {
+    const current = item(it.id);
+    if (current && fillKey(media(current), fillRequest(current, media(current))) === key) state.start();
+    else if (!state.wait && fillCaches.get(key) === state) fillCaches.delete(key);
+  }, 350);
+  return state;
+}
+function releaseFill(state) {
+  if (!state || state.cache || state.error || state.cancelled || state === exportFill) return;
+  if (P.items.some(it => fillKey(media(it), fillRequest(it, media(it))) === state.key)) return;
+  state.cancel();
+  fillCaches.delete(state.key);
+}
+const fillError = state => state?.needsModel ? tr('fillModelMissing') : state?.error || tr('fillRenderFailed');
+function fillIndex(cache, time) {
+  let lo = 0, hi = cache.times.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (cache.times[mid] <= time + .000001) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.max(0, lo - 1);
+}
+const fillPath = (cache, i) => cache.path + '/' + String(i).padStart(9, '0') + '.png';
+function fillImage(cache, i) {
+  const path = fillPath(cache, i);
+  let image = fillImages.get(path);
+  if (image) fillImages.delete(path);
+  else {
+    image = new Image();
+    image.crossOrigin = 'anonymous';
+    image.onload = () => (needsDraw = true);
+    image.src = urlOf({ path });
+  }
+  fillImages.set(path, image);
+  if (fillImages.size > 12) fillImages.delete(fillImages.keys().next().value);
+  return image;
+}
+function fillPreview(it, cache, lt) {
+  const index = fillIndex(cache, objectSourceTime(it, lt));
+  const image = fillImage(cache, index);
+  if (playing) for (let i = index + 1; i < Math.min(cache.times.length, index + 4); i++) fillImage(cache, i);
+  if (image.complete && image.naturalWidth) {
+    fillLast.delete(it.id);
+    fillLast.set(it.id, { path: cache.path, image });
+    if (fillLast.size > 4) fillLast.delete(fillLast.keys().next().value);
+    return image;
+  }
+  const last = fillLast.get(it.id);
+  return last?.path === cache.path ? last.image : null;
+}
+async function retryFill(it) {
+  const m = objectMedia(it), project = P;
+  if (!m || !fillRequest(it, m)) return;
+  if (!await miganModel.ready().catch(() => false)) {
+    if (!await TA.dialog.ask(tr('fillAsk'), { title: tr('sam_fill') })) return;
+    try {
+      progress(tr('p_migan_dl'), 0);
+      await miganModel.download(false);
+    } catch (e) { toast(cleanErr(e)); return; }
+    finally { hideModal(); }
+  }
+  if (P !== project || item(it.id) !== it || media(it)?.path !== m.path) return;
+  fillState(it, m, true, true);
+  inspector();
+}
+function paintFillProgress(state, label) {
+  const bar = $('#fillProgress');
+  if (bar?.dataset.job === state.job) {
+    bar.style.setProperty('--p', state.p);
+    bar.querySelector('em').textContent = label;
+  }
+}
+TA.event.listen('miganprog', e => {
+  const { job, p } = e.payload;
+  const state = fillJobs.get(job);
+  if (!state || state.cancelled) return;
+  state.p = p;
+  const label = tr('fillProgress', { p: Math.round(p * 100) });
+  paintFillProgress(state, label);
+  if (exporting && exportFill === state && !cancelled) progress(label, p);
+});
+
+function objectMatteState(it, m) {
+  if (!it.objectMask?.key || !m?.path) return null;
+  const { key } = it.objectMask, edges = objectEdges(it);
+  const id = JSON.stringify([key, m.path, edges]);
+  if (!objectMattes.has(id)) {
+    const state = {};
+    state.wait = inv('sam2_matte', { key, source: m.path, edges }).then(v => {
+      state.matte = v;
+      return v;
+    }, e => {
+      state.error = e;
+      return null;
+    }).finally(() => {
+      needsDraw = true;
+      if (inspTab === 'tVideo' && item(sel)?.objectMask?.key === key) inspector();
+    });
+    objectMattes.set(id, state);
+  }
+  return objectMattes.get(id);
+}
+
+function objectMatteEl(it, mt) {
+  const el = matteVideo(it.id + '|obj', mt.path);
+  el._objectMatte = mt;
+  return el;
+}
+
+function stopObjectEdit() {
+  objectDraft = null;
+  view.classList.remove('object-prompt');
+  needsDraw = true;
+}
+
+async function openObjectSelect(it, mode = objectEdit(it)?.mode) {
+  const m = objectMedia(it);
+  if (!m) return toast(tr('samPick'));
+  if (objectEdit(it) && !objectEdit(it).brush) { stopObjectEdit(); inspector(); return; }
+  const project = P, path = m.path;
+  if (!await sam2Model.ready().catch(() => false)) {
+    if (!await TA.dialog.ask(tr('samAsk'), { title: tr('samSelect') })) return;
+    try {
+      progress(tr('p_sam2_dl'), 0);
+      await sam2Model.download(false);
+    } catch (e) { toast(cleanErr(e)); return; }
+    finally { hideModal(); }
+  }
+  if (project !== P || item(it.id) !== it || sel !== it.id || media(it)?.path !== path) return;
+  setPlaying(false);
+  const saved = it.objectMask?.prompt;
+  const lt = saved && m.kind === 'video' ? S.ltAt(it, saved.time - num(it.in, 0)) : t - it.start;
+  if (saved || !active(it, t)) seek(it.start + clamp(lt, 0, Math.max(0, it.dur - .001)));
+  const seed = m.kind === 'image' ? 0 : objectSourceTime(it, t - it.start);
+  const prompt = saved && objectFrame(m, seed) === objectFrame(m, saved.time) ? saved : { points: [], bbox: null };
+  objectDraft = { project, path, id: it.id, seed, prompt, mode, pending: false };
+  view.classList.add('object-prompt');
+  revealPanel('player');
+  openAIInspector('tVideo', '[data-object="select"]');
+  needsDraw = true;
+  if (prompt.points.length || prompt.bbox) decodeObject(objectDraft, m);
+}
+
+function brushTracks(it) {
+  return P.items.filter(f => f.trk?.subject?.clip === it.id && f.trk.subject.media === it.media && f.trk.subject.pts?.length);
+}
+function brushOffset(brush, m, time) {
+  const at = t0 => {
+    const p = brush.motion;
+    if (!p.length) return [0, 0];
+    const n = p.findIndex(p => p[0] > t0);
+    if (n === 0) return p[0].slice(1);
+    if (n < 0) return p.at(-1).slice(1);
+    const a = p[n - 1], b = p[n], q = (t0 - a[0]) / (b[0] - a[0]);
+    return [a[1] + (b[1] - a[1]) * q, a[2] + (b[2] - a[2]) * q];
+  };
+  const [x, y] = at(time), [sx, sy] = at(brush.seed);
+  return [(x - sx) * m.w, (y - sy) * m.h];
+}
+function drawBrushSegment(draft, m, stroke, to, from) {
+  const c = draft.overlay, ctx = c.getContext('2d');
+  ctx.setTransform(c.width / m.w, 0, 0, c.height / m.h, 0, 0);
+  ctx.globalCompositeOperation = stroke.erase ? 'destination-out' : 'source-over';
+  ctx.fillStyle = ctx.strokeStyle = getComputedStyle(view).getPropertyValue('--accent').trim();
+  ctx.lineWidth = stroke.size;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  if (from) { ctx.moveTo(...from); ctx.lineTo(...to); ctx.stroke(); }
+  else { ctx.arc(...to, stroke.size / 2, 0, Math.PI * 2); ctx.fill(); }
+}
+function openBrush(it, preset = false) {
+  const m = objectMedia(it);
+  if (!m || sel !== it.id) return toast(tr('samPick'));
+  const edit = objectEdit(it);
+  if (edit?.brush && !preset) { stopObjectEdit(); inspector(); return; }
+  if (objectJob?.clip === it.id) return;
+  setPlaying(false);
+  if (!active(it, t)) seek(it.start);
+  const saved = edit?.brush ? edit : it.objectMask?.brush;
+  const seed = saved?.seed ?? (m.kind === 'image' ? 0 : objectSourceTime(it, t - it.start));
+  const scale = Math.min(1, 1024 / Math.max(m.w, m.h));
+  const overlay = Object.assign(document.createElement('canvas'), {
+    width: Math.max(1, Math.round(m.w * scale)), height: Math.max(1, Math.round(m.h * scale)),
+  });
+  objectDraft = { project: P, path: m.path, id: it.id, brush: true, seed, overlay,
+    preset, mode: preset ? 'fill' : edit?.mode,
+    track: preset ? '' : (saved?.track || ''), motion: preset ? [] : (saved?.motion || []),
+    size: saved?.size || 40, erase: false, strokes: structuredClone(saved?.strokes || []) };
+  for (const stroke of objectDraft.strokes) stroke.points.forEach((p, i) => drawBrushSegment(objectDraft, m, stroke, p, stroke.points[i - 1]));
+  view.classList.add('object-prompt');
+  revealPanel('player');
+  openAIInspector('tVideo', '[data-object="brush"]');
+  needsDraw = true;
+}
+function paintBrush(e, draft, g, pos) {
+  const [dx, dy] = brushOffset(draft, g.m, g.time);
+  const point = (ev, clip) => {
+    const p = pos(ev, clip);
+    return p && [p[0] - dx, p[1] - dy];
+  };
+  const first = point(e, false);
+  if (!first) return;
+  const stroke = { size: draft.size, erase: draft.erase || e.button === 2, points: [first] };
+  draft.strokes.push(stroke);
+  draft.pointer = e.pointerId;
+  drawBrushSegment(draft, g.m, stroke, first);
+  needsDraw = true;
+  view.setPointerCapture(e.pointerId);
+  const move = ev => {
+    if (ev.pointerId !== e.pointerId) return;
+    const p = point(ev, true), prev = stroke.points.at(-1);
+    if (!p || Math.hypot(p[0] - prev[0], p[1] - prev[1]) < 1) return;
+    drawBrushSegment(draft, g.m, stroke, p, prev);
+    stroke.points.push(p);
+    needsDraw = true;
+  };
+  const finish = ev => {
+    if (ev.pointerId !== e.pointerId) return;
+    view.removeEventListener('pointermove', move);
+    view.removeEventListener('pointerup', finish);
+    view.removeEventListener('lostpointercapture', finish);
+    delete draft.pointer;
+    if (objectDraft === draft) inspector();
+  };
+  view.addEventListener('pointermove', move);
+  view.addEventListener('pointerup', finish);
+  view.addEventListener('lostpointercapture', finish);
+}
+async function applyBrush(it) {
+  const draft = objectEdit(it), m = objectMedia(it);
+  if (!draft?.brush || !m || !draft.strokes.length || objectJob) return;
+  const { seed, strokes, motion, size, track, mode } = draft;
+  const job = objectJob = { clip: it.id, brush: true };
+  inspector();
+  try {
+    const key = await inv('object_brush', { project: objectNamespace(P), path: m.path, brush: { seed, strokes, motion } });
+    if (P !== draft.project || objectDraft !== draft || item(it.id) !== it || media(it)?.path !== m.path) return;
+    snapshot();
+    const { prompt, ...previous } = it.objectMask || {};
+    it.objectMask = { ...previous, ...(draft.preset ? { invert: false } : {}), key, mode: mode || objectMode(it), brush: { seed, strokes, motion, size, track } };
+    dirty = true;
+    stopObjectEdit();
+  } catch (e) {
+    toast(cleanErr(e) === 'The brush mask is empty' ? tr('brushEmpty') : cleanErr(e));
+  } finally { objectJob = null; refresh(); }
+}
+
+function decodeObject(draft, m) {
+  draft.pending = true;
+  draft.lost = false;
+  if (draft.decoding) return;
+  draft.decoding = true;
+  inspector();
+  (async () => {
+    while (objectDraft === draft && draft.pending) {
+      const { prompt, seed } = draft;
+      draft.pending = false;
+      try {
+        const raw = new Uint8Array(await inv('sam2_preview', { path: m.path, time: seed, prompt }));
+        if (objectDraft !== draft || draft.prompt !== prompt || draft.seed !== seed) continue;
+        const w = raw[0] + 256 * raw[1], h = raw[2] + 256 * raw[3];
+        const mask = raw.subarray(5);
+        draft.lost = raw[4] !== 0 || !S.objectMaskGeometry(mask, w, h);
+        if (draft.lost) continue;
+        const c = draft.overlay || (draft.overlay = document.createElement('canvas'));
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d'), pixels = ctx.createImageData(w, h);
+        for (let i = 0; i < mask.length; i++) pixels.data[4 * i + 3] = mask[i];
+        ctx.putImageData(pixels, 0, 0);
+        ctx.globalCompositeOperation = 'source-in';
+        ctx.fillStyle = getComputedStyle(view).getPropertyValue('--accent').trim();
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = 'source-over';
+      } catch (e) {
+        if (objectDraft === draft && draft.prompt === prompt) { draft.lost = true; toast(cleanErr(e)); }
+      }
+    }
+  })().finally(() => {
+    draft.decoding = false;
+    needsDraw = true;
+    if (objectDraft === draft && inspTab === 'tVideo') inspector();
+  });
+}
+
+function drawObjectPrompt() {
+  const it = item(sel), draft = objectEdit(it), g = objectGeometry;
+  view.classList.toggle('object-prompt', !!draft);
+  if (!draft || !g || playing || (!draft.brush && objectFrame(g.m, g.time) !== objectFrame(g.m, draft.seed))) return;
+  const { dest, crop, matrix, m } = g, ctx = vctx;
+  const x = v => dest.x + (v - crop.x) * dest.w / crop.w;
+  const y = v => dest.y + (v - crop.y) * dest.h / crop.h;
+  const scale = P.w / Math.max(1, view.getBoundingClientRect().width);
+  ctx.save();
+  ctx.setTransform(...matrix);
+  ctx.beginPath(); ctx.rect(dest.x, dest.y, dest.w, dest.h); ctx.clip();
+  const accent = getComputedStyle(view).getPropertyValue('--accent').trim();
+  if (draft.overlay) {
+    ctx.globalAlpha = .45;
+    const ow = draft.overlay.width, oh = draft.overlay.height;
+    const [dx, dy] = draft.brush ? brushOffset(draft, m, g.time) : [0, 0];
+    ctx.drawImage(draft.overlay, (crop.x - dx) / m.w * ow, (crop.y - dy) / m.h * oh,
+      crop.w / m.w * ow, crop.h / m.h * oh, dest.x, dest.y, dest.w, dest.h);
+    ctx.globalAlpha = 1;
+  }
+  if (draft.brush) { ctx.restore(); return; }
+  const bbox = draft.drag || draft.prompt.bbox;
+  ctx.lineWidth = 1.5 * scale;
+  if (bbox) {
+    ctx.strokeStyle = accent;
+    ctx.setLineDash([5 * scale, 4 * scale]);
+    ctx.strokeRect(x(bbox[0]), y(bbox[1]), x(bbox[2]) - x(bbox[0]), y(bbox[3]) - y(bbox[1]));
+    ctx.setLineDash([]);
+  }
+  for (const [px, py, sign] of draft.prompt.points) {
+    ctx.beginPath(); ctx.arc(x(px), y(py), 4 * scale, 0, 2 * Math.PI);
+    ctx.fillStyle = sign ? accent : '#f06565';
+    ctx.strokeStyle = '#fff'; ctx.fill(); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function objectNamespace(project) {
+  let id = project.items.find(i => i.objectMask?.key)?.objectMask.key.split('/')[0] || objectProjects.get(project);
+  if (!id) {
+    id = Array.from(crypto.getRandomValues(new Uint8Array(8)), n => n.toString(16).padStart(2, '0')).join('');
+    objectProjects.set(project, id);
+  }
+  return id;
+}
+
+async function applyObject(it, still) {
+  const draft = objectEdit(it), m = objectMedia(it);
+  if (!m || !draft || draft.decoding || draft.lost || !draft.overlay || objectJob) return;
+  const path = m.path, start = num(it.in, 0), end = start + S.srcLen(it);
+  const job = objectJob = { id: uid(), clip: it.id, p: 0, cancelled: false };
+  inspector();
+  try {
+    const res = await inv('sam2_track', { request: { project: objectNamespace(P), path, start, end,
+      seed: draft.seed, prompt: draft.prompt, still: still || m.kind === 'image', job: job.id } });
+    if (job.cancelled || P !== draft.project || item(it.id) !== it || media(it)?.path !== path ||
+        num(it.in, 0) !== start || start + S.srcLen(it) !== end) return;
+    snapshot();
+    const { brush, ...previous } = it.objectMask || {};
+    it.objectMask = { ...previous, key: res.key, mode: draft.mode || objectMode(it), prompt: { ...draft.prompt, time: draft.seed } };
+    dirty = true;
+    if (objectDraft === draft) stopObjectEdit();
+    if (res.lost) toast(tr('samLostTrack'));
+  } catch (e) {
+    if (!job.cancelled) toast(cleanErr(e));
+  } finally {
+    objectJob = null;
+    refresh();
+  }
+}
+
+function cancelObjectJob() {
+  if (!objectJob?.id) return;
+  objectJob.cancelled = true;
+  inv('sam2_cancel', { job: objectJob.id }).catch(e => toast(cleanErr(e)));
+  inspector();
+}
+TA.event.listen('sam2prog', e => {
+  if (objectJob?.id !== e.payload.job) return;
+  objectJob.p = e.payload.p;
+  const bar = $('#objectProgress');
+  if (bar) {
+    bar.style.setProperty('--p', objectJob.p);
+    bar.querySelector('em').textContent = tr('samProgress', { p: Math.round(objectJob.p * 100) });
+  }
+});
+
+function objectInspector(it, m) {
+  const edit = objectEdit(it), mask = it.objectMask, fill = objectMode(it) === 'fill';
+  const state = !fill && objectMatteState(it, m), painted = edit?.brush;
+  const rendered = fill && fillState(it, m);
+  const job = objectJob?.clip === it.id ? objectJob : null;
+  const button = (id, label, disabled = false, pressed = null) => `<button class="wide" data-object="${id}"${pressed === null ? '' : ` aria-pressed="${pressed}"`}${disabled ? ' disabled' : ''}>${tr(label)}</button>`;
+  const tracks = painted && m.kind === 'video' ? brushTracks(it) : [];
+  const brushFields = painted ? `<p class="hint">${tr('brushHint')}</p>
+    <label class="sam-field">${tr('brushSize')}<input type="range" min="4" max="300" step="1" value="${edit.size}" data-brush-field="size"></label>
+    <label class="sam-field"><input type="checkbox" data-brush-field="erase"${edit.erase ? ' checked' : ''}>${tr('brushEraser')}</label>
+    ${tracks.length || edit.track ? `<label class="sam-field">${tr('brushMotion')}<select data-brush-field="track">
+      <option value="">${tr('brushStatic')}</option>${edit.track && !tracks.some(f => f.id === edit.track) ? `<option value="${esc(edit.track)}" selected>${tr('brushFollow')}</option>` : ''}
+      ${tracks.map(f => `<option value="${esc(f.id)}"${f.id === edit.track ? ' selected' : ''}>${tr('brushFollow')}${tracks.length > 1 ? ' · ' + esc(f.text || media(f)?.name || f.id) : ''}</option>`).join('')}</select></label>` : ''}` : '';
+  const running = rendered && !rendered.cache && !rendered.error && !rendered.cancelled;
+  return grp('samSelect', button('select', edit && !painted ? 'samDone' : 'samSelect', !!job, !!edit && !painted) +
+    button('brush', painted ? 'samDone' : 'brush', !!job, !!painted) +
+    button('watermark', 'brushWatermark', !!job) +
+    (painted ? brushFields + button('clear', 'brushClear', !!job || !edit.strokes.length) +
+      button('apply-brush', 'samApply', !!objectJob || !edit.strokes.length)
+      : edit ? `<p class="hint">${tr(edit.decoding ? 'samDecode' : edit.lost ? 'samLostSeed' : 'samHint')}</p>` +
+      button('clear', 'samClearPoints', !!job || !edit.prompt.points.length && !edit.prompt.bbox) +
+      button('still', m.kind === 'image' ? 'samApply' : 'samApplyFrame', !!objectJob || edit.decoding || edit.lost || !edit.overlay) +
+      (m.kind === 'video' ? button('track', 'samTrack', !!objectJob || edit.decoding || edit.lost || !edit.overlay) : '') : '') +
+    (job && !job.brush ? `<div class="pxb insp" id="objectProgress" role="status" style="--p:${job.p}"><i></i><em>${tr('samProgress', { p: Math.round(job.p * 100) })}</em></div>` + button('cancel', 'cancel', job.cancelled) : '') +
+    (mask ? (state && (state.error || state.matte?.lost || !state.matte) ? `<p class="hint">${tr(state.error ? 'samCacheMissing' : state.matte?.lost ? 'samLostTrack' : 'samPreparing')}</p>` : '') +
+      `<label class="sam-field">${tr('samMode')}<select data-object-field="mode">${['keep', 'pixel', 'pop', 'fill'].map(mode => `<option value="${mode}"${objectMode(it) === mode ? ' selected' : ''}>${tr('sam_' + mode)}</option>`).join('')}</select></label>
+      <label class="sam-field"><input type="checkbox" data-object-field="invert"${mask.invert ? ' checked' : ''}>${tr('mkInvert')}</label>
+      <label class="sam-field">${tr('samFeather')}<input type="number" min="0" max="128" step="1" value="${objectEdges(it).feather}" data-object-field="feather"></label>
+      <label class="sam-field">${tr('samExpand')}<input type="number" min="-128" max="128" step="1" value="${objectEdges(it).expand}" data-object-field="expand"></label>` +
+      (fill && m.kind === 'video' ? `<label class="sam-field"><input type="checkbox" data-object-field="smooth"${mask.smooth !== false ? ' checked' : ''}>${tr('fillSmooth')}</label>` : '') +
+      (running ? `<div class="pxb insp" id="fillProgress" data-job="${rendered.job}" role="status" style="--p:${rendered.p}"><i></i><em>${tr('fillProgress', { p: Math.round(rendered.p * 100) })}</em></div>` + button('fill-cancel', 'cancel') : '') +
+      (rendered && !running && !rendered.cache ? `<p class="hint">${rendered.cancelled ? tr('cancelled') : esc(fillError(rendered))}</p>` + button('fill-retry', rendered.needsModel ? 'aiDownload' : 'fillRender') : '') +
+      button('remove', 'samRemoveMask', !!job) : ''));
+}
+
+function objectPointer(e) {
+  const it = item(sel), draft = objectEdit(it), g = objectGeometry;
+  if (!draft || ![0, 2].includes(e.button)) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  if (playing || !g || objectJob?.clip === it.id || draft.pointer != null) return;
+  const r = view.getBoundingClientRect();
+  const toSource = (ev, clip) => S.objectSourcePoint([(ev.clientX - r.left) * P.w / r.width, (ev.clientY - r.top) * P.h / r.height],
+    g.matrix, g.dest, g.crop, clip);
+  if (draft.brush) { paintBrush(e, draft, g, toSource); return; }
+  const from = toSource(e, false);
+  if (!from) return;
+  if (objectFrame(g.m, g.time) !== objectFrame(g.m, draft.seed)) {
+    draft.seed = g.time; draft.prompt = { points: [], bbox: null }; draft.overlay = null;
+  }
+  if (e.button === 2) {
+    draft.prompt = { ...draft.prompt, points: [...draft.prompt.points, [...from, 0]] };
+    decodeObject(draft, g.m);
+    return;
+  }
+  const negative = e.altKey;
+  const moved = ev => Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) > 5;
+  draft.pointer = e.pointerId;
+  view.setPointerCapture(e.pointerId);
+  const move = ev => {
+    if (ev.pointerId !== e.pointerId || negative || (!draft.drag && !moved(ev))) return;
+    draft.drag = S.objectPromptBox(from, toSource(ev, true));
+    needsDraw = true;
+  };
+  const finish = ev => {
+    if (ev.pointerId !== e.pointerId) return;
+    view.removeEventListener('pointermove', move);
+    view.removeEventListener('pointerup', finish);
+    view.removeEventListener('lostpointercapture', finish);
+    delete draft.pointer;
+    delete draft.drag;
+    needsDraw = true;
+    if (ev.type !== 'pointerup' || objectEdit(it) !== draft) return;
+    draft.prompt = !negative && moved(ev) ? { ...draft.prompt, bbox: S.objectPromptBox(from, toSource(ev, true)) } :
+      { ...draft.prompt, points: [...draft.prompt.points, [...from, negative ? 0 : 1]] };
+    decodeObject(draft, g.m);
+  };
+  view.addEventListener('pointermove', move);
+  view.addEventListener('pointerup', finish);
+  view.addEventListener('lostpointercapture', finish);
+}
+
 // Remove background: an AI matte video per source file, multiplied into the clip's alpha.
 // Two models: people (MODNet) and objects/products (BiRefNet-lite)
 const matteTool = {};
@@ -489,14 +1348,18 @@ const matteWait = (it, m) => (matteFor(it, m), matteOk.get(mtKey(it, m)) || Prom
 TA.event.listen('matteprog', e => { matteProg.set(e.payload.job, e.payload.p); const b = document.querySelector(`[data-mtbar="${e.payload.job}"]`); if (b) { b.style.setProperty('--p', e.payload.p); b.querySelector('em').textContent = tr('mtPrep').replace('{p}', Math.round(e.payload.p * 100)); } });
 function matteEl(it, project = P) {
   const m = media(it, project), path = matteFor(it, m);
-  const key = (project === P || project === playbackProject ? chainKey(it) : mtKey(it, m)) + '|mt', url = urlOf({ path });
+  const key = (project === P || project === playbackProject ? chainKey(it) : mtKey(it, m)) + '|mt';
+  return matteVideo(key, path);
+}
+function matteVideo(key, path) {
+  const url = urlOf({ path });
   let el = els.get(key);
   if (el && el.dataset.src === url) return el;
   if (el) { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); }
   el = document.createElement('video');
   Object.assign(el, { preload: 'auto', muted: true, playsInline: true, crossOrigin: 'anonymous' });
   el.dataset.src = el.src = url;
-  el.addEventListener('seeked', () => (needsDraw = true));
+  for (const event of ['loadeddata', 'seeked']) el.addEventListener(event, () => (needsDraw = true));
   mediaHold.appendChild(el); // WebKit only feeds fresh frames from a <video> in the document
   els.set(key, el);
   return el;
@@ -715,11 +1578,11 @@ function toggleProxies() {
   paintProxyToggle();
   proxyChanged();
 }
-function elFor(it) {
+function elFor(it, visual = null) {
   const m = media(it), audio = it.audioOnly || m.kind === 'audio';
-  const rp = it.id.includes('|mc') || it.audioOnly ? null : proxyFor(it);
-  const px = it.audioOnly ? null : rp || mediaProxy(m);
-  const url = px ? urlOf({ path: px }) : urlOf(m), key = chainKey(it);
+  const rp = visual || it.id.includes('|mc') || it.audioOnly ? null : proxyFor(it);
+  const px = visual || it.audioOnly ? null : rp || mediaProxy(m);
+  const url = px ? urlOf({ path: px }) : urlOf(visual || m), key = visual ? it.id + '|prepared' : chainKey(it);
   let el = els.get(key);
   if (el && el.dataset.src === url && el._sourceKey === m.sourceKey) return el;
   const replaced = !!el;
@@ -730,9 +1593,12 @@ function elFor(it) {
 
   el.playsInline = true;
   el._sourceKey = m.sourceKey;
-  el._restoreTime = replaced;
+  el._restoreTime = replaced || !!visual;
+  el._depth = !!visual?.depth;
+  el._preparedOrigin = visual && !visual.animatedStill ? num(it.in, 0) : 0;
+  if (visual) el.muted = true;
   el._proxy = !!px;
-  el._px = !!rp; // a retimed proxy plays timeline time; a plain one keeps source time
+  el._px = !!rp || !!visual?.animatedStill; // a retimed proxy plays timeline time; a plain one keeps source time
   el.dataset.src = url;
   el.src = url;
   el.addEventListener('seeked', () => (needsDraw = true));
@@ -755,9 +1621,11 @@ const BLENDS = { multiply: 'multiply', screen: 'screen', overlay: 'overlay', dar
 // element may already be showing the next piece of the same file).
 const tails = new Map();
 function tailFrame(it) {
-  const m = media(it), px = mediaProxy(m);
+  const original = media(it), visual = preparedVisual(it, original), m = visual || original;
+  const px = !visual && mediaProxy(m);
   const id = it.id + (px ? '|proxy' : '');
-  const at = num(it.in, 0) + S.srcAt(it, Math.max(0, it.dur - 0.5 / P.fps));
+  const lt = Math.max(0, it.dur - 0.5 / P.fps);
+  const at = visual?.depth ? depthLastFrame(visual) : (visual ? 0 : num(it.in, 0)) + S.srcAt(it, lt);
   const key = JSON.stringify([px || m.path, m.sourceKey, at]);
   let c = tails.get(id);
   if (c && c._key === key) return c._ok ? c : null;
@@ -819,20 +1687,67 @@ function drawFillGuide(ctx, f, L) {
 }
 // Denoise / normalize: each source's sound is processed once per effect set (audio_fx, cached),
 // then played and exported in its place.
-const dnOk = new Map(), dnReady = new Map();
-const fxId = (it, m = media(it)) => m.path + '|' + S.fxKey(it);
+const dnOk = new Map(), dnReady = new Map(), voiceJobs = new Map(), voiceErrors = new Map();
+const fxId = (it, m = media(it)) => JSON.stringify([m.path, m.sourceKey, S.fxKey(it)]);
+const voiceError = e => cleanErr(e) === 'voice_clean_missing' ? tr('voiceMissing') : cleanErr(e);
+const stopVoice = job => job && inv('voice_clean_cancel', { job }).catch(e => toast(cleanErr(e)));
 function ensureDn(it, m = media(it)) {
   const id = fxId(it, m), fx = S.fxKey(it);
-  if (!dnOk.has(id)) dnOk.set(id, inv('audio_fx', { path: m.path, fx }).then(path => {
-    dnReady.set(id, path); needsDraw = true; return path;
-  }, e => { dnOk.delete(id); throw e; }));
+  if (!dnOk.has(id)) {
+    const voice = fx.startsWith('voice:');
+    const state = voice ? { job: uid(), p: 0, listeners: new Set() } : null;
+    if (state) {
+      voiceJobs.set(id, state);
+      voiceErrors.delete(id);
+    }
+    dnOk.set(id, inv('audio_fx', { path: m.path, fx, job: state?.job }).then(path => {
+      dnReady.set(id, path); needsDraw = true; return path;
+    }, e => {
+      dnOk.delete(id);
+      if (state) voiceErrors.set(id, cleanErr(e));
+      throw e;
+    }).finally(() => {
+      if (state) { voiceJobs.delete(id); paintVoiceClean(); }
+    }));
+    if (state) paintVoiceClean();
+  }
   return dnOk.get(id).then(path => { (m.fx ??= {})[fx] = path; return path; });
 }
-const dnPrep = (project = P) => Promise.allSettled(project.items.filter(i => media(i, project) && S.fxKey(i))
-  .map(i => ensureDn(i, media(i, project)))).then(results => {
-    const error = results.find(r => r.status === 'rejected');
-    if (error) throw error.reason;
+TA.event.listen('voice-clean-progress', ({ payload: { job, p } }) => {
+  const state = [...voiceJobs.values()].find(s => s.job === job);
+  if (!state) return;
+  state.p = p;
+  paintVoiceClean();
+  for (const listener of state.listeners) listener();
+});
+async function dnPrep(project = P, signal, onProgress) {
+  const pending = new Set();
+  const tasks = project.items.filter(i => {
+    const m = media(i, project), fx = S.fxKey(i);
+    return m && fx && (!fx.startsWith('voice:') || G.audible(project, i));
+  }).map(i => {
+    const m = media(i, project), result = ensureDn(i, m);
+    const state = voiceJobs.get(fxId(i, m));
+    if (state) pending.add(state);
+    return result;
   });
+  const report = () => {
+    if (!signal?.aborted && pending.size) onProgress?.([...pending].reduce((sum, state) => sum + state.p, 0) / pending.size);
+  };
+  const abort = () => { for (const state of pending) stopVoice(state.job); };
+  for (const state of pending) state.listeners.add(report);
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
+  report();
+  try {
+    const results = await Promise.allSettled(tasks);
+    const error = results.find(r => r.status === 'rejected');
+    if (error) throw voiceError(error.reason);
+  } finally {
+    signal?.removeEventListener('abort', abort);
+    for (const state of pending) state.listeners.delete(report);
+  }
+}
 const dnLive = it => !!S.fxKey(it) && dnReady.has(fxId(it));
 function dnEl(it) {
   const m = media(it), key = chainKey(it) + '|dn', url = urlOf({ path: dnReady.get(fxId(it, m)) });
@@ -847,7 +1762,11 @@ function dnEl(it) {
   return el;
 }
 function gcEls() {
-  for (const [id, el] of els) if (!item(id.split('|')[0])) { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); els.delete(id); }
+  for (const [id, el] of els) {
+    const it = item(id.split('|')[0]);
+    if (it && (!id.endsWith('|prepared') || preparedVisual(it, media(it)))) continue;
+    el.pause(); el.removeAttribute('src'); el.load(); el.remove(); els.delete(id);
+  }
 }
 function playMedia(el) {
   if (el._play || performance.now() < el._retryPlay) return;
@@ -885,12 +1804,21 @@ function syncMedia(project = S.expandMulticam(P)) {
   const driven = new Set();
   const drive = (el, it, silent) => { driven.add(el); driveEl(el, it, silent); };
   for (const it of ctl.values()) {
-    if (S.fxKey(it) && !dnOk.has(fxId(it))) ensureDn(it).catch(() => {});
+    const fx = S.fxKey(it);
+    if (fx && (!fx.startsWith('voice:') || hasSound(media(it)) && !it.muted && !voiceErrors.has(fxId(it)))
+      && !dnOk.has(fxId(it))) ensureDn(it).catch(() => {});
     const dn = dnLive(it);
     const el = elFor(it);
     drive(el, it, dn);
     if (!it.audioOnly && !it.id.endsWith('|viewer') && matteFor(it)) drive(matteEl(it), it, true);
     if (dn) drive(dnEl(it), it, false);
+  }
+  for (const it of project.items) {
+    const m = media(it, project), visual = !it.hidden && !it.audioOnly && preparedVisual(it, m, project);
+    if (visual?.kind === 'video' && (active(it, t) || playing && it.start > t && it.start - t < 1.5)) drive(elFor(it, visual), it, true);
+    if (!it.objectMask || it.audioOnly || !active(it, t) && !(playing && it.start > t && it.start - t < 0.8)) continue;
+    const mt = objectMode(it) !== 'fill' && objectMatteState(it, m)?.matte;
+    if (mt && m.kind === 'video' && mt.last > mt.origin) drive(objectMatteEl(it, mt), it, true);
   }
   renderMulticamViewer(viewer, angles);
   for (const el of els.values()) {
@@ -1002,7 +1930,8 @@ const tailSrcAt = (it, x, m = media(it)) => Math.min(Math.max(0, num(m.dur, 0) -
 const liveTail = it => { const m = media(it), TO = S.transOut(playbackProject ?? P, it); return !!TO && S.GLT.includes(TO.id) && m && m.kind === 'video' && !m.fill && !m.adj ? TO : null; };
 const tailEls = new Map();
 function tailEl(key, it) {
-  const m = media(it), px = mediaProxy(m), url = px ? urlOf({ path: px }) : urlOf(m);
+  const m = media(it), visual = preparedVisual(it, m);
+  const px = !visual && mediaProxy(m), url = px ? urlOf({ path: px }) : urlOf(visual || m);
   let el = tailEls.get(key);
   if (el && el.dataset.src === url) return el;
   if (el) { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); }
@@ -1045,7 +1974,15 @@ function driveTails() {
       [a, '|t', aEnd, aEnd + h, x => tailSrcAt(a, x - aEnd)],
       [b, '|h', b.start - h, b.start, x => headSrcAt(b, x - b.start)],
     ]) {
-      if (!isV(it)) continue;
+      const cached = preparedVisual(it, media(it));
+      if (!isV(it) && !cached?.animatedStill) continue;
+      if (cached) {
+        if (edge === '|h') {
+          live.add(it.id + edge);
+          tailEl(it.id + edge, it); // Warm the first cached frame before the clip begins.
+        }
+        continue;
+      }
       driveEdge(it.id + edge, it, s0, s1, sourceAt, live);
     }
   }
@@ -1063,7 +2000,20 @@ function driveEl(el, it, silent) {
   {
     const on = active(it, t), lt = clamp(t - it.start, 0, it.dur);
     // a proxy is already retimed: it plays at 1x from the clip's start
-    const sp = el._px ? playRate : clamp(S.rateAt(it, lt) * playRate, 0.0625, 16), want = el._px ? lt : num(it.in, 0) + S.srcAt(it, lt);
+    const mt = el._objectMatte, sourceTime = objectSourceTime(it, lt), origin = mt?.origin ?? el._preparedOrigin ?? 0;
+    const in0 = el._px ? 0 : Math.max(0, num(it.in, 0) - origin);
+    const sp = el._px ? playRate : clamp(S.rateAt(it, lt) * playRate, 0.0625, 16);
+    let want = el._px ? lt : Math.max(0, sourceTime - origin);
+    if (mt) {
+      if (!playing || sourceTime < mt.origin || sourceTime >= mt.last) {
+        const frame = clamp(Math.floor((sourceTime - mt.origin) * mt.fps + .0001), 0, Math.round((mt.last - mt.origin) * mt.fps));
+        want = (frame + .25) / mt.fps;
+        pauseMedia(el);
+        if (on && el.readyState && !el.seeking && Math.floor(el.currentTime * mt.fps + .0001) !== frame) el.currentTime = want;
+        return;
+      }
+      want = sourceTime - mt.origin;
+    }
     if (el._restoreTime) {
       if (!el.readyState || el.seeking) return;
       el._restoreTime = false;
@@ -1099,16 +2049,15 @@ function driveEl(el, it, silent) {
       }
     } else if (on && playing && (!held || clock.seekHold)) {
       // the file often ends a few ms before its clip does: hold the last frame, no restart (play() costs ~80 ms in WebKit)
-      const atEnd = isFinite(el.duration) ? want >= el.duration - 0.06 : el.ended;
+      const atEnd = isFinite(el.duration) ? want >= el.duration - (el._depth ? 0.001 : 0.06) : el.ended;
       if (el._first && el._live === undefined) { // the cut: wait for its first fresh frame (at most 400 ms)
         el._live = false; el._liveAt = performance.now();
         if (el.requestVideoFrameCallback) el.requestVideoFrameCallback(() => { el._live = true; needsDraw = true; }); else el._live = true;
       }
       if (atEnd) {}
-      else if (el.paused) { if (Math.abs(el.currentTime - want) > 0.15) el.currentTime = want; playMedia(el); }
-      else if (Math.abs(el.currentTime - want) > 0.3 * Math.max(1, sp)) el.currentTime = want; // faster clips drift more between frames
+      else if (el.paused) { if (Math.abs(el.currentTime - want) > (mt ? 0.75 / mt.fps : 0.15)) el.currentTime = want; playMedia(el); }
+      else if (Math.abs(el.currentTime - want) > (mt ? 1 / mt.fps : 0.3 * Math.max(1, sp))) el.currentTime = want; // faster clips drift more between frames
     } else if (warm) {
-      const in0 = el._px ? 0 : num(it.in, 0);
       if (el.paused) { el._first = null; el._live = undefined; if (!el.seeking && Math.abs(el.currentTime - in0) > 0.05) el.currentTime = in0; playMedia(el); }
       // Keep its first frame before the cut: WebKit blocks ~100-200 ms on the first draws of a video that
       // has just started; the preview shows this copy until the player hands over a fresh frame.
@@ -1122,7 +2071,7 @@ function driveEl(el, it, silent) {
       // while dragging: nearest keyframe (fast, smooth); once it stops the exact frame follows
       if (on && !el.seeking && Math.abs(el.currentTime - want) > 0.5 / P.fps) { if (scrubbing && el.fastSeek && Math.abs(el.currentTime - want) > 1) el.fastSeek(want); else el.currentTime = want; }
       // Preroll: park the next clip on its first frame so the cut starts without a seek.
-      else if (!on && playing && it.start > t && it.start - t < 1.5 && !el.seeking && Math.abs(el.currentTime - (el._px ? 0 : num(it.in, 0))) > 0.05) el.currentTime = el._px ? 0 : num(it.in, 0);
+      else if (!on && playing && it.start > t && it.start - t < 1.5 && !el.seeking && Math.abs(el.currentTime - in0) > 0.05) el.currentTime = in0;
     }
   }
 }
@@ -1141,12 +2090,23 @@ const GL = (() => {
   // (N*N) x N strip — x = blue slice * N + red, y = green — read with trilinear blending.
   gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, `precision highp float; varying vec2 uv; uniform sampler2D tex; uniform sampler2D lut; uniform vec4 rect;
     uniform vec3 slope; uniform vec3 icpt; uniform float sat; uniform float useLut; uniform float n; uniform vec3 key; uniform vec2 kuv;
-    uniform float fxId; uniform vec4 fxv; uniform vec2 bsz; uniform float ft; uniform sampler2D mat; uniform float useMat;
+    uniform float fxId; uniform vec4 fxv; uniform vec2 bsz; uniform float ft; uniform sampler2D mat; uniform float useMat; uniform sampler2D obj; uniform float objMode; uniform vec2 objSize;
     vec3 lut3(vec3 v){ vec3 s = clamp(v, 0., 1.) * (n - 1.); float b0 = floor(s.b), b1 = min(b0 + 1., n - 1.);
       vec2 a = vec2((b0 * n + s.r + .5) / (n * n), (s.g + .5) / n), b = vec2((b1 * n + s.r + .5) / (n * n), (s.g + .5) / n);
       return mix(texture2D(lut, a).rgb, texture2D(lut, b).rgb, s.b - b0); }
     vec4 grade(vec2 u){ vec2 su = rect.xy + clamp(u, 0., 1.) * rect.zw; vec4 c = texture2D(tex, su);
       if (useMat > .5) c.a *= texture2D(mat, su).r;
+      if (objMode > .5) {
+        float a = texture2D(obj, su).r;
+        if (objMode < 1.5) c.a *= a;
+        else if (objMode < 2.5) {
+          vec2 p = (floor(su * objSize / 16.) * 16. + 7.5) / objSize;
+          c.rgb = mix(c.rgb, texture2D(tex, p).rgb, a);
+        } else {
+          float y = dot(c.rgb, vec3(.299, .587, .114));
+          c.rgb = mix(vec3(y), c.rgb, a);
+        }
+      }
       if (key.z > 0.) { // chroma key: x = similarity, y = blend, z = on; kuv holds the key's CbCr
         vec2 p = vec2(dot(c.rgb, vec3(-.1146, -.3854, .5)), dot(c.rgb, vec3(.5, -.4542, -.0458)));
         float d = length(p - kuv) / 1.4142;
@@ -1224,10 +2184,13 @@ const GL = (() => {
   gl.bindTexture(gl.TEXTURE_2D, frameTex);
   texParams();
   const U = n => gl.getUniformLocation(prog, n);
-  const u = { mat: U('mat'), useMat: U('useMat'), fxId: U('fxId'), fxv: U('fxv'), bsz: U('bsz'), ft: U('ft'), key: U('key'), kuv: U('kuv'), rect: U('rect'), slope: U('slope'), icpt: U('icpt'), sat: U('sat'), useLut: U('useLut'), n: U('n'), tex: U('tex'), lut: U('lut') };
+  const u = { obj: U('obj'), objMode: U('objMode'), objSize: U('objSize'), mat: U('mat'), useMat: U('useMat'), fxId: U('fxId'), fxv: U('fxv'), bsz: U('bsz'), ft: U('ft'), key: U('key'), kuv: U('kuv'), rect: U('rect'), slope: U('slope'), icpt: U('icpt'), sat: U('sat'), useLut: U('useLut'), n: U('n'), tex: U('tex'), lut: U('lut') };
   gl.uniform1i(u.tex, 0); gl.uniform1i(u.lut, 1); gl.uniform1i(u.mat, 2);
   const matTex = gl.createTexture();
   gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, matTex); texParams(); gl.activeTexture(gl.TEXTURE0);
+  const objTex = gl.createTexture();
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, objTex); texParams(); gl.activeTexture(gl.TEXTURE0);
+  gl.uniform1i(u.obj, 3);
   const luts = new Map(); // baked table -> texture (a few recent ones)
   const lutTex = L => {
     let t = luts.get(L);
@@ -1256,6 +2219,13 @@ const GL = (() => {
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
     gl.uniform1f(u.useMat, g.matte ? 1 : 0);
     if (g.matte) { gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, matTex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, g.matte); gl.activeTexture(gl.TEXTURE0); }
+    gl.uniform1f(u.objMode, g.object?.mode || 0);
+    if (g.object) {
+      gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, objTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, g.object.mask);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform2f(u.objSize, g.object.w, g.object.h);
+    }
     gl.uniform4f(u.rect, sx / W, sy / H, sw / W, sh / H);
     gl.uniform3f(u.slope, g.ch[0].slope, g.ch[1].slope, g.ch[2].slope);
     gl.uniform3f(u.icpt, g.ch[0].intercept, g.ch[1].intercept, g.ch[2].intercept);
@@ -1295,11 +2265,19 @@ function lutFor(it) {
 }
 // drawImage with the item's grade applied.
 function drawGraded(ctx, it, src, sx, sy, sw, sh, dx, dy, dw, dh, lt = 0, project = P) {
-  const g = S.grade(it), adv = S.hasColor(it);
+  const g = S.grade(it), adv = S.hasColor(it), m = media(it, project);
+  const mt = objectMode(it) !== 'fill' && objectMatteState(it, m)?.matte;
+  if (mt) {
+    const live = project === P || project === playbackProject;
+    const mask = live ? (!objectEdit(it) && objectMatteEl(it, mt)) : objectRaster.get(project)?.get(it.id);
+    if (mask && (mask.tagName !== 'VIDEO' || mask.readyState >= 2)) {
+      g.object = { mask, w: m.w, h: m.h, mode: { keep: 1, pixel: 2, pop: 3 }[objectMode(it)] || 1 };
+    }
+  }
   if (matteFor(it, media(it, project))) { const me = matteEl(it, project); if (me.readyState >= 2) g.matte = me; }
   if (S.hasKey(it)) g.chroma = { sim: num(it.chroma.sim, 0.3), blend: num(it.chroma.blend, 0.1), uv: S.keyUV(it.chroma.color) };
   g.fx = S.fxVals(it, lt, dw, dh); g.ft = lt;
-  if ((g.identity && !adv && !g.chroma && !g.fx && !g.matte) || !GL) return ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
+  if ((g.identity && !adv && !g.chroma && !g.fx && !g.matte && !g.object) || !GL) return ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh);
   const W = src.videoWidth || src.naturalWidth || src.width, H = src.videoHeight || src.naturalHeight || src.height;
   try { GL(ctx, src, W, H, sx, sy, sw, sh, dx, dy, dw, dh, g, adv ? lutFor(it) : null); }
   catch (e) { if (!drawGraded.warned) { drawGraded.warned = true; inv('dev_log', { msg: 'grade failed: ' + e }); } ctx.drawImage(src, sx, sy, sw, sh, dx, dy, dw, dh); }
@@ -1404,6 +2382,7 @@ function sampleScale(src, m) {
 function drawItem(ctx, it, time, ov, srcOv, flat, noFx, project = P) {
     const pv = ov && ov.id === it.id, m = media(it, project);
     if (!m || m.kind === 'audio' || it.audioOnly || it.hidden) return;
+    if (offline.has(it.media) && !m.adj) { if ((ov && ov.id === it.id) || active(it, time)) drawOffline(ctx, it, project); return; }
     if (!noFx && !m.adj && (pv || active(it, time))) { // rich animation: draw the clip on its own layer, then animfx.js
       const lt = pv ? ov.lt : time - it.start, q = S.vaFx(it, lt);
       if (q && !(it.blend && it.blend !== 'normal' && !flat)) return drawFx(ctx, it, time, ov, srcOv, flat, q, lt, project);
@@ -1418,14 +2397,24 @@ function drawItem(ctx, it, time, ov, srcOv, flat, noFx, project = P) {
     }
     const end = it.start + it.dur, TO = !pv && time >= end && S.transOut(project, it), tail = !!TO && time < end + (S.GLT.includes(TO.id) ? TO.d / 2 : TO.d);
     const live = project === P || project === playbackProject;
-    if (live && TO === false && m.kind === 'video' && active(it, time) && end - time < 2 && S.transOut(project, it)) tailFrame(it); // fetch ahead
     if (!(pv || tail || active(it, time))) return;
     if (m.adj) { drawAdj(ctx, it, pv ? ov.lt : time - it.start); return; }
-    let src = srcOv || (m.fill ? fillCanvas(it, project.w, project.h) : m.kind === 'image' ? imgFor(m) : live ? (tail ? tailSrc(it) : elFor(it)) : null);
+    const visual = live && (depthPicker?.item === it ? upscaleVisual(it, m) : preparedVisual(it, m, project));
+    if (live && TO === false && (visual || m).kind === 'video' && end - time < 2 && S.transOut(project, it)) tailFrame(it); // fetch ahead
+    let src = srcOv || (m.fill ? fillCanvas(it, project.w, project.h) : (visual || m).kind === 'image' ? imgFor(visual || m)
+      : live ? (tail ? tailSrc(it) : elFor(it, visual)) : null);
+    if (!srcOv && visual?.kind === 'video' && !tail && (src.readyState < 2 || src._restoreTime)) {
+      src = m.kind === 'image' ? imgFor(m) : elFor(it);
+    }
+    const fillLt = pv ? ov.lt : tail ? it.dur : time - it.start;
+    if (live && !objectEdit(it) && objectMode(it) === 'fill') {
+      const cache = fillState(it, m)?.cache;
+      if (cache) src = fillPreview(it, cache, fillLt) || src;
+    }
     if (!src) return;
     if (src._live === false && src._first && performance.now() - src._liveAt < 400) src = src._first;
     if (m.fill || src.tagName === 'CANVAS') {} // fill layer / held last frame: always ready
-    else if (m.kind === 'image' ? !src.complete || !src.naturalWidth : src.readyState < 2 || src._restoreTime) {
+    else if (src.tagName === 'IMG' ? !src.complete || !src.naturalWidth : src.readyState < 2 || src._restoreTime) {
       if (!src._snap) return;
       src = src._snap; // frame-skipping playback: keep the last frame while the next jump lands
     } else if (src._hold && ctx === vctx) {
@@ -1463,6 +2452,15 @@ function drawItem(ctx, it, time, ov, srcOv, flat, noFx, project = P) {
     if (mz !== 1 || mr) { // inside the clip's own box, as the export crops it
       ctx.beginPath(); ctx.rect(L.ox, L.oy, L.cw, L.ch); ctx.clip();
       ctx.translate(L.ox + L.cw / 2, L.oy + L.ch / 2); ctx.rotate(mr * Math.PI / 180); ctx.scale(mz, mz); ctx.translate(-(L.ox + L.cw / 2), -(L.oy + L.ch / 2));
+    }
+    const objectPicking = objectDrawing && objectEdit(it);
+    const depthPicking = objectDrawing && depthPicker?.item === it;
+    if ((objectPicking || depthPicking) && !tail) {
+      const { a, b, c, d, e, f } = ctx.getTransform(), k = ctx.canvas.width / P.w;
+      const geometry = { item: it, matrix: [a / k, b / k, c / k, d / k, e / k, f / k], dest: { x: L.ox, y: L.oy, w: L.cw, h: L.ch },
+        crop: { x: C.x + L.cx * u, y: C.y + L.cy * v, w: L.cw * u, h: L.ch * v }, m, time: objectSourceTime(it, lt) };
+      if (objectPicking) objectGeometry = geometry;
+      if (depthPicking) depthGeometry = geometry;
     }
     const mk = S.hasMask(it) && L.cw >= 1 && L.ch >= 1;
     const dc = mk ? maskBox(L) : ctx;
@@ -1957,7 +2955,10 @@ function draw() {
     for (const it of vt) if (it.track === tid && (!ap || it.id !== ap.id)) drawTextItem(ctx, P, it, t - it.start);
     if (ap && isText(ap) && ap.track === tid) drawTextItem(ctx, P, ap, animPreviewLt(ap));
   });
-  render(vctx);
+  objectGeometry = depthGeometry = null;
+  objectDrawing = true;
+  try { render(vctx); } finally { objectDrawing = false; }
+  drawObjectPrompt();
   syncKfUI();
   placeSelBox();
   if (!panelVisible('scopes')) return;
@@ -2082,6 +3083,7 @@ function applyAccent(colour) {
   needsDraw = true;
 }
 function dockVisibility(before) {
+  if (before.has('text') && !panelVisible('text')) piperAudio.pause();
   if (panelVisible('scopes') && !before.has('scopes')) needsDraw = true;
   if (panelVisible('transcript') && !before.has('transcript')) { renderCapModels(); renderTranscript(); }
   if (panelVisible('trans') && !before.has('trans')) renderTrans();
@@ -2090,6 +3092,7 @@ function dockVisibility(before) {
   if (panelVisible('icons') && !$('#iconList').childElementCount) renderIcons();
   if (panelVisible('captions') && !before.has('captions')) renderCapModels();
   if (panelVisible('sounds') && !before.has('sounds')) loadSfx();
+  if (panelVisible('aiTools') && !before.has('aiTools')) renderAITools();
   if (!panelVisible('sounds') && !sfxAudio.paused) sfxAudio.pause();
   if (!panelVisible('media')) stopBinPrev();
 }
@@ -2174,6 +3177,9 @@ function dockHeader(el, group) {
     b.type = 'button';
     b.dataset.dockTab = id;
     b.textContent = dockName(id);
+    if (id === 'aiTools' && AI_TOOLS_NEW) {
+      b.insertAdjacentHTML('beforeend', `<span class="ai-new">${tr('aiNew')}</span>`);
+    }
     b.onpointerdown = e => startDockDrag(e, id, b);
     b.onclick = e => {
       if (b.dragged && e.detail) { b.dragged = false; return; }
@@ -2455,6 +3461,7 @@ function clockTime() {
   return best && best.it.start + (best.el._px ? best.el.currentTime : S.ltAt(best.it, best.el.currentTime - num(best.it.in, 0))); // a retimed proxy plays timeline time at 1x
 }
 function setPlaying(v, rate = 1) {
+  if (v) piperAudio.pause();
   clock.wait = 0;
   clock.tc = null;
   if (rate !== playRate) waStopAll();
@@ -2672,7 +3679,7 @@ function renderTimeline() {
       const kind = it.compound ? 'group' : kindOf(it);
       const body = it.compound ? `<span>${icon('layers')}${esc(it.name)}</span>` :
         `<div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}
-        ${!media(it)?.angles && (kind === 'audio' || (it.kf?.volume?.length && hasSound(media(it)))) ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>${multicamBoundaries(it)}
+        ${!media(it)?.angles && (kind === 'audio' || (it.kf?.volume?.length && hasSound(media(it)))) ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>${multicamBoundaries(it)}${sceneTicks(it)}
         ${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div>`;
       return `<div class="clip k-${kind}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))">${body}</div>`;
     }).join('');
@@ -2695,6 +3702,15 @@ $('#heads').addEventListener('click', e => {
   if (k === 'lock') x.locked = !x.locked || undefined;
   else { const f = k === 'hide' ? 'hidden' : 'muted', v = !its.every(i => i[f]); for (const i of its) i[f] = v || undefined; }
   dirty = true; refresh();
+});
+$('#heads').addEventListener('contextmenu', e => {
+  const track = e.target.closest('.head')?.dataset.track;
+  const clips = timelineItems().filter(it => it.track === track && isTranslatable(it));
+  if (!clips.length) return;
+  e.preventDefault();
+  const captionTrack = track === 'c1' || P.tracks.some(x => x.id === track && x.captionLanguage);
+  ctxMenu(e, [['translateCaptions', () => openCaptionTranslation(clips)],
+    captionTrack && ['piperRead', () => openPiper(clips)]]);
 });
 $('#heads').addEventListener('pointerdown', e => {
   const h = e.target.closest('.head');
@@ -3148,6 +4164,7 @@ function select(id) {
   msel.clear();
   if (sel === id) { if (had) paintSel(); return; }
   sel = id;
+  if (objectDraft && objectDraft.id !== id) stopObjectEdit();
   paintSel();
   inspTab = null;
   inspector();
@@ -3188,7 +4205,7 @@ function tlMarquee(e) {
   window.addEventListener('pointerup', up, { once: true });
 }
 
-function addMedia(mid, trackId, start) {
+function addMedia(mid, trackId, start, extra, joinStep) {
   const m = P.media[mid];
   const probe = { media: mid };
   if (!trackId || !compatible(probe, trackId)) trackId = m.kind === 'audio' ? 'a1' : 'v1';
@@ -3196,10 +4213,11 @@ function addMedia(mid, trackId, start) {
     const row = openGrp ? timelineItems() : [...P.items, ...groupBlocks()];
     start = row.filter(i => i.track === trackId).reduce((a, i) => Math.max(a, i.start + i.dur), openGrp ? S.groupSpan(row).start : 0);
   }
-  snapshot();
+  if (!joinStep) snapshot();
   const it = { id: uid(), track: trackId, media: mid, start, dur: m.kind === 'image' ? 5 : m.dur, in: 0, speed: 1, volume: 1 };
   if (m.angles) it.cuts = [{ t: 0, angle: m.defaultAngle }];
   if (m.kind !== 'audio') Object.assign(it, { fit: 'contain', scale: 1, x: 0, y: 0, opacity: 1, preset: 'none', brightness: 1, contrast: 1, saturation: 1, temp: 0 });
+  Object.assign(it, extra);
   addTimelineItem(it);
   if (it.track === 'v1') pack();
   setSelection([it.id]);
@@ -3238,10 +4256,10 @@ function splitAt(all) {
   if (ok.some(i => i.track === 'v1')) pack();
   refresh();
 }
-function splitItems(ok) {
+function splitItems(ok, at = t) {
   for (const it of ok) {
-    const cut = t - it.start, b = JSON.parse(JSON.stringify(it));
-    b.id = uid(); b.start = t; b.dur = it.dur - cut; b.fadeIn = 0;
+    const cut = at - it.start, b = JSON.parse(JSON.stringify(it));
+    b.id = uid(); b.start = at; b.dur = it.dur - cut; b.fadeIn = 0;
     S.shiftTimes(b, cut);
     if (sourceBound(it)) b.in = num(it.in, 0) + S.srcAt(it, cut);
     if (S.hasCurve(it)) { b.curve = S.subCurve(it, cut, it.dur); it.curve = S.subCurve(it, 0, cut); }
@@ -3436,6 +4454,9 @@ function mirrorSel() {
 
 let binSig = '';
 function refresh() {
+  if (depthTask && (depthTask.project !== P || item(depthTask.item.id) !== depthTask.item)) stopDepth(depthTask);
+  if (depthPicker && (depthPicker.project !== P || item(sel) !== depthPicker.item || depthPicker.item.hidden)) endDepthPick();
+  if (upscaleTask?.item && (upscaleTask.project !== P || item(upscaleTask.item.id) !== upscaleTask.item)) stopUpscale(upscaleTask);
   closeMarkerEditor();
   if (MEDIA_BASE) ensureFonts();
   P.groups ??= {};
@@ -3486,6 +4507,8 @@ const grp = (title, body) => `<div class="grp"><div class="gh">${tr(title)}</div
 
 // Built-in tracks have their own names; extra video tracks (added for effect layers) are "Video N", counted from the bottom.
 function trackLabel(x) {
+  if (x.captionLanguage === 'ar') return tr('subtitleTrackAr');
+  if (x.captionLanguage === 'en') return tr('subtitleTrackEn');
   const k = 'tr_' + x.id;
   if (tr(k) !== k) return tr(k);
   const vs = P.tracks.filter(y => y.kind === x.kind && y.id !== 'c1');
@@ -3501,6 +4524,54 @@ function duckFields(it) {
     fld.select('duck.source', 'duckSource', [['', tr('duckAll')], ...tracks], form) +
     `<button class="wide" id="duckGo"${busy ? ' disabled' : ''}>${icon('volume-2')}${tr(busy ? 'duckWork' : 'duckGo')}</button>` : ''));
 }
+function voiceCleanFields(it) {
+  if (!hasSound(media(it))) return '';
+  const voice = S.voiceSettings(it.voiceClean);
+  return `<div class="inl"><label><input type="checkbox" role="switch" data-voice="on"${voice.on ? ' checked' : ''}>${tr('voiceClean')}</label></div>
+    <p class="hint">${tr('voiceHint')}</p>` + (voice.on ? `
+    <label class="f"><span>${tr('voiceStrength')}</span>
+      <select data-voice="strength">
+        ${[[12, 'voiceLight'], [24, 'voiceMedium'], [100, 'voiceStrong']].map(([db, label]) =>
+          `<option value="${db}"${db === voice.strength ? ' selected' : ''}>${tr(label)}</option>`).join('')}
+      </select>
+    </label>
+    <label class="f"><span class="lb">${tr('voiceRoom')} <output>${voice.room}%</output></span>
+      <input type="range" min="0" max="30" step="1" value="${voice.room}" data-voice="room">
+    </label>
+    <div data-voice-status>${voiceCleanStatus(it)}</div>` : '');
+}
+function voiceCleanStatus(it) {
+  const id = fxId(it), state = voiceJobs.get(id), error = voiceErrors.get(id);
+  const transfer = aiTransfers.get('voice_clean_dl');
+  const button = (action, label) => `<button type="button" class="ghost" data-voice-action="${action}">${tr(label)}</button>`;
+  const bar = p => `<div class="pxb insp" style="--p:${p}" role="progressbar" aria-label="${tr('voiceClean')}" aria-valuenow="${Math.round(p * 100)}"><i></i><em>${tr('voiceProgress', { p: Math.round(p * 100) })}</em></div>`;
+  if (state) return bar(state.p) + button('cancel', 'cancel');
+  if (!error) return '';
+  if (error === 'voice_clean_missing' && transfer?.action === 'download')
+    return `<p class="hint">${tr('aiDownloading', { p: Math.round(transfer.p * 100) })}</p>` + button('stop-download', 'cancel');
+  const ready = aiReady.get(voiceCleanModel.key());
+  if (error === 'voice_clean_missing' && ready === null) return `<p class="hint">${tr('aiUnavailable')}</p>`;
+  if (error === 'voice_clean_missing' && !ready)
+    return `<p class="hint">${tr('voiceMissing')}</p>` + button('download', 'aiDownload');
+  const label = error === 'cancelled' ? tr('cancelled') : voiceError(error);
+  return `<p class="hint">${esc(label)}</p>` + button('retry', 'voiceRetry');
+}
+function paintVoiceClean() {
+  const body = $('#inspBody [data-voice-status]'), it = sel && item(sel);
+  if (body && it && hasSound(media(it)) && it.voiceClean?.on) {
+    const html = voiceCleanStatus(it);
+    if (body._voiceStatus !== html) {
+      body._voiceStatus = html;
+      const action = document.activeElement?.dataset.voiceAction;
+      body.innerHTML = html;
+      if (action) body.querySelector(`[data-voice-action="${action}"]`)?.focus({ preventScroll: true });
+    }
+  }
+}
+function tryVoiceClean(it) {
+  ensureDn(it).catch(() => {}); // the inspector shows the error and its retry action
+}
+
 function inspTabsFor(it) {
   if (!it) return [];
   if (isText(it)) return ['tText', 'tTpl', 'tAnim'];
@@ -3565,6 +4636,7 @@ const trkBtns = it => grp('tracking', `<button class="wide" id="trkGo">${icon('c
 // Eyedropper: the next click on the preview takes that pixel's colour into the chosen colour box.
 let pickInput = null;
 function startPick(inp) {
+  if (depthPicker) endDepthPick();
   pickInput = inp;
   view.classList.add('picking');
   toast(tr('pickHint'));
@@ -3609,6 +4681,7 @@ $('#inspBody').addEventListener('pointerdown', e => {
 });
 function inspector() {
   kfSyncT = -1;
+  if (depthPicker && (depthPicker.project !== P || item(sel) !== depthPicker.item || depthPicker.item.hidden)) endDepthPick();
   if (panelVisible('trans')) renderTrans();
   const body = $('#inspBody'), it = sel && item(sel), tabs = inspTabsFor(it);
   if (!tabs.includes(inspTab)) inspTab = tabs[0] || null;
@@ -3734,10 +4807,12 @@ function inspector() {
     if (media(it).kind === 'video') h.push(grp('stabSec', it.stabFrom ? `<button class="wide" id="stabOff">${icon('x')}${tr('stabOff')}</button>` :
       fld.select('stabLvl', 'stabLvl', [[1, tr('stab1')], [2, tr('stab2')], [3, tr('stab3')]], { stabLvl: num(it.stabLvl, 2) }) +
       (stabBusy.has(it.media) ? `<p class="hint work">${tr('stabWork')}</p>` : `<button class="wide" id="stabGo">${icon('vibrate')}${tr('stabGo')}</button>`) + `<p class="hint">${tr('stabHint')}</p>`));
+    if (upscaleMedia(it)) h.push(depthInspector(it, media(it)), upscaleInspector(it, media(it)));
     if (it.track !== 'v1') h.push(trkBtns(it));
     if (!FM) h.push(`<div id="cropGrp">${grp('cropSec', `<div class="row2">${fld.range('crop.l', 'cropL', 0, 0.45, 0.01, it)}${fld.range('crop.r', 'cropR', 0, 0.45, 0.01, it)}</div>` +
       `<div class="row2">${fld.range('crop.t', 'cropT', 0, 0.45, 0.01, it)}${fld.range('crop.b', 'cropB', 0, 0.45, 0.01, it)}</div>`)}</div>`);
     const K = it.chroma || {};
+    if (objectMedia(it)) h.push(objectInspector(it, media(it)));
     if (!FM && media(it).kind === 'video') {
       const mf = matteFor(it), mp = matteProg.get(it.id) || 0;
       const ob = mtKind(it) === 'object';
@@ -3762,7 +4837,8 @@ function inspector() {
     if (media(it).kind !== 'audio') h.push(`<div class="row2">${fld.range('afIn', 'fadeIn', 0, 5, 0.05, it)}${fld.range('afOut', 'fadeOut', 0, 5, 0.05, it)}</div>`);
     h.push(grp('dnSec', `<div class="inl">${fld.check('norm', 'normalize', it)}</div><p class="hint">${tr('normHint')}</p>` +
       `<div class="inl">${fld.check('denoise', 'denoise', it)}</div><p class="hint">${tr('denoiseHint')}</p>` +
-      (S.fxKey(it) && !dnLive(it) ? `<p class="hint work">${tr('dnWork')}</p>` : '')));
+      voiceCleanFields(it) +
+      (!it.voiceClean?.on && S.fxKey(it) && !dnLive(it) ? `<p class="hint work">${tr('dnWork')}</p>` : '')));
     if (media(it).kind === 'audio') h.push(duckFields(it), fades);
   } else if (inspTab === 'tSpeed') {
     const durRow = `<div class="f"><div class="lb"><span>${tr('dur')}</span></div><div class="spdur"><span>${S.srcLen(it).toFixed(1)}s</span><i></i><input type="number" data-k="dur" step="0.1" value="${+it.dur.toFixed(2)}"></div></div>`;
@@ -3773,19 +4849,28 @@ function inspector() {
     if (media(it).kind === 'video' || media(it).hasAudio || media(it).kind === 'audio') h.push(`<div class="inl">${fld.check('pitch', 'pitchShift', it)}</div>`);
     if (media(it).kind === 'video') h.push(`<div class="inl">${fld.check('smooth', 'smoothSlow', it)}</div><p class="hint">${tr(rifeTool ? 'smoothHintAi' : 'smoothHint')}</p>`, rifeTool ? '' : `<button class="ghost" data-rifeget>${icon('download')}<span>${tr('rifeGet')}</span></button>`, pxBar(it, 'insp'));
   } else if (inspTab === 'tAdjust') {
-    h.push(`<div class="seg csub">${['basic', 'hsl', 'curves', 'wheels', 'lut', 'mask'].map(x => `<button data-csub="${x}" class="${x === colSub ? 'on' : ''}">${tr('cs_' + x)}</button>`).join('')}</div>`);
+    h.push(`<div class="seg csub">${['basic', 'hsl', 'qual', 'curves', 'wheels', 'lut', 'mask'].map(x => `<button data-csub="${x}" class="${x === colSub ? 'on' : ''}">${tr('cs_' + x)}</button>`).join('')}</div>`);
     const C = it.color || {};
     if (colSub === 'basic') {
       h.push(fld.select('preset', 'filter', Object.keys(S.PRESETS).map(p => [p, tr('p_' + p)]), it));
       h.push(fld.range('brightness', 'brightness', 0.5, 1.5, 0.01, it, 1), fld.range('contrast', 'contrast', 0.5, 1.5, 0.01, it, 1));
       h.push(fld.range('saturation', 'saturation', 0, 2, 0.01, it, 1), fld.range('temp', 'temp', -1, 1, 0.01, it));
       h.push(`<div class="row2 cbtns"><button id="autoAdj" data-i="wand-sparkles"><span>${tr('autoAdj')}</span></button><button id="colMatch" data-i="pipette"><span>${tr('colMatch')}</span></button></div><p class="hint">${tr('autoHint')}</p>`);
+      if (C.match) h.push(fld.range('color.match.amt', 'matchAmt', 0, 100, 1, it, 100));
       h.push(`<button class="wide" id="colReset" data-i="rotate-ccw"><span>${tr('resetAllColor')}</span></button>`);
     } else if (colSub === 'hsl') {
       h.push(`<div class="hsw">${S.HSL_BANDS.map(([b, hc]) => { const v = (C.hsl || {})[b]; const used = v && (num(v.h, 0) || num(v.s, 0) || num(v.l, 0));
         return `<button data-hsl="${b}" class="${b === hslSel ? 'on' : ''}${used ? ' used' : ''}" style="--hc:hsl(${hc} 85% 55%)" title="${tr('hc_' + b)}"></button>`; }).join('')}</div>`);
       h.push(fld.range(`color.hsl.${hslSel}.h`, 'hue', -100, 100, 1, it), fld.range(`color.hsl.${hslSel}.s`, 'saturation', -100, 100, 1, it), fld.range(`color.hsl.${hslSel}.l`, 'lightness', -100, 100, 1, it));
       h.push(`<button class="wide" id="hslReset" data-i="rotate-ccw"><span>${tr('reset')}</span></button>`);
+    } else if (colSub === 'qual') {
+      h.push(`<div class="inl">${fld.check('color.qual.on', 'qualOn', it)}${fld.check('color.qual.show', 'qualShow', it)}<button class="ghost" id="qualPickBtn" data-i="pipette"><span>${tr('qualPick')}</span></button><input type="color" id="qualPick" hidden></div>`);
+      h.push(fld.range('color.qual.h', 'hue', 0, 360, 1, it, 0), fld.range('color.qual.hw', 'qualWidth', 0, 360, 1, it, 40));
+      h.push(`<div class="row2">${fld.range('color.qual.smin', 'qualSatMin', 0, 1, 0.01, it, 0.1)}${fld.range('color.qual.smax', 'qualSatMax', 0, 1, 0.01, it, 1)}</div>`);
+      h.push(`<div class="row2">${fld.range('color.qual.lmin', 'qualLumMin', 0, 1, 0.01, it, 0)}${fld.range('color.qual.lmax', 'qualLumMax', 0, 1, 0.01, it, 1)}</div>`);
+      h.push(fld.range('color.qual.soft', 'qualSoft', 0, 1, 0.01, it, 0.2), `<div class="gh">${tr('qualAdjust')}</div>`);
+      h.push(fld.range('color.qual.dh', 'hue', -100, 100, 1, it), fld.range('color.qual.ds', 'saturation', -100, 100, 1, it), fld.range('color.qual.dl', 'lightness', -100, 100, 1, it));
+      h.push(`<p class="hint">${tr('qualHint')}</p><button class="wide" id="qualReset" data-i="rotate-ccw"><span>${tr('reset')}</span></button>`);
     } else if (colSub === 'curves') {
       h.push(`<div class="seg cch">${['l', 'r', 'g', 'b'].map(c => `<button data-cch="${c}" class="${c === curCh ? 'on' : ''} c-${c}">${tr('ch_' + c)}</button>`).join('')}</div>`);
       h.push(`<div class="cved"><svg id="ccEd" viewBox="0 0 256 256"></svg></div><p class="hint">${tr('curveHint')}</p>`);
@@ -3847,6 +4932,12 @@ function inspector() {
       toast(tr(keyframes ? 'duckDone' : 'duckEmpty'));
     } catch (e) { toast(cleanErr(e)); }
   });
+  bind('#qualReset', () => { snapshot(); if (it.color) delete it.color.qual; refresh(); });
+  bind('#qualPickBtn', () => { if (it.color?.qual?.show) { snapshot(); it.color.qual.show = false; refresh(); } startPick($('#qualPick')); });
+  if ($('#qualPick')) $('#qualPick').onchange = e => {
+    const v = e.target.value, [h] = S.rgb2hsl(...[1, 3, 5].map(i => parseInt(v.slice(i, i + 2), 16) / 255));
+    snapshot(); const q = (col().qual ??= {}); q.h = Math.round(h); q.on = true; refresh();
+  };
   bind('#hslReset', () => { snapshot(); if (it.color && it.color.hsl) delete it.color.hsl[hslSel]; refresh(); });
   bind('#curReset', () => { snapshot(); if (it.color && it.color.curves) delete it.color.curves[curCh]; refresh(); });
   bind('#whlReset', () => { snapshot(); if (it.color) { delete it.color.wheels; delete it.color.wheelMix; } refresh(); });
@@ -3864,28 +4955,121 @@ function inspector() {
   bind('#keyPick', () => keyPick(it));
   bind('#hideBtn', () => toggleHidden());
   addPickers(body);
+  for (const control of document.querySelectorAll('#inspBody [data-depth-field]')) {
+    control.onchange = () => setDepthDraft(it, { [control.dataset.depthField]:
+      control.type === 'checkbox' ? control.checked : control.type === 'range' ? +control.value : control.value });
+  }
+  bind('#depthApply', () => prepareDepth(it).catch(e => toast(cleanErr(e))));
+  bind('#depthCancel', () => stopDepth(depthTask));
+  bind('#depthPick', () => startDepthPick(it));
+  bind('#depthAuto', () => { endDepthPick(); setDepthDraft(it, { focus: null }); inspector(); });
+  const upScale = $('#upscaleScale'), upModel = $('#upscaleModel');
+  if (upScale) upScale.onchange = () => setUpscale(it, { scale: +upScale.value, model: upscaleType(it) });
+  if (upModel) upModel.onchange = () => setUpscale(it, { scale: upscaleScale(it), model: upModel.value });
+  bind('#upscalePrepare', () => prepareUpscale(it).catch(e => toast(cleanErr(e))));
+  bind('#upscaleCancel', () => stopUpscale(upscaleTask));
   bind('#stabGo', () => stabilize(it));
   bind('#stabOff', () => { snapshot(); it.media = it.stabFrom; delete it.stabFrom; dirty = true; refresh(); });
   bind('#fillSwap',() => { snapshot(); const f = it.fill; [f.c1, f.c2, f.a1, f.a2] = [f.c2, f.c1, f.a2, f.a1]; dirty = true; refresh(); });
   bind('#colMatch', () => colorMatchPick(it));
 }
+$('#inspBody').addEventListener('click', e => {
+  const action = e.target.closest('[data-object]')?.dataset.object;
+  if (!action) return;
+  const it = item(sel), draft = objectEdit(it);
+  if (action === 'select') openObjectSelect(it);
+  if (action === 'brush' || action === 'watermark') openBrush(it, action === 'watermark');
+  if (action === 'apply-brush') applyBrush(it);
+  if (action === 'fill-retry') retryFill(it);
+  if (action === 'fill-cancel') { fillState(it, media(it))?.cancel(); inspector(); }
+  if (action === 'cancel') cancelObjectJob();
+  if (action === 'clear' && draft?.brush) {
+    draft.strokes = [];
+    draft.overlay.width = draft.overlay.width;
+    needsDraw = true; inspector();
+    return;
+  }
+  if (action === 'clear' && draft) {
+    draft.prompt = { points: [], bbox: null }; draft.overlay = null; draft.lost = false; draft.pending = false;
+    needsDraw = true; inspector();
+  }
+  if (action === 'still' || action === 'track') applyObject(it, action === 'still');
+  if (action === 'remove' && it?.objectMask) {
+    const fill = fillState(it, media(it));
+    snapshot(); delete it.objectMask; dirty = true;
+    releaseFill(fill);
+    refresh();
+  }
+});
+$('#inspBody').addEventListener('change', e => {
+  const it = item(sel), draft = objectEdit(it), field = e.target.dataset.brushField;
+  if (field && draft?.brush) {
+    if (field === 'size') draft.size = +e.target.value;
+    if (field === 'erase') draft.erase = e.target.checked;
+    if (field === 'track') {
+      draft.track = e.target.value;
+      draft.motion = brushTracks(it).find(f => f.id === draft.track)?.trk.subject.pts || [];
+      needsDraw = true;
+    }
+    return;
+  }
+  const k = e.target.dataset.objectField;
+  if (!k || !it?.objectMask) return;
+  const v = k === 'mode' ? e.target.value : (k === 'invert' || k === 'smooth') ? e.target.checked :
+    clamp(Math.round(num(+e.target.value, 0)), k === 'expand' ? -128 : 0, 128);
+  if (it.objectMask[k] === v) return;
+  const fill = fillState(it, media(it));
+  if (draft && k === 'mode') draft.mode = v;
+  snapshot(); it.objectMask = { ...it.objectMask, [k]: v }; dirty = true;
+  releaseFill(fill);
+  refresh();
+});
 $('#inspBody').addEventListener('click', async e => {
   if (!e.target.closest('[data-matteget]')) return;
   const it = sel && item(sel), kind = it ? mtKind(it) : 'person';
   if (!(await TA.dialog.ask(tr(kind === 'object' ? 'matteAskObj' : 'matteAsk'), { title: tr('rmbgSec') }))) return;
-  try { progress(tr('p_matte_dl'), 0); await inv('matte_download', { kind }); matteTool[kind] = true; hideModal(); toast(tr('matteOk')); inspector(); }
+  try { progress(tr('p_matte_dl'), 0); await matteModels[kind].download(false); hideModal(); toast(tr('matteOk')); inspector(); }
   catch (err) { hideModal(); toast(cleanErr(err)); }
 });
 // one-time download of the AI frame engine (RIFE, under 20 MB)
 $('#inspBody').addEventListener('click', async e => {
   if (!e.target.closest('[data-rifeget]')) return;
   if (!(await TA.dialog.ask(tr('rifeAsk'), { title: tr('smoothSlow') }))) return;
-  try { progress(tr('p_rife_dl'), 0); await inv('rife_download'); rifeTool = true; hideModal(); toast(tr('rifeOk')); refresh(); }
+  try { progress(tr('p_rife_dl'), 0); await rifeModel.download(false); hideModal(); toast(tr('rifeOk')); refresh(); }
   catch (err) { hideModal(); toast(cleanErr(err)); }
+});
+$('#inspBody').addEventListener('input', e => {
+  if (e.target.dataset.voice === 'room') e.target.closest('label').querySelector('output').value = e.target.value + '%';
+});
+$('#inspBody').addEventListener('change', e => {
+  const key = e.target.dataset.voice, it = sel && item(sel);
+  if (!key || !it || !hasSound(media(it))) return;
+  const value = key === 'on' ? e.target.checked : Number(e.target.value);
+  if (S.voiceSettings(it.voiceClean)[key] === value) return;
+  snapshot();
+  (it.voiceClean ??= {})[key] = value;
+  dirty = needsDraw = true;
+  if (it.voiceClean.on) tryVoiceClean(it);
+  if (key === 'on') {
+    inspector();
+    $('#inspBody [data-voice="on"]')?.focus({ preventScroll: true });
+  }
 });
 $('#inspBody').addEventListener('click', e => {
   const it = sel && item(sel);
   if (!it) return;
+  const voiceAction = e.target.closest('[data-voice-action]')?.dataset.voiceAction;
+  if (voiceAction) {
+    if (voiceAction === 'cancel') return stopVoice(voiceJobs.get(fxId(it))?.job);
+    if (voiceAction === 'stop-download') return stopVoice('download');
+    if (voiceAction === 'download') {
+      voiceCleanModel.download().then(() => {
+        if (item(it.id) === it && it.voiceClean?.on) tryVoiceClean(it);
+      }).catch(e => { if (cleanErr(e) !== 'cancelled') toast(voiceError(e)); });
+      return;
+    }
+    return tryVoiceClean(it);
+  }
   const cs = e.target.closest('[data-csub]'), hs = e.target.closest('[data-hsl]'), ch = e.target.closest('[data-cch]'), lk = e.target.closest('[data-look]');
   if (cs) { colSub = cs.dataset.csub; needsDraw = true; inspector(); }
   else if (e.target.closest('[data-mask]')) {
@@ -3982,24 +5166,31 @@ async function autoAdjust(it) {
   (it.color ??= {}).auto = { lo, hi };
   dirty = true; refresh(); toast(tr('autoDone'));
 }
-// Colour match: pick another clip; this clip's mean/contrast per channel is moved onto that clip's.
+// Colour match (Reinhard in Lab): pick a clip (the ones under the playhead first) or a still image;
+// this clip's frame statistics are moved onto the reference's and stored as RGB gain/offset with an amount.
 function colorMatchPick(it) {
-  const others = P.items.filter(x => x !== it && media(x) && media(x).kind !== 'audio' && !isText(x));
-  if (!others.length) return toast(tr('matchNone'));
+  const others = P.items.filter(x => x !== it && media(x) && media(x).kind !== 'audio' && !isText(x)).sort((a, b) => active(b, t) - active(a, t));
   $('#modal').hidden = false;
-  $('#mBox').innerHTML = `<h3>${tr('colMatch')}</h3><p class="hint">${tr('matchPick')}</p><div class="mlist">${others.map((x, i) => `<button data-mi="${i}"><b dir="ltr">${esc(media(x).name)}</b><small>${x.start.toFixed(1)}s</small></button>`).join('')}</div><div class="acts"><span class="flex"></span><button id="mNo">${tr('cancel')}</button></div>`;
+  $('#mBox').innerHTML = `<h3>${tr('colMatch')}</h3><p class="hint">${tr('matchPick')}</p><div class="mlist"><button data-still>${icon('upload')}<b>${tr('matchStill')}</b></button>${others.map((x, i) => `<button data-mi="${i}"><b dir="ltr">${esc(media(x).name)}</b><small>${active(x, t) ? tr('matchNow') + ' · ' : ''}${x.start.toFixed(1)}s</small></button>`).join('')}</div><div class="acts"><span class="flex"></span><button id="mNo">${tr('cancel')}</button></div>`;
   $('#mNo').onclick = hideModal;
   $('#mBox').onclick = async e => {
-    const b = e.target.closest('[data-mi]');
+    const b = e.target.closest('[data-mi],[data-still]');
     if (!b) return;
-    const ref = others[+b.dataset.mi];
-    hideModal();
     try {
-      const a = frameStats(await framePixels(it, t - it.start)), r = frameStats(await framePixels(ref, ref.dur / 2));
-      const gain = [0, 1, 2].map(k => +clamp(r.sd[k] / Math.max(0.02, a.sd[k]), 0.5, 2).toFixed(4));
-      const off = [0, 1, 2].map(k => +clamp(r.mean[k] - a.mean[k] * gain[k], -0.5, 0.5).toFixed(4));
-      snapshot(); (it.color ??= {}).match = { gain, off }; dirty = true; refresh(); toast(tr('matchDone'));
-    } catch (er) { toast(tr('error') + ': ' + cleanErr(er)); }
+      let rd;
+      if (b.dataset.still != null) {
+        const f = await TA.dialog.open({ filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
+        if (!f) return;
+        const im = new Image(); im.crossOrigin = 'anonymous';
+        await new Promise((ok, no) => { im.onload = ok; im.onerror = no; im.src = urlOf({ path: f }); });
+        const c = document.createElement('canvas'); c.width = c.height = 96;
+        const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(im, 0, 0, 96, 96);
+        rd = x.getImageData(0, 0, 96, 96).data;
+      } else { const ref = others[+b.dataset.mi]; rd = await framePixels(ref, active(ref, t) ? t - ref.start : ref.dur / 2); }
+      hideModal();
+      const m = S.reinhardGainOffset(S.labStats(await framePixels(it, t - it.start)), S.labStats(rd));
+      snapshot(); (it.color ??= {}).match = { ...m, amt: 100 }; dirty = true; refresh(); toast(tr('matchDone'));
+    } catch (er) { hideModal(); toast(tr('error') + ': ' + cleanErr(er)); }
   };
 }
 // Colour curve editor: drag points, click the line to add one, double-click a point to remove it.
@@ -4153,7 +5344,10 @@ $('#inspBody').addEventListener('input', e => {
     inspector();
   }
   if (k === 'duck.on' && !v) S.writeDuckKeys(it, []);
-  if ((k === 'denoise' || k === 'norm') && S.fxKey(it) && !dnLive(it)) {
+  if ((k === 'denoise' || k === 'norm') && it.voiceClean?.on) {
+    if (k === 'norm') tryVoiceClean(it);
+    // The general change handler redraws after the checkbox commits.
+  } else if ((k === 'denoise' || k === 'norm') && S.fxKey(it) && !dnLive(it)) {
     ensureDn(it).then(() => { toast(tr('dnDone')); if (sel === it.id) inspector(); },
       er => { it[k] = false; if (sel === it.id) inspector(); toast(tr('dnFail') + ': ' + cleanErr(er)); });
     inspector();
@@ -4166,9 +5360,38 @@ $('#inspBody').addEventListener('input', e => {
   renderTimeline();
   needsDraw = true;
 });
+$('#inspBody').addEventListener('input', e => {
+  if (e.target.dataset.voice === 'room') e.target.closest('label').querySelector('output').value = e.target.value + '%';
+});
+$('#inspBody').addEventListener('change', e => {
+  const key = e.target.dataset.voice, it = sel && item(sel);
+  if (!key || !it || !hasSound(media(it))) return;
+  const value = key === 'on' ? e.target.checked : Number(e.target.value);
+  if (S.voiceSettings(it.voiceClean)[key] === value) return;
+  snapshot();
+  (it.voiceClean ??= {})[key] = value;
+  dirty = needsDraw = true;
+  if (it.voiceClean.on) tryVoiceClean(it);
+  if (key === 'on') {
+    inspector();
+    $('#inspBody [data-voice="on"]')?.focus({ preventScroll: true });
+  }
+});
 $('#inspBody').addEventListener('click', e => {
   const it = sel && item(sel);
   if (!it) return;
+  const voiceAction = e.target.closest('[data-voice-action]')?.dataset.voiceAction;
+  if (voiceAction) {
+    if (voiceAction === 'cancel') return stopVoice(voiceJobs.get(fxId(it))?.job);
+    if (voiceAction === 'stop-download') return stopVoice('download');
+    if (voiceAction === 'download') {
+      voiceCleanModel.download().then(() => {
+        if (item(it.id) === it && it.voiceClean?.on) tryVoiceClean(it);
+      }).catch(e => { if (cleanErr(e) !== 'cancelled') toast(voiceError(e)); });
+      return;
+    }
+    return tryVoiceClean(it);
+  }
   const kb = e.target.closest('[data-kf]');
   if (kb) { const a = kb.dataset.kf, group = kb.parentElement.dataset.kfGroup; return a === 'tog' ? kfToggle(it, group) : kfJump(it, a === 'next' ? 1 : -1, group); }
   const ac = e.target.closest('[data-acat]');
@@ -4239,6 +5462,7 @@ $('#inspBody').addEventListener('click', e => {
 });
 $('#inspBody').addEventListener('change', e => {
   editing = false;
+  if (e.target.dataset.voice) return;
   if (e.target.tagName === 'SELECT' || e.target.type === 'checkbox' || e.target.type === 'number') inspector();
 });
 
@@ -4272,7 +5496,7 @@ function placeSelBox() {
   const bs = playing || msel.size < 2 ? [] : [...msel].map(shown).filter(Boolean);
   while (mselBoxes.length < bs.length) mselBoxes.push($('#stage').appendChild(Object.assign(document.createElement('div'), { className: 'mselbox' })));
   mselBoxes.forEach((d, i) => { d.hidden = i >= bs.length; if (!d.hidden) Object.assign(d.style, at(bs[i])); });
-  const it = sel && item(sel), b = it && !playing && msel.size < 2 && active(it, t) && !(media(it) && media(it).kind === 'audio') && boxOf(it);
+  const it = sel && item(sel), b = it && !objectEdit(it) && !playing && msel.size < 2 && active(it, t) && !(media(it) && media(it).kind === 'audio') && boxOf(it);
   selBox.hidden = !b;
   if (!b) return;
   Object.assign(selBox.style, at(b));
@@ -4349,6 +5573,13 @@ function editTextInline(it) {
 }
 // Click on the empty area around the frame: drop the selection.
 $('#stage').addEventListener('pointerdown', e => { if (e.button === 0 && e.target === e.currentTarget && (sel || msel.size)) select(null); });
+$('#stage').addEventListener('pointerdown', depthPointer, true);
+window.addEventListener('keydown', e => {
+  if (!depthPicker || e.key !== 'Escape') return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  endDepthPick();
+}, true);
+view.addEventListener('pointerdown', objectPointer, true);
 view.addEventListener('pointerdown', e => {
   const r = view.getBoundingClientRect(), k = P.w / r.width, x0 = e.clientX, y0 = e.clientY;
   if (e.button !== 0) return;
@@ -4414,6 +5645,7 @@ function guides(gx, gy) {
 // Right-click on the preview: put the layer back in the frame
 view.addEventListener('contextmenu', e => {
   e.preventDefault();
+  if (objectEdit(item(sel))) return;
   const r = view.getBoundingClientRect(), k = P.w / r.width;
   const hit = hitAt((e.clientX - r.left) * k, (e.clientY - r.top) * k), it = hit || (sel && item(sel));
   if (!it || (media(it) && media(it).kind === 'audio')) return;
@@ -4619,11 +5851,12 @@ function renderBin() {
     const th = m.angles ? icon('layers') : m.kind === 'video' ? `<video src="${url}#t=0.5" muted preload="metadata"></video>`
       : m.kind === 'image' ? `<img src="${url}">` : icon('music');
     const proxyBadge = S.needsProxy(m, 'always') ? '<span class="proxy-badge" role="img" hidden>P</span>' : '';
-    return `<div class="mi${binSel.has(id) ? ' sel' : ''}" data-mid="${id}" title="${esc(m.path)}"><div class="th">${th}${proxyBadge}<span class="du">${m.dur ? fmt(m.dur) : tr('image')}</span>${used.has(id) ? `<span class="used" title="${tr('inUse')}">${icon('check')}</span>` : ''}<button class="add" data-add title="${tr('addToTl')}">${icon('plus')}</button><button class="del" data-del title="${tr('del')}">${icon('trash-2')}</button></div><div class="nm">${esc(m.name)}</div></div>`;
+    return `<div class="mi${binSel.has(id) ? ' sel' : ''}" data-mid="${id}" title="${esc(m.path)}"><div class="th">${th}${proxyBadge}<span class="du">${m.dur ? fmt(m.dur) : tr('image')}</span>${binSceneTicks(m)}<span class="sc-st" hidden></span>${used.has(id) ? `<span class="used" title="${tr('inUse')}">${icon('check')}</span>` : ''}<button class="add" data-add title="${tr('addToTl')}">${icon('plus')}</button><button class="del" data-del title="${tr('del')}">${icon('trash-2')}</button></div><div class="nm">${esc(m.name)}</div></div>`;
   }).join('');
   $('#binAll').innerHTML = icon('check');
   paintBinSel();
   paintMediaProxies();
+  paintBinScenes();
 }
 function paintBinSel() {
   $$('#binList .mi').forEach(el => el.classList.toggle('sel', binSel.has(el.dataset.mid)));
@@ -5042,6 +6275,8 @@ $('#binList').addEventListener('contextmenu', e => {
     inputs && ['mcCreate', () => createMulticam(inputs)],
     one?.angles && ['mcSettings', () => editMulticam(ids[0])],
     one && ['rename', () => renameMedia(ids[0])],
+    ids.some(id => P.media[id].kind === 'video' && !P.media[id].angles) && ['scenesDetect', () => ids.forEach(id => detectScenes(id))],
+    ids.some(sceneBusy) && ['scenesCancel', () => ids.forEach(cancelScenes)],
     one?.path && ['revealFinder', () => TA.opener.revealItemInDir(one.path)],
     proxy && !entry?.file && entry?.progress == null && ['proxyCreate', () => syncMediaProxies(one.path)],
     proxy && entry?.progress != null && ['proxyCancel', () => deleteMediaProxies(one.path, true)],
@@ -5111,9 +6346,11 @@ $('#rows').addEventListener('contextmenu', e => {
   ctxMenu(e, [inputs && ['mcCreate', () => createMulticam(inputs, true)],
     m?.angles && ['wsMulticam', () => revealPanel('multicam')],
     m?.angles && !P.tracks.find(x => x.id === it.track)?.locked && ['mcFlatten', () => flattenMulticam(it)],
+    isTranslatable(it) && ['translateCaptions', () => openCaptionTranslation(selectedItems())],
     canGroup() && ['groupClips', groupSel], selectedGroups().length && ['ungroupClips', ungroupSel],
     group && ['openGroup', () => showGroup(id)], group && ['rename', () => renameGroup(id)],
-    it && ['split', () => splitAt()], ['k_copy', copySel], ['k_cut', cutSel], ['k_paste', pasteClip], ['dup', duplicateSel],
+    it && ['split', () => splitAt()], vid && ['scenesSplit', () => splitAtScenes(selectedItems())],
+    ['k_copy', copySel], ['k_cut', cutSel], ['k_paste', pasteClip], ['dup', duplicateSel],
     vid && ['freeze', freezeFrame], canExtract && ['extractAudio', () => extractAudio(it)],
     canExtract && ['splitAudioEdge', () => { extractAudio(it); setTool('select'); toast(tr('splitAudioEdgeHint')); }],
     !m?.angles && (m?.kind === 'audio' || m?.hasAudio) && ['stems', separateSounds], m && m.kind !== 'audio' && ['rotate90', rotateSel], it && m?.kind !== 'audio' && [it.hidden ? 'showLayer' : 'hideLayer', toggleHidden], ['-'], ['del', removeSel, 'danger']]);
@@ -5140,6 +6377,7 @@ function extractAudio(it) {
   if (S.hasCurve(it)) a.curve = { ...it.curve, pts: it.curve.pts.map(point => [...point]) };
   if (it.kf?.volume) a.kf = { volume: it.kf.volume.map(key => [...key]) };
   if (it.denoise) a.denoise = it.denoise;
+  if (it.voiceClean) a.voiceClean = { ...it.voiceClean };
   if (it.norm) a.norm = it.norm;
   it.muted = true;
   addTimelineItem(a);
@@ -5157,7 +6395,7 @@ async function separateSounds() {
   try {
     if (!stemsTool) {
       if (!(await TA.dialog.ask(tr('stemsAsk'), { title: tr('stems') }))) return;
-      progress(tr('p_stems_dl'), 0); await inv('stems_download'); stemsTool = true;
+      progress(tr('p_stems_dl'), 0); await stemsModel.download(false);
     }
     progress(tr('p_stems'), 0);
     const paths = await inv('stems_make', { path: m.path, start: num(it.in, 0), len: S.srcLen(it) });
@@ -5446,6 +6684,7 @@ function addToBin(res) {
     P.media[id] = { ...m, added: Date.now() };
     dirty = true;
     added.push(id);
+    if (m.kind === 'video' && lsGet('kadr.sceneAuto', false)) detectScenes(id, true);
   }
   if (res.bad.length) toast(tr('unsupported') + ': ' + res.bad.join(' · '));
   renderBin();
@@ -5891,7 +7130,14 @@ function progress(label, p) {
   }
   $('#modal').hidden = false;
   $('#mBox').innerHTML = `<div>${esc(label)}${p != null ? ` — ${Math.round(p * 100)}%` : ''}</div><div class="pbar"><i style="width:${Math.round((p || 0) * 100)}%"></i></div><div class="acts"><button id="mCancel">${tr('cancel')}</button></div>`;
-  $('#mCancel').onclick = () => exporting ? cancelExport() : (cancelled = true, inv('cancel'));
+  $('#mCancel').onclick = () => exporting ? cancelExport() : (cancelled = true, modalAudioPrep?.abort(), inv('cancel'));
+}
+let modalAudioPrep;
+async function prepareModalAudio(project = P) {
+  const abort = new AbortController();
+  modalAudioPrep = abort;
+  try { await dnPrep(project, abort.signal, p => progress(tr('voiceClean'), p)); }
+  finally { if (modalAudioPrep === abort) modalAudioPrep = null; }
 }
 const hideModal = () => ($('#modal').hidden = true);
 async function refreshProxySize() {
@@ -5936,6 +7182,21 @@ $('#bSettings').onclick = proxySettings;
 $('#bProxy').onclick = toggleProxies;
 window.addEventListener('focus', () => { if (MEDIA_BASE) syncMediaProxies(); });
 TA.event.listen('progress', ({ payload: { label, p } }) => {
+  const transfer = aiTransfers.get(label);
+  if (transfer?.p != null) {
+    transfer.p = p;
+    paintAITools();
+    if (label === 'upscale_dl' && upscaleTask?.item) paintUpscaleStatus();
+    if (label === 'depth_dl' && depthTask) paintDepthStatus();
+    const job = captionTranslationJob;
+    if (label === 'translation_dl' && job?.update && !job.cancelled && !job.running &&
+        transfer.id === 'translation:' + job.direction) job.update(tr('translationDownload'), p);
+    if (transfer.inline) return;
+  }
+  if (label === 'upscale_dl' && upscaleTask?.export) {
+    if (!cancelled) progress(tr('upscaleDownload'), p);
+    return;
+  }
   if (label === 'export' ? exporting && !cancelled : !queueRunning) progress(tr('p_' + label), p);
 });
 
@@ -5992,7 +7253,12 @@ async function updateDialog() {
   paintIcons($('#mBox'));
   $('#mBox').querySelectorAll('[name="um"]').forEach(r => (r.onchange = () => updMode.set(r.value)));
   $('#uClose').onclick = hideModal;
-  $('#uWhats').onclick = () => { hideModal(); runTour(MaqtoWhatsNew.replaySteps(MaqtoWhatsNew.WHATS_NEW, cur), cur); };
+  $('#uWhats').onclick = () => {
+    const entries = whatsNewEntries(cur);
+    hideModal();
+    $('#bUpd').focus();
+    showWhatsNew(MaqtoWhatsNew.replaySteps(entries, cur), entries.at(-1)?.version, cur);
+  };
   const st = $('#uState'), go = $('#uGo');
   const show = (html, btn, run) => { st.innerHTML = html; go.hidden = !btn; if (btn) { go.textContent = btn; go.disabled = false; go.onclick = run; } };
   const chk = $('#uCheck');
@@ -6029,64 +7295,90 @@ async function updateDialog() {
   }
 }
 $('#bUpd').onclick = updateDialog;
-/* ---------- "What's new" tour: steps come from whatsnew.js, shown once after an update ---------- */
-function runTour(steps, ver) {
-  if (!steps.length || $('#tour')) return;
-  const all = [{ intro: 1 }, ...steps], last = all.length - 1, rtl = LANG === 'ar';
-  let i = 0;
-  const root = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'tour' }));
-  root.innerHTML = `<div class="tour-hl" hidden></div><div class="tour-card" role="dialog" aria-modal="true" aria-labelledby="tourT"></div>`;
-  const hl = root.firstChild, card = root.lastChild;
-  const finish = () => { root.remove(); window.removeEventListener('keydown', onKey, true); window.removeEventListener('resize', place); lsSet('kadr.seenVersion', ver); };
-  const go = d => { i += d; if (i > last) finish(); else show(); };
-  function onKey(e) {
-    if (e.key === 'Tab') return;
-    e.stopImmediatePropagation(); // the editor's shortcuts stay quiet while the tour is up
-    if (e.key === 'Escape') finish();
-    else if (e.key === 'Enter' || e.key === (rtl ? 'ArrowLeft' : 'ArrowRight')) { e.preventDefault(); go(1); }
-    else if (e.key === (rtl ? 'ArrowRight' : 'ArrowLeft') && i) { e.preventDefault(); go(-1); }
-  }
-  function show() {
-    const s = all[i];
-    if (s.panel && dockPanels[s.panel]?.hidden) try { revealPanel(s.panel); } catch {}
-    const c = s.intro ? { title: tr('wnIntro', { v: ver }), body: tr('wnIntroBody') } : s[LANG] || s.en;
-    card.innerHTML = `<div class="tour-n">${tr('wnStep', { i: i + 1, n: all.length })}</div><h4 id="tourT">${esc(c.title)}</h4><p>${esc(c.body)}</p>
-      <div class="tour-acts"><button data-skip>${tr('wnSkip')}</button><span class="flex"></span>${i ? `<button data-back>${tr('wnBack')}</button>` : ''}<button class="primary" data-next>${tr(i === last ? 'wnDone' : 'wnNext')}</button></div>`;
-    card.querySelector('[data-skip]').onclick = finish;
-    card.querySelector('[data-next]').onclick = () => go(1);
-    const b = card.querySelector('[data-back]'); if (b) b.onclick = () => go(-1);
-    card.querySelector('[data-next]').focus();
-    place();
-  }
-  function place() {
-    const el = all[i].target && document.querySelector(all[i].target), r = el?.getBoundingClientRect();
-    const ok = r && r.width > 0 && r.height > 0, m = 10, g = 12, W = card.offsetWidth, H = card.offsetHeight;
-    root.classList.toggle('nohl', !ok);
-    hl.hidden = !ok;
-    let x = (innerWidth - W) / 2, y = (innerHeight - H) / 2; // missing target: centred, text still says where it is
-    if (ok) {
-      Object.assign(hl.style, { left: r.left - 4 + 'px', top: r.top - 4 + 'px', width: r.width + 8 + 'px', height: r.height + 8 + 'px' });
-      const cx = r.left + r.width / 2 - W / 2, cy = r.top + r.height / 2 - H / 2;
-      const opts = [[cx, r.bottom + g], [cx, r.top - H - g], [r.right + g, cy], [r.left - W - g, cy]];
-      [x, y] = opts.find(([a, b]) => a >= m && b >= m && a + W <= innerWidth - m && b + H <= innerHeight - m) || opts[0];
+/* ---------- What's new ---------- */
+const whatsNewDialog = $('#whatsNew');
+const whatsNewEntries = cur => MaqtoWhatsNew.WHATS_NEW
+  .filter(e => cur && MaqtoWhatsNew.cmp(e.version, cur) <= 0)
+  .sort((a, b) => MaqtoWhatsNew.cmp(a.version, b.version));
+function showWhatsNew(steps, version, current) {
+  if (!steps.length || whatsNewDialog.open) return;
+  const list = $('#wnFeatures'), detail = $('#wnDetail'), prev = $('#wnPrev'), next = $('#wnNext');
+  let index = 0;
+  $('#wnHeading').textContent = tr('wnHeading', { v: version });
+  list.innerHTML = steps.map((step, i) => `<button type="button" data-step="${i}">${icon(step.icon)}<span>${esc(step[LANG].title)}</span></button>`).join('');
+  function select(i, focus = false) {
+    index = clamp(i, 0, steps.length - 1);
+    const step = steps[index], content = step[LANG];
+    for (const [j, button] of [...list.children].entries()) {
+      button.setAttribute('aria-pressed', j === index);
+      button.tabIndex = j === index ? 0 : -1;
     }
-    card.style.left = clamp(x, m, Math.max(m, innerWidth - W - m)) + 'px';
-    card.style.top = clamp(y, m, Math.max(m, innerHeight - H - m)) + 'px';
+    detail.innerHTML = `<div class="wn-art">${step.art}</div><h3>${esc(content.title)}</h3><p>${esc(content.body)}</p>
+      <div class="wn-location"><div><strong>${tr('wnWhere')}</strong><div>${esc(step.where[LANG])}</div></div>
+      <button type="button" class="primary" id="wnShow">${tr('wnShow')}</button></div>`;
+    $('#wnShow').onclick = () => { whatsNewDialog.close(); showWhatsNewTarget(step); };
+    $('#wnCount').textContent = tr('wnStep', { i: index + 1, n: steps.length });
+    prev.disabled = index === 0;
+    next.disabled = index === steps.length - 1;
+    if (focus) list.children[index].focus({ preventScroll: true });
+    if (whatsNewDialog.open) list.children[index].scrollIntoView({ block: 'nearest' });
+    detail.scrollTop = 0;
   }
-  window.addEventListener('keydown', onKey, true);
-  window.addEventListener('resize', place);
-  show();
+  list.onclick = e => {
+    const button = e.target.closest('[data-step]');
+    if (button) select(+button.dataset.step, true);
+  };
+  prev.onclick = () => select(index - 1, index === 1);
+  next.onclick = () => select(index + 1, index === steps.length - 2);
+  $('#wnClose').setAttribute('aria-label', tr('close'));
+  $('#wnClose').onclick = () => whatsNewDialog.close();
+  whatsNewDialog.onkeydown = e => {
+    e.stopPropagation();
+    const rtl = LANG === 'ar';
+    if (e.key === 'ArrowDown' || e.key === (rtl ? 'ArrowLeft' : 'ArrowRight')) {
+      e.preventDefault(); select(index + 1, true);
+    } else if (e.key === 'ArrowUp' || e.key === (rtl ? 'ArrowRight' : 'ArrowLeft')) {
+      e.preventDefault(); select(index - 1, true);
+    }
+  };
+  whatsNewDialog.onclose = () => markWhatsNewSeen(current);
+  select(0);
+  whatsNewDialog.showModal();
+  list.firstElementChild.focus();
+}
+function showWhatsNewTarget(step) {
+  if (step.id === 'interchange') return exportTimelineDialog();
+  if (step.panel) revealPanel(step.panel);
+  if (step.id === 'fonts' && sel && item(sel) && isText(item(sel))) { inspTab = 'tText'; inspector(); }
+  const control = step.target && $(step.target);
+  const target = control?.getClientRects().length ? control : null;
+  const el = target || (step.panel && dockPanels[step.panel]);
+  if (el) {
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    el.wnPulse?.cancel();
+    const accent = getComputedStyle(el).getPropertyValue('--accent').trim();
+    const colors = matchMedia('(prefers-reduced-motion: reduce)').matches ? [accent, accent] : [accent, 'transparent', accent, 'transparent'];
+    el.wnPulse = el.animate(colors.map(outlineColor => ({ outline: `2px solid ${outlineColor}`, outlineOffset: '-2px' })), 1500);
+  }
+  if (!target) toast(step.where[LANG]);
+}
+function markWhatsNewSeen(current) {
+  const seen = lsGet(seenVersionKey, '');
+  if (!seen || MaqtoWhatsNew.cmp(current, seen) > 0) lsSet(seenVersionKey, current);
 }
 async function initWhatsNew() {
   const cur = TA.app ? await TA.app.getVersion().catch(() => '') : '';
   if (!cur) return;
-  const seen = lsGet('kadr.seenVersion', '');
-  if (!seen) return lsSet('kadr.seenVersion', cur); // fresh install: nothing is new yet
-  const steps = MaqtoWhatsNew.pendingSteps(MaqtoWhatsNew.WHATS_NEW, seen, cur);
-  if (!steps.length) { if (seen !== cur) lsSet('kadr.seenVersion', cur); return; }
+  const { whatsNewFrom, pendingSteps } = MaqtoWhatsNew, entries = whatsNewEntries(cur);
+  const from = whatsNewFrom(lsGet(seenVersionKey, ''), hasOldMaqtoState, entries);
+  const steps = pendingSteps(entries, from, cur);
+  if (!steps.length) return markWhatsNewSeen(cur);
   await new Promise(r => setTimeout(r, 1500));
-  while (!$('#modal').hidden || document.querySelector('dialog[open]')) await new Promise(r => setTimeout(r, 800)); // start screen / recovery / dialogs first
-  runTour(steps, cur);
+  while (!$('#modal').hidden || document.querySelector('dialog[open]')) {
+    if (MaqtoWhatsNew.cmp(lsGet(seenVersionKey, ''), cur) >= 0) return;
+    await new Promise(r => setTimeout(r, 800));
+  }
+  if (MaqtoWhatsNew.cmp(lsGet(seenVersionKey, ''), cur) < 0) showWhatsNew(steps, entries.at(-1).version, cur);
 }
 let toastTimer;
 function toast(msg, action) {
@@ -6144,8 +7436,8 @@ async function clipFrames(it, lts) {
   return framesAt(media(it), lts.map(lt => num(it.in, 0) + S.srcAt(it, clamp(lt, 0, it.dur))));
 }
 // Source frames of a video at source times `at` (seconds), as canvases.
-async function framesAt(m, at) {
-  const s0 = Math.min(...at), span = Math.max(...at) - s0, sc = Math.min(1, 1280 / Math.max(m.w, m.h));
+async function framesAt(m, at, limit = 1280) {
+  const s0 = Math.min(...at), span = Math.max(...at) - s0, sc = Math.min(1, limit / Math.max(m.w, m.h));
   const w = Math.max(2, Math.round(m.w * sc / 2) * 2), h = Math.max(2, Math.round(m.h * sc / 2) * 2);
   const rate = span > 1e-3 ? clamp(at.length / span, 1, 120) : 30, st = Math.max(0, s0 - 0.2); // start early: a seek right at the end of a file returns nothing
   const vf = [G.toneMap(m), `fps=${rate.toFixed(3)}`, `scale=${w}:${h}`].filter(Boolean);
@@ -6164,8 +7456,46 @@ async function framesAt(m, at) {
     return cache.get(i);
   });
 }
+// Rasterized transitions and animations sample the same derived matte as the FFmpeg graph.
+async function objectFramesAt(project, it, times) {
+  const m = media(it, project), mt = objectMode(it) !== 'fill' && objectMatteState(it, m)?.matte;
+  if (!mt) return [];
+  const last = Math.round((mt.last - mt.origin) * mt.fps);
+  const indices = times.map(time => m.kind === 'image' ? 0 : clamp(Math.floor((time - mt.origin) * mt.fps + .0001), 0, last));
+  const unique = [...new Set(indices)].sort((a, b) => a - b), first = unique[0];
+  const seek = (Math.max(0, first - .1) / mt.fps).toFixed(8);
+  const select = unique.map(i => `eq(n,${i - first})`).join('+');
+  const rgba = new Uint8ClampedArray(await inv('gray_frames', { args: ['-v', 'error', '-ss', seek, '-i', mt.path,
+    '-vf', `select='${select}'`, '-vsync', '0', '-frames:v', String(unique.length), '-pix_fmt', 'rgba', '-f', 'rawvideo', 'pipe:1'] }));
+  const size = mt.w * mt.h * 4;
+  if (rgba.length !== unique.length * size) throw new Error(tr('samCacheMissing'));
+  const frames = new Map();
+  unique.forEach((n, i) => {
+    const canvas = Object.assign(document.createElement('canvas'), { width: mt.w, height: mt.h });
+    canvas.getContext('2d').putImageData(new ImageData(rgba.subarray(i * size, (i + 1) * size), mt.w, mt.h), 0, 0);
+    frames.set(n, canvas);
+  });
+  return indices.map(n => frames.get(n));
+}
+function setObjectRaster(project, frames) {
+  if (frames.some(([, frame]) => frame)) objectRaster.set(project, new Map(frames));
+  else objectRaster.delete(project);
+}
 // Shader transitions for the export: each one's frames as PNGs, overlaid just above its track.
-async function renderGlTrans(project, work, fps) {
+async function decodedFill(cache, time) {
+  const image = fillImage(cache, fillIndex(cache, time));
+  await image.decode();
+  return image;
+}
+const depthLastFrame = visual => (Math.max(1, Math.ceil(visual.dur * visual.fps - 1e-6)) - 0.5) / visual.fps;
+function preparedRaster(it, m, times, visuals, localTimes) {
+  const visual = visuals[it.id];
+  if (!visual) return [m, times, 1280];
+  const last = visual.depth ? depthLastFrame(visual) : Math.max(0, visual.dur - 1 / (visual.fps || 30));
+  const seek = visual.animatedStill ? localTimes : times.map(time => time - num(it.in, 0));
+  return [visual, seek.map(time => clamp(time, 0, last)), 2160];
+}
+async function renderGlTrans(project, work, fps, fills, visuals) {
   const out = [], c = document.createElement('canvas');
   c.width = project.w; c.height = project.h;
   const ctx = c.getContext('2d'), png = async name => {
@@ -6179,15 +7509,36 @@ async function renderGlTrans(project, work, fps) {
     const a = T.prev, N = Math.max(1, Math.round(T.d * fps)), t0 = b.start - T.d / 2, times = Array.from({ length: N }, (_, f) => t0 + f / fps);
     progress(tr('p_trans'), gi / list.length);
     const am = media(a, project), bm = media(b, project);
-    await Promise.all([am, bm].filter(m => m.kind === 'image' && !m.fill && !m.adj).map(m => imgFor(m).decode()));
     const aEnd = a.start + a.dur;
-    const fa = am.kind === 'video' && !am.fill ? await framesAt(am, times.map(x => x < aEnd ? num(a.in, 0) + S.srcAt(a, x - a.start) : tailSrcAt(a, x - aEnd, am))) : [];
-    const fb = bm.kind === 'video' && !bm.fill ? await framesAt(bm, times.map(x => x >= b.start ? num(b.in, 0) + S.srcAt(b, x - b.start) : headSrcAt(b, x - b.start))) : [];
+    const transitionFrames = async (it, m, sourceTimes) => {
+      if (fills[it.id]) return [];
+      if ((visuals[it.id] || m).kind === 'image' && !m.fill && !m.adj) {
+        const image = imgFor(visuals[it.id] || m);
+        await image.decode();
+        return sourceTimes.map(() => image);
+      }
+      return (visuals[it.id] || m).kind === 'video' && !m.fill
+        ? framesAt(...preparedRaster(it, m, sourceTimes, visuals, times.map(time => time - it.start))) : [];
+    };
+    const [fa, fb] = await Promise.all([
+      transitionFrames(a, am, times.map(x => x < aEnd ? objectSourceTime(a, x - a.start) : tailSrcAt(a, x - aEnd, am))),
+      transitionFrames(b, bm, times.map(x => x >= b.start ? objectSourceTime(b, x - b.start) : headSrcAt(b, x - b.start))),
+    ]);
+    const [ma, mb] = await Promise.all([
+      objectFramesAt(project, a, times.map(x => objectSourceTime(a, x - a.start))),
+      objectFramesAt(project, b, times.map(x => objectSourceTime(b, x - b.start))),
+    ]);
     const names = [];
     for (let f = 0; f < N; f++) {
       if (cancelled) throw new Error(tr('cancelled'));
       ctx.clearRect(0, 0, project.w, project.h);
-      drawGlTrans(ctx, { id: T.id, dir: T.dir, ease: T.ease, a, b, q: f / N }, times[f], fa[f], fb[f], project);
+      const [srcA, srcB] = await Promise.all([
+        fills[a.id] ? decodedFill(fills[a.id], objectSourceTime(a, times[f] - a.start)) : fa[f],
+        fills[b.id] ? decodedFill(fills[b.id], objectSourceTime(b, times[f] - b.start)) : fb[f],
+      ]);
+      setObjectRaster(project, [[a.id, ma[f]], [b.id, mb[f]]]);
+      try { drawGlTrans(ctx, { id: T.id, dir: T.dir, ease: T.ease, a, b, q: f / N }, times[f], srcA, srcB, project); }
+      finally { objectRaster.delete(project); }
       const name = `x${gi}_${String(f).padStart(4, '0')}.png`;
       await png(name); names.push({ name, frames: 1 });
     }
@@ -6200,26 +7551,35 @@ async function renderGlTrans(project, work, fps) {
 
 // Rich animations (anims.js): their stretches are drawn with the preview code and laid over the clip's track as PNG frames;
 // the graph hides the clip itself over the same frames (S.richSegs / S.segFrames).
-async function renderRich(project, work, fps) {
+async function renderRich(project, work, fps, fills, visuals) {
   const out = [], c = document.createElement('canvas');
   c.width = project.w; c.height = project.h;
   const ctx = c.getContext('2d');
   const list = project.items.filter(b => !b.audioOnly && !isText(b) && media(b, project) && media(b, project).kind !== 'audio' && !media(b, project).adj && S.richSegs(b).length);
   const png = async name => { const blob = await new Promise(r => c.toBlob(r, 'image/png')); await inv('write_frame', new Uint8Array(await blob.arrayBuffer()), { headers: { 'x-id': String(work.id), 'x-name': name } }); };
   for (const [gi, b] of list.entries()) {
-    const m = media(b, project), isV = m.kind === 'video' && !m.fill;
-    if (m.kind === 'image' && !m.fill) await imgFor(m).decode();
+    const m = media(b, project), visual = visuals[b.id] || m, isV = visual.kind === 'video' && !m.fill;
+    const image = !fills[b.id] && visual.kind === 'image' && !m.fill ? imgFor(visual) : null;
+    if (image) await image.decode();
     for (const [si, sg] of S.richSegs(b).entries()) {
       const N = S.segFrames(sg, fps), names = [];
-      for (let f0 = 0; f0 < N; f0 += 60) { // decode in batches: a long loop would not fit in memory at once
+      const batch = visuals[b.id] ? 16 : 60;
+      for (let f0 = 0; f0 < N; f0 += batch) { // decode in batches: a long loop would not fit in memory at once
         if (cancelled) throw new Error(tr('cancelled'));
-        const fs = Array.from({ length: Math.min(60, N - f0) }, (_, i) => sg[0] + (f0 + i) / fps);
-        const fr = isV ? await framesAt(m, fs.map(lt => num(b.in, 0) + S.srcAt(b, Math.min(lt, b.dur - 1e-3)))) : [];
+        const fs = Array.from({ length: Math.min(batch, N - f0) }, (_, i) => sg[0] + (f0 + i) / fps);
+        const times = fs.map(lt => objectSourceTime(b, Math.min(lt, b.dur - .001)));
+        const [fr, masks] = await Promise.all([
+          !fills[b.id] && isV ? framesAt(...preparedRaster(b, m, times, visuals, fs)) : [],
+          objectFramesAt(project, b, times),
+        ]);
         for (const [i, lt] of fs.entries()) {
           if (cancelled) throw new Error(tr('cancelled'));
           progress(tr('p_anim'), (gi + (f0 + i) / N) / list.length);
           ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, project.w, project.h);
-          drawItem(ctx, b, b.start + lt, null, fr[i], false, false, project);
+          const src = fills[b.id] ? await decodedFill(fills[b.id], times[i]) : image || fr[i];
+          setObjectRaster(project, [[b.id, masks[i]]]);
+          try { drawItem(ctx, b, b.start + lt, null, src, false, false, project); }
+          finally { objectRaster.delete(project); }
           const name = `r${gi}_${si}_${String(f0 + i).padStart(5, '0')}.png`;
           await png(name); names.push({ name, frames: 1 });
         }
@@ -6321,8 +7681,11 @@ const EXPORT_PRESETS_KEY = 'kadr.exportPresets';
 const EXPORT_FIELDS = {
   video: 'xVid', audio: 'xAud', res: 'xRes', fps: 'xFps', quality: 'xQ', codec: 'xCodec',
   format: 'xFmt', afmt: 'xAFmt', hw: 'xHw', chapters: 'xChapters', loudnessTarget: 'xLoudness',
+  transparent: 'xTrans', gifFps: 'xGifFps', gifWidth: 'xGifW',
 };
-const outputFiles = paths => [paths.video, paths.audio].filter(Boolean);
+const seqFirst = p => p && p.replace('%05d', '00001'); // image sequences name their first frame
+const outputFiles = paths => [seqFirst(paths.video), paths.audio].filter(Boolean);
+const STILL_CODECS = ['png', 'jpg'], SPECIAL_FMT = { prores: 'mov', prores4444: 'mov', vp9a: 'webm', gif: 'gif', png: 'png', jpg: 'jpg' };
 const outputName = value => value.trim().replace(/[\\/:*?"<>|]/g, '-') || 'maqto-export';
 const renderQueue = [];
 let queueRunning = false, activeQueueItem = null, exporting = false, exportChild = false, exportCancel = null;
@@ -6330,6 +7693,9 @@ let queueRunning = false, activeQueueItem = null, exporting = false, exportChild
 function cancelExport() {
   if (cancelled) return;
   cancelled = true;
+  if (exportFill) exportFill.cancel();
+  if (upscaleTask?.export) stopUpscale(upscaleTask);
+  modalAudioPrep?.abort();
   if (exportChild) exportCancel = inv('cancel').catch(e => toast(cleanErr(e)));
 }
 
@@ -6430,7 +7796,7 @@ async function exportDialog() {
   if (queueRunning || exporting) return;
   if (!total()) return toast(tr('emptyTl'));
   setPlaying(false);
-  const short = Math.min(P.w, P.h);
+  const short = Math.min(P.w, P.h), upscaleSize = S.upscale4k(P.w, P.h);
   let dir = pref('dir', '');
   if (!dir) try { dir = await TA.path.desktopDir(); } catch {}
   const cover = document.createElement('canvas');
@@ -6461,9 +7827,13 @@ async function exportDialog() {
       <label class="xsec"><input type="checkbox" id="xVid" checked> <b>${tr('video')}</b></label>
       <div id="xVidBox">
         <label class="xr"><span>${tr('resolution')}</span>${opt('xRes', RES.map(([n, v]) => [v, n]), RES.some(r => r[1] === res0) ? res0 : 1080)}</label>
+        ${upscaleSize ? `<label class="xr"><span>${tr('upscaleExport')}</span><input type="checkbox" id="xUpscale"></label>` : ''}
         <label class="xr"><span>${tr('bitrate')}</span>${opt('xQ', QUALITY.map(([v, k]) => [v, tr(k)]), pref('q', 'rec'))}</label>
-        <label class="xr"><span>${tr('codec')}</span>${opt('xCodec', [['h264', 'H.264'], ['hevc', 'HEVC / H.265'], ['prores', 'ProRes 422']], pref('codec', 'h264'))}</label>
-        <label class="xr"><span>${tr('format')}</span>${opt('xFmt', [['mp4', 'mp4'], ['mov', 'mov']], pref('fmt', 'mp4'))}</label>
+        <label class="xr"><span>${tr('codec')}</span>${opt('xCodec', [['h264', 'H.264'], ['hevc', 'HEVC / H.265'], ['prores', 'ProRes 422'], ['prores4444', 'ProRes 4444 (alpha)'], ['vp9a', 'WebM VP9 (alpha)'], ['gif', 'GIF'], ['png', 'PNG sequence'], ['jpg', 'JPG sequence']], pref('codec', 'h264'))}</label>
+        <label class="xr"><span>${tr('format')}</span>${opt('xFmt', [['mp4', 'mp4'], ['mov', 'mov'], ['webm', 'webm'], ['gif', 'gif'], ['png', 'png'], ['jpg', 'jpg']], pref('fmt', 'mp4'))}</label>
+        <label class="xr" id="xTransRow"><span>${tr('xTransparent')}</span><input type="checkbox" id="xTrans" checked></label>
+        <label class="xr" id="xGifFpsRow"><span>${tr('xGifFps')}</span>${opt('xGifFps', [10, 15, 24].map(f => [f, f + 'fps']), 15)}</label>
+        <label class="xr" id="xGifWRow"><span>${tr('xGifW')}</span>${opt('xGifW', [240, 320, 480, 640, 800].map(w => [w, w + 'px']), 480)}</label>
         <label class="xr"><span>${tr('fps')}</span>${opt('xFps', [...new Set([24, 25, 30, 50, 60, P.fps])].sort((a, b) => a - b).map(f => [f, f + 'fps']), P.fps)}</label>
         ${P.markers.length ? `<label class="xr"><span>${tr('embedChapters')}</span><input type="checkbox" id="xChapters" checked></label>` : ''}
         ${IS_MAC ? `<label class="xr"><span>${tr('hw')}</span><input type="checkbox" id="xHw"${pref('hw', '1') === '1' ? ' checked' : ''}></label>` : ''}
@@ -6488,11 +7858,14 @@ async function exportDialog() {
     const suffix = preset?.id.startsWith('user-') ? preset.name : preset?.id;
     return outputName(queued && name === base && suffix ? base + '-' + suffix : name);
   };
-  const readSettings = () => Object.fromEntries(Object.entries(EXPORT_FIELDS).map(([key, id]) => {
-    const input = $('#' + id);
-    return [key, !input ? key === 'chapters' : input.type === 'checkbox' ? input.checked
-      : ['res', 'fps', 'loudnessTarget'].includes(key) ? +input.value : input.value];
-  }));
+  const readSettings = () => ({
+    upscale: $('#xVid').checked && !!$('#xUpscale')?.checked,
+    ...Object.fromEntries(Object.entries(EXPORT_FIELDS).map(([key, id]) => {
+      const input = $('#' + id);
+      return [key, !input ? key === 'chapters' : input.type === 'checkbox' ? input.checked
+        : ['res', 'fps', 'loudnessTarget', 'gifFps', 'gifWidth'].includes(key) ? +input.value : input.value];
+    })),
+  });
   const updatePresets = id => {
     presetSelect.replaceChildren(new Option(tr('xpCurrent'), ''),
       ...[...builtIns, ...presets].map(p => new Option(p.name, p.id)));
@@ -6500,19 +7873,29 @@ async function exportDialog() {
     sync();
   };
   const sync = () => {
-    const vid = $('#xVid').checked, aud = $('#xAud').checked, pr = $('#xCodec').value === 'prores';
+    const vid = $('#xVid').checked, aud = $('#xAud').checked, codec0 = $('#xCodec').value, pr = !!SPECIAL_FMT[codec0];
     $('#xVidBox').classList.toggle('off', !vid);
     $('#xAudBox').classList.toggle('off', !aud);
-    if (pr) $('#xFmt').value = 'mov';
-    $('#xFmt').disabled = pr;
+    const fmtSel = $('#xFmt');
+    for (const o of fmtSel.options) o.disabled = pr ? o.value !== SPECIAL_FMT[codec0] : !['mp4', 'mov'].includes(o.value);
+    if (pr) fmtSel.value = SPECIAL_FMT[codec0]; else if (fmtSel.selectedOptions[0]?.disabled) fmtSel.value = 'mp4';
+    fmtSel.disabled = pr;
+    $('#xTransRow').hidden = !G.ALPHA[codec0];
+    $('#xGifFpsRow').hidden = $('#xGifWRow').hidden = codec0 !== 'gif';
     if ($('#xHw')) $('#xHw').disabled = pr;
+    const up = $('#xUpscale');
+    if (up && pr) up.checked = false;
+    const upscale = vid && up?.checked;
+    if (up) up.disabled = !vid || pr;
+    $('#xRes').closest('label').hidden = !!upscale;
     const sh = +$('#xRes').value, k = sh / short, fps = +$('#xFps').value;
-    const w = Math.round(P.w * k / 2) * 2, h = Math.round(P.h * k / 2) * 2, area = w * h;
+    const [w, h] = upscale ? upscaleSize : [Math.round(P.w * k / 2) * 2, Math.round(P.h * k / 2) * 2];
+    const area = w * h;
     const hint = $('#xAspectHint');
     hint.hidden = !aspectHint || !vid;
     hint.textContent = tr('xpAspectHint', { ratio: aspectHint, w, h });
     const q = { low: 0.6, rec: 1, high: 1.8 }[$('#xQ').value], codec = $('#xCodec').value;
-    const mbps = codec === 'prores' ? 147 * area / (1920 * 1080) * fps / 30 : 8 * q * area / (1920 * 1080) * fps / 30 * (codec === 'hevc' ? 0.6 : 1);
+    const mbps = codec.startsWith('prores') ? 147 * area / (1920 * 1080) * fps / 30 : 8 * q * area / (1920 * 1080) * fps / 30 * (codec === 'hevc' ? 0.6 : 1);
     const mb = total() * ((vid ? mbps : 0) + (aud ? ($('#xAFmt').value === 'wav' ? 1.536 : 0.192) : 0) + (vid ? 0.192 : 0)) / 8;
     $('#xInfo').innerHTML = `${tr('duration')}: <bdi>${fmt(total())}</bdi> · ${tr('size')}: <bdi>~${mb < 1000 ? Math.max(1, Math.round(mb)) + ' MB' : (mb / 1000).toFixed(1) + ' GB'}</bdi>`;
     go.disabled = add.disabled = starting || measuring || !nameForm.hidden || (!vid && !aud);
@@ -6538,6 +7921,7 @@ async function exportDialog() {
     if (preset) {
       const result = S.exportPresetSettings({ hw: pref('hw', '1') === '1', ...preset }, P, G.ENCODERS);
       aspectHint = result.aspectHint;
+      if ($('#xUpscale')) $('#xUpscale').checked = !!preset.upscale;
       for (const [key, value] of Object.entries(result.settings)) {
         const id = EXPORT_FIELDS[key], input = id && $('#' + id);
         if (!input) continue;
@@ -6590,10 +7974,12 @@ async function exportDialog() {
     const input = $('#xDir'), folder = await TA.dialog.open({ directory: true, defaultPath: input.value || undefined });
     if (folder) input.value = folder;
   };
+  let loudnessPrep;
   $('#xNo').onclick = () => {
     if (!measuring) return hideModal();
     if (stopped) return;
     stopped = true;
+    loudnessPrep?.abort();
     if (analyzing) inv('cancel');
   };
   measure.onclick = async () => {
@@ -6605,7 +7991,9 @@ async function exportDialog() {
     sync();
     const project = P;
     try {
-      await dnPrep();
+      loudnessPrep = new AbortController();
+      await dnPrep(project, loudnessPrep.signal, p => { readout.textContent = `${tr('voiceClean')} · ${Math.round(p * 100)}%`; });
+      loudnessPrep = null;
       if (stopped || project !== P || !measure.isConnected || $('#modal').hidden) return;
       analyzing = true;
       const result = await measureLoudness(project, +target.value);
@@ -6613,6 +8001,7 @@ async function exportDialog() {
     } catch (e) {
       if (!stopped && measure.isConnected && !$('#modal').hidden) toast(tr('error') + ': ' + cleanErr(e));
     } finally {
+      loudnessPrep = null;
       measuring = analyzing = false;
       readout.textContent = '';
       if (measure.isConnected) sync();
@@ -6624,7 +8013,8 @@ async function exportDialog() {
     const settings = readSettings(), preset = selectedPreset();
     const name = exportName(queued);
     const sep = d.includes('\\') ? '\\' : '/', at = ext => d.replace(/[\\/]$/, '') + sep + name + '.' + ext;
-    const paths = { video: settings.video && at(settings.format), audio: settings.audio && at(settings.afmt) };
+    const seq = STILL_CODECS.includes(settings.codec);
+    const paths = { video: settings.video && (seq ? d.replace(/[\\/]$/, '') + sep + name.replace(/%/g, '-') + '_%05d.' + settings.codec : at(settings.format)), audio: settings.audio && at(settings.afmt) };
     if (queuePathInUse(paths)) return toast(tr('rqPathInUse'));
     const job = S.snapshotExport(P, settings, paths);
     starting = true;
@@ -6651,8 +8041,37 @@ async function exportDialog() {
   go.onclick = () => submit(false);
   add.onclick = () => submit(true);
 }
+async function upscaleExport(path, out, size, encoder) {
+  if (upscaleTask) throw new Error(tr('upscaleBusy'));
+  const task = upscaleTask = { export: true, job: uid(), p: 0 };
+  try {
+    if (!await upscaleModel.ready()) {
+      if (task.cancelled) return;
+      progress(tr('upscaleDownload'), 0);
+      await upscaleModel.download(false);
+    }
+    if (task.cancelled) return;
+    task.running = true;
+    progress(tr('upscaleExport'), 0);
+    await inv('upscale_export', { path, out, size, encoder, job: task.job });
+  } finally { upscaleTask = null; }
+}
+async function exportFramePng() {
+  if (!total()) return toast(tr('emptyTl'));
+  setPlaying(false);
+  try {
+    const name = (P.name || (projectPath && projectPath.split(/[\\/]/).pop().replace(/\.(maqto|kadr)$/, '')) || 'maqto-frame').replace(/[\\/]/g, '-');
+    const dest = await TA.dialog.save({ defaultPath: `${name}_${String(Math.round(t * P.fps)).padStart(5, '0')}.png`, filters: [{ name: 'PNG', extensions: ['png'] }] });
+    if (!dest) return;
+    const blob = await new Promise(r => view.toBlob(r, 'image/png')); // the preview canvas is the frame the export matches
+    await inv('save_png', { path: /\.png$/i.test(dest) ? dest : dest + '.png', bytes: Array.from(new Uint8Array(await blob.arrayBuffer())) });
+    toast(tr('exported'));
+  } catch (e) { toast(tr('error') + ': ' + cleanErr(e)); }
+}
 async function doExport(source, settings, paths, queued = false) {
   if (exporting || (queueRunning && !queued)) return { status: 'failed', error: tr('rqBusy') };
+  const offlineUsed = [...mediaDependencies(source.items)].filter(id => offline.has(id));
+  if (offlineUsed.length && !(await TA.dialog.ask(tr('offlineExport', { n: offlineUsed.length }), { kind: 'warning' }))) return { status: 'failed', error: tr('cancelled') };
   exporting = true;
   cancelled = false;
   exportCancel = null;
@@ -6666,11 +8085,11 @@ async function doExport(source, settings, paths, queued = false) {
       return result;
     } finally { exportChild = false; }
   };
-  let work = null;
+  let work = null, upscaleWork = null;
   try {
     const project = S.expandMulticam(S.scaleProject(source, 1));
     progress(tr(paths.video ? 'p_texts' : 'p_audioExport'), 0);
-    await dnPrep(project);
+    await prepareModalAudio(project);
     checkCancelled();
     const loudnessTarget = settings.loudnessTarget ?? project.loudnessTarget;
     let loudnessStats;
@@ -6680,7 +8099,9 @@ async function doExport(source, settings, paths, queued = false) {
     }
     if (paths.video) {
       progress(tr('p_texts'), 0);
-      const Q = S.scaleProject(project, settings.k ?? settings.res / Math.min(project.w, project.h));
+      const upscaleSize = settings.upscale && !SPECIAL_FMT[settings.codec] && S.upscale4k(project.w, project.h);
+      if (upscaleSize && upscaleTask) throw new Error(tr('upscaleBusy'));
+      const Q = S.scaleProject(project, upscaleSize ? 1 : settings.k ?? settings.res / Math.min(project.w, project.h));
       Q.fps = settings.fps;
       work = await inv('work_begin');
       const textLists = [];
@@ -6689,14 +8110,44 @@ async function doExport(source, settings, paths, queued = false) {
         if (list) textLists.push({ track: g[0], path: await inv('write_work', new TextEncoder().encode(G.concatText(list, Q.fps)), { headers: { 'x-id': String(work.id), 'x-name': 'text' + gi + '.ffconcat' } }) });
       }
       const luts = await writeLuts(Q, work), masks = await writeMasks(Q, work);
-      const transLists = [...await renderGlTrans(project, work, Q.fps), ...await renderRich(project, work, Q.fps)];
       await writeFills(Q, work);
-      const rife = {}, mattes = {};
+      const rife = {}, mattes = {}, fills = {}, visuals = {};
       for (const it of project.items) {
         checkCancelled();
         const m = media(it, project);
-        if (it.audioOnly || m?.kind !== 'video') continue;
-        if (!isText(it) && smoothSlow(it) && rifeTool) {
+        if (it.audioOnly || it.hidden || !m) continue;
+        let fill = fillState(it, m, true);
+        if (fill) {
+          if (fill.cancelled) fill = fillState(it, m, true, true);
+          exportFill = fill;
+          progress(tr('fillProgress', { p: Math.round(fill.p * 100) }), fill.p);
+          try {
+            fills[it.id] = await fill.wait;
+            checkCancelled();
+            if (!fills[it.id]) throw new Error(fillError(fill));
+          } finally { exportFill = null; }
+        }
+        if (!fill) {
+          await upscaleState(it, m)?.wait;
+          await depthState(it, m, project)?.wait;
+          const depth = depthVisual(it, m, project);
+          if (!depth && depthRequest(it, m, project)) throw new Error(tr('depthCacheMissing', { name: m.name }));
+          const visual = depth || upscaleVisual(it, m);
+          if (visual) visuals[it.id] = visual;
+          else {
+            const req = upscaleRequest(it, m);
+            if (req && it.upscale?.prepared === upscaleRange(req)) throw new Error(tr('upscaleCacheMissing', { name: m.name }));
+          }
+        }
+        const object = !fill && objectMatteState(it, m);
+        if (object) {
+          progress(tr('samPreparing'), 0);
+          const mt = await object.wait;
+          if (!mt) throw new Error(tr('samCacheMissing'));
+          mattes[it.id] = { object: { ...mt, mode: objectMode(it) } };
+        }
+        if (m.kind !== 'video') continue;
+        if (!fill && !visuals[it.id] && !isText(it) && smoothSlow(it) && rifeTool) {
           progress(tr('p_rife'), 0);
           const path = await rifeWait(it, m);
           if (path) rife[it.id] = path;
@@ -6704,20 +8155,29 @@ async function doExport(source, settings, paths, queued = false) {
         if (it.rmbg && matteTool[mtKind(it)]) {
           progress(tr('p_matte'), 0);
           const path = await matteWait(it, m);
-          if (path) mattes[it.id] = path;
+          if (path) mattes[it.id] = mattes[it.id] ? { ...mattes[it.id], background: path } : path;
         }
       }
+      const transLists = [...await renderGlTrans(project, work, Q.fps, fills, visuals), ...await renderRich(project, work, Q.fps, fills, visuals)];
       checkCancelled();
-      const metadata = (settings.chapters ?? /\.(mp4|mov)$/i.test(paths.video)) && G.chapterMetadata(Q.markers, S.projectDur(Q), tr('chapterIntro'), tr('marker'));
+      const metadata = (settings.chapters ?? true) && /\.(mp4|mov)$/i.test(paths.video) && G.chapterMetadata(Q.markers, S.projectDur(Q), tr('chapterIntro'), tr('marker'));
       const chapterFile = metadata && await inv('write_work', new TextEncoder().encode(metadata), {
         headers: { 'x-id': String(work.id), 'x-name': 'chapters.ffmetadata' },
       });
       const codec = settings.hw && Object.hasOwn(G.ENCODERS, settings.codec + '_hw') ? settings.codec + '_hw' : settings.codec;
-      const { args, duration } = G.buildArgs(Q, { out: paths.video, textLists, transLists, codec, quality: settings.quality,
-        luts, masks, rife, mattes, loudnessTarget, loudnessStats, chapterFile });
+      if (upscaleSize) upscaleWork = await inv('work_begin');
+      const videoOut = upscaleWork ? upscaleWork.path + '/project.mp4' : paths.video;
+      const { args, duration } = G.buildArgs(Q, { out: videoOut, textLists, transLists,
+        codec: upscaleSize ? 'h264' : codec, quality: upscaleSize ? 'high' : settings.quality,
+        luts, masks, rife, mattes, fills, visuals, loudnessTarget, loudnessStats, chapterFile,
+        transparent: settings.transparent !== false, gifFps: settings.gifFps ?? 15, gifWidth: settings.gifWidth ?? 480 });
       progress(tr('p_export'), 0);
       await runChild(() => inv('export_run', { id: work.id, args, concat: null, duration }));
       work = null;
+      if (upscaleSize) {
+        await upscaleExport(videoOut, paths.video, upscaleSize, (G.ENCODERS[codec] || G.ENCODERS.h264)(settings.quality));
+        checkCancelled();
+      }
     }
     if (paths.audio) {
       checkCancelled();
@@ -6728,7 +8188,7 @@ async function doExport(source, settings, paths, queued = false) {
       work = null;
     }
     if (!queued) {
-      const out = paths.video || paths.audio;
+      const out = seqFirst(paths.video) || paths.audio;
       toast(tr('exported') + ': ' + out.split(/[\\/]/).pop(), { label: tr('reveal'), run: () => TA.opener.revealItemInDir(out) });
     }
     return { status: 'done' };
@@ -6739,6 +8199,7 @@ async function doExport(source, settings, paths, queued = false) {
   } finally {
     await exportCancel;
     if (work) await inv('work_end', { id: work.id }).catch(() => {});
+    if (upscaleWork) await inv('work_end', { id: upscaleWork.id }).catch(() => {});
     if (!queued) hideModal();
     exporting = false;
   }
@@ -6754,7 +8215,7 @@ async function renderCapModels() {
   $('#capModel').innerHTML = $('#transcriptModel').innerHTML = options;
   $('#capModelHint').textContent = tr('cmh_' + capModel());
 }
-const setCapModel = e => { lsSet('kadr.capModel', e.target.value); renderCapModels(); };
+const setCapModel = e => { lsSet('kadr.capModel', e.target.value); renderCapModels(); if (panelVisible('aiTools')) renderAITools(); };
 $('#capModel').onchange = $('#transcriptModel').onchange = setCapModel;
 $('#transcriptLang').innerHTML = $('#capLang').innerHTML;
 $('#transcriptLang').onchange = e => { $('#capLang').value = e.target.value; };
@@ -6763,8 +8224,7 @@ async function ensureCaptionModel(model, title) {
   if (await inv('model_ready', { model })) return true;
   if (!(await TA.dialog.ask(tr('modelAskN', { size: CAP_MODELS[model] }), { title: tr(title) }))) return false;
   progress(tr('p_model'), 0);
-  await inv('model_download', { model });
-  renderCapModels();
+  await whisperModel.download(false, model);
   return true;
 }
 async function autoCaptions() {
@@ -6783,7 +8243,8 @@ async function autoCaptions() {
     if (!(await ensureCaptionModel(model, 'genCaptions'))) return;
     progress(tr('p_audio'), 0);
     work = await inv('work_begin');
-    await dnPrep();
+    await prepareModalAudio({ ...P, items: pick });
+    if (cancelled) throw new Error('cancelled');
     const { args } = G.buildArgs({ ...P, items: pick }, { out: work.path + '/mix.wav', audioOnly: true });
     const json = await inv('transcribe', { id: work.id, audioArgs: args, lang: $('#capLang').value, model });
     work = null;
@@ -6815,6 +8276,168 @@ async function autoCaptions() {
     if (work) inv('work_end', { id: work.id });
   }
 }
+
+/* ---------- offline caption translation ---------- */
+const TRANSLATION_DIRECTIONS = { 'ar-en': 'translationArEn', 'en-ar': 'translationEnAr' };
+const translationDirectionOptions = value => Object.entries(TRANSLATION_DIRECTIONS).map(([code, label]) =>
+  `<option value="${code}"${code === value ? ' selected' : ''}>${tr(label)}</option>`).join('');
+const isTranslatable = it => isText(it) && !it.icon && typeof it.text === 'string' && it.text.trim().length > 0;
+
+function captionTranslationTargets() {
+  const selected = selectedItems().filter(isTranslatable);
+  return selected.length ? selected : timelineItems().filter(it => it.track === 'c1' && isTranslatable(it));
+}
+const captionStamp = it => JSON.stringify([it.track, it.grp, it.start, it.dur, it.text]);
+function checkCaptionSources(project, clips, stamps) {
+  if (P !== project || clips.some((it, i) => item(it.id) !== it || captionStamp(it) !== stamps[i])) {
+    throw new Error(tr('translationChanged'));
+  }
+}
+
+async function translateCaptionItems(clips, direction, job) {
+  const project = P, stamps = clips.map(captionStamp);
+  const paragraphs = clips.map(it => it.text.split(/\r\n?|\n/));
+  const lines = paragraphs.flat().filter(line => line.trim());
+  job.total = lines.length;
+  job.update?.(tr('translationProgress', { done: 0, total: job.total }), 0);
+  const translated = await inv('translation_run', { job: job.id, direction, lines }).catch(e => {
+    if (cleanErr(e) === 'translation_line_too_long') throw new Error(tr('translationLineTooLong'));
+    throw e;
+  });
+  if (job.cancelled) throw new Error('cancelled');
+  checkCaptionSources(project, clips, stamps);
+  if (translated.length !== lines.length) throw new Error(tr('translationIncomplete'));
+  let index = 0;
+  return paragraphs.map(parts => parts.map(line => line.trim() ? translated[index++] || line : line).join('\n'));
+}
+
+function applyCaptionTranslation(clips, translated, direction, output) {
+  const replace = output === 'replace';
+  if (replace && clips.some(it => lockedTrack(it.track))) throw new Error(tr('translationLocked'));
+  const toArabic = direction === 'en-ar';
+  let lane;
+  snapshot();
+  if (!replace) {
+    const at = P.tracks.findLastIndex(track => clips.some(it => it.track === track.id));
+    const id = 't' + uid();
+    lane = { id, kind: 'text', captionLanguage: toArabic ? 'ar' : 'en' };
+    P.tracks.splice(at + 1, 0, lane);
+  }
+  return clips.map((source, i) => {
+    const it = replace ? source : structuredClone(source);
+    if (lane) {
+      it.id = uid();
+      it.track = lane.id;
+      it.style = { ...textDefaults(source.track === 'c1'), ...it.style };
+      const y = num(it.y, 0.5);
+      const lineHeight = num(it.style.size, 78) * num(it.style.lineH, 1.3) / P.h;
+      const halfHeight = text => Math.min(0.22, lineHeight * text.split(/\r\n?|\n/).filter(line => line.trim()).length / 2);
+      const translatedHeight = halfHeight(translated[i]);
+      const gap = Math.max(0.08, halfHeight(source.text) + translatedHeight + 0.014);
+      it.y = y + gap + translatedHeight <= 0.97 ? y + gap : Math.max(0.03 + translatedHeight, y - gap);
+      // The second line needs its own vertical position even when the source is animated.
+      if (it.kf) delete it.kf.y;
+      delete it.trk;
+      addTimelineItem(it, it.grp || null);
+    }
+    it.text = translated[i];
+    it.style = { ...it.style, dir: toArabic ? 'rtl' : 'ltr' };
+    delete it.words;
+    return it.id;
+  });
+}
+
+let captionTranslationJob;
+TA.event.listen('translation-progress', ({ payload: { job, done } }) => {
+  const active = captionTranslationJob;
+  if (active?.id === job && !active.cancelled) active.update?.(tr('translationProgress', { done, total: active.total }), done / active.total);
+});
+function openCaptionTranslation(candidates = captionTranslationTargets()) {
+  if (captionTranslationJob || exporting || queueRunning || !$('#modal').hidden) return;
+  const clips = candidates.filter(isTranslatable);
+  if (!clips.length) return toast(tr('translationPick'));
+  const previous = document.activeElement, project = P, stamps = clips.map(captionStamp);
+  const box = $('#mBox');
+  box.onclick = box.ondblclick = null;
+  box.innerHTML = `<form id="captionTranslateForm" role="dialog" aria-modal="true" aria-labelledby="captionTranslateTitle">
+    <h3 id="captionTranslateTitle">${tr('aiTranslation')}</h3>
+    <label class="f"><span>${tr('translationDirection')}</span><select id="captionTranslateDirection">${translationDirectionOptions(S.captionDirection(clips.map(it => it.text)))}</select></label>
+    <label class="f"><span>${tr('translationOutput')}</span><select id="captionTranslateOutput">
+      <option value="replace"${clips.some(it => lockedTrack(it.track)) ? ' disabled' : ''}>${tr('translationReplace')}</option>
+      <option value="track">${tr('translationTrack')}</option><option value="srt">${tr('translationSrt')}</option>
+    </select></label>
+    <div id="captionTranslateProgress" hidden><p role="status"></p><div class="pbar reframe-progress"><i></i></div></div>
+    <div class="acts"><button type="button" id="captionTranslateCancel">${tr('cancel')}</button>
+      <button class="primary" id="captionTranslateGo">${tr('captionTranslate')}</button></div></form>`;
+  const form = $('#captionTranslateForm'), directionSelect = $('#captionTranslateDirection'), outputSelect = $('#captionTranslateOutput');
+  const cancel = $('#captionTranslateCancel'), go = $('#captionTranslateGo');
+  const close = () => { hideModal(); previous?.focus(); };
+  const update = (label, p) => {
+    const panel = $('#captionTranslateProgress');
+    if (!panel || !form.isConnected || $('#modal').hidden) return;
+    panel.hidden = false;
+    panel.querySelector('[role="status"]').textContent = label;
+    panel.querySelector('i').style.width = `${Math.round(p * 100)}%`;
+  };
+  $('#modal').hidden = false;
+  directionSelect.focus();
+  let job;
+  cancel.onclick = () => {
+    if (!job) return close();
+    job.cancelled = true;
+    if (job.running) void inv('translation_cancel', { job: job.id }).catch(() => {});
+    close();
+  };
+  form.onkeydown = e => {
+    if (e.key === 'Escape') { e.preventDefault(); cancel.click(); }
+    if (e.key !== 'Tab') return;
+    const controls = [directionSelect, outputSelect, cancel, go].filter(el => !el.disabled);
+    const edge = e.shiftKey ? controls[0] : controls.at(-1);
+    if (document.activeElement === edge) {
+      e.preventDefault();
+      (e.shiftKey ? controls.at(-1) : controls[0]).focus();
+    }
+  };
+  form.onsubmit = async e => {
+    e.preventDefault();
+    if (job) return;
+    const direction = directionSelect.value, output = outputSelect.value;
+    job = captionTranslationJob = { id: uid(), update, direction };
+    go.disabled = directionSelect.disabled = outputSelect.disabled = true;
+    cancel.focus();
+    setPlaying(false);
+    try {
+      if (!await inv('translation_ready', { direction })) {
+        if (job.cancelled || !await TA.dialog.ask(tr('translationAsk'), { title: tr('aiTranslation') })) return;
+        if (job.cancelled) return;
+        update(tr('translationDownload'), 0);
+        await translationModel.download(true, direction);
+      }
+      if (job.cancelled) return;
+      checkCaptionSources(project, clips, stamps);
+      job.running = true;
+      const translated = await translateCaptionItems(clips, direction, job);
+      if (output === 'srt') {
+        const text = S.captionsToSrt(clips.map((it, i) => ({ start: it.start, dur: it.dur, text: translated[i] })));
+        const name = (P.name || 'Maqto').replace(/[\\/]/g, '-');
+        const dest = await TA.dialog.save({ defaultPath: `${name}.${direction.slice(-2)}.srt`, filters: [{ name: 'SubRip', extensions: ['srt'] }] });
+        if (!dest || job.cancelled) return;
+        await inv('save_srt', { path: /\.srt$/i.test(dest) ? dest : dest + '.srt', text });
+        toast(tr('exported'));
+      } else {
+        applyCaptionTranslation(clips, translated, direction, output);
+        refresh();
+        toast(tr('translationDone', { n: clips.length }));
+      }
+    } catch (e) {
+      if (!job.cancelled) toast(cleanErr(e));
+    } finally {
+      captionTranslationJob = null;
+      if (!job.cancelled && form.isConnected) close();
+    }
+  };
+}
+$('#bTranslateCaptions').onclick = () => openCaptionTranslation();
 
 /* ---------- transcript editing ---------- */
 const transcriptText = $('#transcriptText');
@@ -7079,6 +8702,7 @@ function cutTranscript(entries, indices) {
   return applySpeechCuts(ranges);
 }
 $('#transcribeClips').onclick = transcribeClips;
+$('#findHighlights').onclick = openHighlights;
 const cutPickedWords = () => {
   renderTranscript();
   cutTranscript(transcriptEntries, pickedWords);
@@ -7184,6 +8808,79 @@ async function toggleRecord() {
   toast(tr('recording'));
   setPlaying(true);
 }
+
+/* ---------- screen + camera + microphone recording (ffmpeg, record.rs) ---------- */
+const REC_SOURCES = [['screen', 'recScreenSrc'], ['camera', 'recCamera'], ['mic', 'recMic']];
+let screenRec = null; // { timer, pill } while a recording runs
+async function openRecorder() {
+  if (screenRec || rec || exporting) return;
+  const box = $('#mBox');
+  $('#modal').hidden = false;
+  box.onclick = null;
+  box.innerHTML = `<h3>${tr('recScreen')}</h3><p class="hint" id="rcStatus" role="status">${tr('recHint')}</p>
+    ${REC_SOURCES.map(([k, label]) => `<label class="sam-field"><input type="checkbox" id="rcOn_${k}" ${k === 'screen' ? 'checked' : ''}><span>${tr(label)}</span><select id="rcSel_${k}" dir="auto"></select></label>`).join('')}
+    <label class="sam-field"><input type="checkbox" id="rcAdd" ${pref('recAdd', 'true') !== 'false' ? 'checked' : ''}>${tr('recAdd')}</label>
+    <div class="acts"><button id="rcClose">${tr('hlClose')}</button><span class="flex"></span><button class="primary" id="rcGo" disabled>${tr('recStart')}</button></div>`;
+  $('#rcClose').onclick = hideModal;
+  const status = txt => { $('#rcStatus').textContent = txt; };
+  try {
+    const d = await inv('record_devices');
+    for (const [k, list] of [['screen', d.screens], ['camera', d.cameras], ['mic', d.mics]]) {
+      $('#rcSel_' + k).innerHTML = list.map(x => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
+      if (!list.length) { $('#rcOn_' + k).checked = false; $('#rcOn_' + k).disabled = $('#rcSel_' + k).disabled = true; }
+    }
+  } catch (e) { return status(tr('error') + ': ' + cleanErr(e)); }
+  $('#rcGo').disabled = false;
+  $('#rcGo').onclick = async () => {
+    const opts = {};
+    for (const [k] of REC_SOURCES) if ($('#rcOn_' + k).checked) opts[k] = $('#rcSel_' + k).value;
+    if (!Object.keys(opts).length) return status(tr('recPick'));
+    const add = $('#rcAdd').checked;
+    setPref('recAdd', add);
+    $('#rcGo').disabled = true;
+    for (let n = 3; n > 0; n--) { status(String(n)); await new Promise(r => setTimeout(r, 1000)); if (!$('#rcStatus')?.isConnected) return; }
+    try {
+      await inv('record_start', { opts, dir: projectPath ? projectPath.replace(/[\\/][^\\/]*$/, '') : null });
+    } catch (e) {
+      const m = cleanErr(e);
+      $('#rcGo').disabled = false;
+      if (!/^permission/.test(m)) return status(tr('error') + ': ' + m);
+      status(tr('recPerm'));
+      const kind = /screen/.test(m) ? 'screen' : opts.camera ? 'camera' : 'mic';
+      if (await TA.dialog.ask(tr('recPerm'), { title: tr('recScreen') })) inv('record_open_privacy', { kind });
+      return;
+    }
+    hideModal();
+    const t0 = Date.now(), pill = document.createElement('div');
+    pill.id = 'recPill';
+    pill.innerHTML = `<i></i><span dir="ltr">00:00</span><button class="primary">${tr('stopRec')}</button>`;
+    document.body.append(pill);
+    const timer = setInterval(() => { const s = Math.floor((Date.now() - t0) / 1000); pill.querySelector('span').textContent = `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; }, 500);
+    screenRec = { timer, pill };
+    pill.querySelector('button').onclick = () => stopRecorder(add);
+  };
+}
+async function stopRecorder(add) {
+  const { timer, pill } = screenRec;
+  clearInterval(timer);
+  pill.querySelector('button').disabled = true;
+  try {
+    const files = await inv('record_stop');
+    if (!files.length) return toast(tr('error') + ': ' + tr('recEmpty'));
+    addToBin(await inv('probe', { paths: files.map(f => f.path) }));
+    const placed = files.map(f => {
+      const [mid, m] = Object.entries(P.media).find(([, x]) => x.path === f.path) || [];
+      return m && { role: f.role, media: mid, w: m.w, h: m.h };
+    }).filter(Boolean);
+    if (add && placed.length) {
+      snapshot(); // one undo step for the whole recording
+      for (const x of S.recordPlacement(placed, P.w, P.h, t)) addMedia(x.media, x.track, x.start, x.extra, true);
+    }
+    toast(tr('recSaved', { n: files.length }));
+  } catch (e) { toast(tr('error') + ': ' + cleanErr(e)); }
+  finally { pill.remove(); screenRec = null; }
+}
+$('#bRecScreen').onclick = openRecorder;
 
 /* ---------- project ---------- */
 const REFRAME_ASPECTS = ['9:16', '1:1', '4:5', '16:9'];
@@ -7385,7 +9082,7 @@ async function writeLuts(Q, work) {
     if (it.audioOnly || !m || m.kind === 'audio' || !S.hasColor(it)) continue;
     const f = it.color && it.color.lut && it.color.lut.file, ul = f ? await loadUserLut(f) : null;
     const name = 'lut_' + String(it.id).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30) + '.cube';
-    out[it.id] = await inv('write_work', new TextEncoder().encode(S.cubeText(S.bakeLut(it, ul))), { headers: { 'x-id': String(work.id), 'x-name': name } });
+    out[it.id] = await inv('write_work', new TextEncoder().encode(S.cubeText(S.bakeLut(it, ul, S.LUT_N, { noMask: true }))), { headers: { 'x-id': String(work.id), 'x-name': name } });
   }
   return out;
 }
@@ -7421,7 +9118,121 @@ async function openPath(f, asked) {
   undoStack.length = redoStack.length = 0;
   syncSettings();
   refresh();
-  if (r.missing.length) toast(tr('missing') + ': ' + r.missing.join(' · '));
+  offline = new Set(r.missingIds);
+  if (offline.size) relinkDialog();
+}
+
+// ---------- offline media + relink ----------
+async function scanOffline() {
+  const ids = Object.keys(P.media).filter(id => P.media[id].path);
+  const gone = new Set((await inv('collect_sizes', { paths: ids.map(id => P.media[id].path) }).catch(() => ({ missing: [] }))).missing);
+  offline = new Set(ids.filter(id => gone.has(P.media[id].path)));
+  needsDraw = true;
+}
+function drawOffline(ctx, it, project) {
+  const { w, h } = project, m = project.media[it.media];
+  ctx.save();
+  ctx.fillStyle = '#241a1a'; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = 'rgba(255,90,90,.28)'; ctx.lineWidth = Math.max(2, w / 160);
+  for (let x = -h; x < w; x += w / 10) { ctx.beginPath(); ctx.moveTo(x, h); ctx.lineTo(x + h, 0); ctx.stroke(); }
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `700 ${w / 13}px system-ui, sans-serif`; ctx.fillText(tr('mediaOffline'), w / 2, h / 2);
+  ctx.font = `${w / 28}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillText(m?.name || '', w / 2, h / 2 + w / 11);
+  ctx.restore();
+}
+async function applyRelink(pairs) {
+  const probed = pairs.length ? (await inv('probe', { paths: pairs.map(x => x.path) }).catch(() => ({ ok: [] }))).ok : [];
+  const info = new Map(probed.map(x => [x.path, x]));
+  const good = pairs.filter(x => info.has(x.path));
+  if (!good.length) return 0;
+  snapshot(); // one undo step for the whole relink
+  for (const { id, path } of good) {
+    const fresh = info.get(path);
+    Object.assign(P.media[id], { path, size: fresh.size, ...(fresh.sourceKey ? { sourceKey: fresh.sourceKey } : {}) });
+  }
+  await scanOffline();
+  refresh();
+  return good.length;
+}
+function relinkDialog() {
+  const list = [...offline].filter(id => P.media[id]).map(id => ({ id, ...P.media[id] }));
+  if (!list.length) return hideModal();
+  const box = $('#mBox');
+  box.onclick = box.ondblclick = null;
+  box.innerHTML = `<h3>${tr('relinkTitle')}</h3><p class="hint">${tr('relinkHint', { n: list.length })}</p>
+    <div class="relink-list">${list.map(m => `<div class="relink-row"><span dir="ltr"><b>${esc(m.name || S.baseName(m.path))}</b><small>${esc(m.path)}</small></span><button type="button" data-locate="${m.id}">${tr('relinkLocate')}</button></div>`).join('')}</div>
+    <div class="acts"><button type="button" id="rlSearch">${tr('relinkSearch')}</button><button type="button" class="primary" id="rlClose">${tr('relinkLater')}</button></div>`;
+  $('#modal').hidden = false;
+  const done = n => { n && toast(tr('relinked', { n })); offline.size ? relinkDialog() : hideModal(); };
+  $('#rlClose').onclick = hideModal;
+  box.querySelectorAll('[data-locate]').forEach(b => b.onclick = async () => {
+    const f = await TA.dialog.open({ multiple: false });
+    if (f) done(await applyRelink([{ id: b.dataset.locate, path: f }]));
+  });
+  $('#rlSearch').onclick = async () => {
+    const root = await TA.dialog.open({ directory: true });
+    if (!root) return;
+    const found = await inv('relink_search', { root, names: [...new Set(list.map(m => S.baseName(m.path)))] }).catch(() => []);
+    done(await applyRelink(S.relinkMatches(list, found)));
+  };
+}
+
+// ---------- collect project ----------
+const fmtGB = n => n >= 1e9 ? (n / 1e9).toFixed(2) + ' GB' : (n / 1e6).toFixed(1) + ' MB';
+function collectProject() {
+  if (!Object.keys(P.media).length) return toast(tr('emptyTl'));
+  const box = $('#mBox');
+  box.onclick = box.ondblclick = null;
+  box.innerHTML = `<form id="collectForm"><h3>${tr('collectTitle')}</h3><p class="hint">${tr('collectHint')}</p>
+    <label class="sam-field"><input type="checkbox" id="colProxy">${tr('collectProxies')}</label>
+    <label class="sam-field"><input type="checkbox" id="colCache">${tr('collectCaches')}</label>
+    <label class="sam-field"><input type="checkbox" id="colZip">${tr('collectZip')}</label>
+    <div class="acts"><button type="button" id="mNo">${tr('cancel')}</button><button class="primary">${tr('collectPick')}</button></div></form>`;
+  $('#modal').hidden = false;
+  $('#mNo').onclick = hideModal;
+  $('#collectForm').onsubmit = async e => {
+    e.preventDefault();
+    const opt = { proxy: $('#colProxy').checked, cache: $('#colCache').checked, zip: $('#colZip').checked };
+    hideModal();
+    try {
+      const dest = await TA.dialog.open({ directory: true });
+      if (dest) await runCollect(dest, opt);
+    } catch (err) { hideModal(); toast(tr('error') + ': ' + cleanErr(err)); }
+  };
+}
+async function runCollect(dest, opt) {
+  const name = (P.name || (projectPath && projectPath.split(/[\\/]/).pop().replace(/\.(maqto|kadr)$/i, '')) || 'Project').replace(/[\\/:*?"<>|]/g, '_');
+  const entries = [
+    ...Object.values(P.media).map(m => ({ path: m.path, dir: 'Media' })),
+    ...P.items.map(it => ({ path: it.color?.lut?.file, dir: 'LUTs' })),
+  ];
+  // Proxies and AI caches are keyed by the original path in this session, so they ride along as plain extra files.
+  if (opt.proxy) entries.push(...[...mediaProxies.values()].map(x => ({ path: x.file, dir: 'Proxies' })));
+  if (opt.cache) entries.push(...[...upscaleCaches.values(), ...depthCaches.values()].map(x => ({ path: typeof x?.path === 'string' ? x.path : '', dir: 'Cache' })));
+  const wanted = entries.filter(x => x.path);
+  const { total, missing } = await inv('collect_sizes', { paths: [...new Set(wanted.map(x => x.path))] });
+  const gone = new Set(missing);
+  const plan = S.collectPlan(wanted.filter(x => !gone.has(x.path)));
+  const lost = [...gone].filter(f => entries.some(x => x.path === f && x.dir !== 'Proxies' && x.dir !== 'Cache'));
+  const ok = await TA.dialog.ask(tr('collectConfirm', { n: plan.files.length, size: fmtGB(total), dest: dest + '/' + name }) + (lost.length ? '\n\n' + tr('collectOffline', { n: lost.length }) : ''), { kind: 'warning' });
+  if (!ok) return;
+  const job = 'collect' + Date.now(), box = $('#mBox');
+  box.onclick = box.ondblclick = null;
+  const paint = (done, all) => {
+    box.innerHTML = `<div>${tr('collecting')} — ${all ? Math.round(done / all * 100) : 0}%</div><div class="pbar"><i style="width:${all ? Math.round(done / all * 100) : 0}%"></i></div><div class="acts"><button id="mCancel">${tr('cancel')}</button></div>`;
+    $('#mCancel').onclick = () => inv('collect_cancel');
+  };
+  paint(0, total);
+  $('#modal').hidden = false;
+  const un = await TA.event.listen('collectprog', ({ payload }) => payload.job === job && paint(payload.done, payload.total));
+  try {
+    const json = JSON.stringify(S.collectRewrite(P, plan.map));
+    const r = await inv('collect_run', { job, dest, name, files: plan.files, projectJson: json, zip: opt.zip });
+    toast(tr('collected', { dir: r.zip || r.dir }));
+  } catch (err) {
+    const msg = cleanErr(err);
+    toast(msg === 'cancelled' ? tr('cancelled') : tr('error') + ': ' + msg);
+  } finally { un(); hideModal(); }
 }
 
 async function timelineReport(title, warnings, empty) {
@@ -7559,7 +9370,7 @@ $('#bSnap').onclick = () => { snapOn = !snapOn; $('#bSnap').classList.toggle('on
 $('#bZoomIn').onclick = () => setZoom(pps * 1.4);
 $('#bZoomOut').onclick = () => setZoom(pps / 1.4);
 $('#bFit').onclick = () => setZoom(($('#scroll').clientWidth - 40) / Math.max(total(), 1));
-$('#bLang').onclick = () => { LANG = LANG === 'ar' ? 'en' : 'ar'; applyLang(); if (ws) renderDock(); renderLibCards(); refresh(); };
+$('#bLang').onclick = () => { LANG = LANG === 'ar' ? 'en' : 'ar'; applyLang(); if (ws) renderDock(); if (panelVisible('aiTools')) renderAITools(); paintPiper(); renderLibCards(); refresh(); };
 
 /* ---------- keyboard shortcuts ---------- */
 const MAC = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -7673,6 +9484,7 @@ const COMMANDS = {
     'multicam' + (i + 1), { group: 'wsMulticam', label: 'mcAngle' + (i + 1), default: [String(i + 1)],
       context: () => !!activeMulticam(), when: e => !e.repeat, run: () => chooseMulticamAngle(i) },
   ])),
+  selectObject: { group: 'g_player', label: 'samSelect', default: ['O'], when: e => !e.repeat, run: () => openObjectSelect(item(sel)) },
   toggleProxies: { group: 'g_player', label: 'proxyUse', default: ['Alt+P'], when: e => !e.repeat, run: toggleProxies },
   togglePlay: { group: 'g_player', label: 'k_play', default: ['Space'], run: () => setPlaying(!playing) },
   play: { group: 'g_player', label: 'play', default: ['L'], run: () => setPlaying(true) },
@@ -7744,7 +9556,11 @@ const COMMANDS = {
   save: { group: 'g_file', label: 'save', default: ['Mod+S'], run: () => save() },
   saveAs: { group: 'g_file', label: 'k_saveAs', default: ['Mod+Shift+S'], run: () => save(true) },
   import: { group: 'g_file', label: 'import', default: ['Mod+I'], run: importMedia },
+  recordScreen: { group: 'g_file', label: 'recScreen', default: [], run: openRecorder },
   importTimeline: { group: 'g_file', label: 'timelineImport', default: [], run: importTimelineDialog },
+  exportFrame: { group: 'g_file', label: 'exportFrame', default: [], run: exportFramePng },
+  collectProject: { group: 'g_file', label: 'collectTitle', default: [], run: collectProject },
+  relinkMedia: { group: 'g_file', label: 'relinkTitle', default: [], run: () => scanOffline().then(() => offline.size ? relinkDialog() : toast(tr('relinkNone'))) },
   exportTimeline: { group: 'g_file', label: 'timelineExport', default: [], run: exportTimelineDialog },
   export: { group: 'g_file', label: 'export', default: ['Mod+E'], run: exportDialog },
 };
@@ -7926,15 +9742,15 @@ async function openPending() {
 TA.event.listen('open-file', openPending);
 const shortcutInput = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
 TA.event.listen('menu-file', e => {
-  if (queueRunning) return;
+  if (queueRunning || whatsNewDialog.open) return;
   if (Object.hasOwn(COMMANDS, e.payload)) {
     cancelProTrim?.();
     if (keysDialog.open) keysDialog.close();
     COMMANDS[e.payload].run();
   }
 });
-TA.event.listen('menu-shortcuts', () => showKeys());
-TA.event.listen('menu-workspaces', () => { if (!keysDialog.open) openWorkspaces(); });
+TA.event.listen('menu-shortcuts', () => { if (!whatsNewDialog.open) showKeys(); });
+TA.event.listen('menu-workspaces', () => { if (!keysDialog.open && !whatsNewDialog.open) openWorkspaces(); });
 TA.event.listen('quit-requested', async () => {
   if (quitting) return;
   cancelProTrim?.();
@@ -7961,9 +9777,14 @@ window.addEventListener('keydown', e => {
     if (e.code === 'Escape') cancelProTrim();
     return;
   }
-  if (e.defaultPrevented || keysDialog.open || !$('#modal').hidden || !(e.target instanceof Element)
+  if (!e.defaultPrevented && e.code === 'Escape' && objectEdit(item(sel)) && $('#modal').hidden && !keysDialog.open && !whatsNewDialog.open) {
+    e.preventDefault();
+    if (objectJob?.id) cancelObjectJob(); else { stopObjectEdit(); inspector(); }
+    return;
+  }
+  if (e.defaultPrevented || keysDialog.open || whatsNewDialog.open || !$('#modal').hidden || !(e.target instanceof Element)
       || markerEditor.contains(e.target) || wsMenu.contains(e.target)
-      || e.code === 'Space' && e.target.closest('[data-dock-tab], .tarr, #bWorkspaces, .mk, #markerPanel summary, #markerPanel button, #multicam button')) return;
+      || e.code === 'Space' && e.target.closest('[data-dock-tab], .tarr, #bWorkspaces, #bAITools, .ai-actions button, .mk, #markerPanel summary, #markerPanel button, #multicam button')) return;
   const command = S.lookupKey(shortcutRuns, S.normalizeKey(e, MAC), MAC);
   if (!command || command.context && !command.context()) return;
   // In a text field only File commands and the shortcut sheet run; the rest stay native (the Edit menu owns copy/paste/undo there).
@@ -7994,6 +9815,706 @@ inv('system_fonts').then(v => {
   $('#fpop')?._list();
   needsDraw = true;
 }).catch(() => {});
+/* ---------- AI Tools ---------- */
+const aiToolPanel = dockPanels.aiTools;
+const aiTransfers = new Map(), aiReady = new Map();
+function localAIModel(command, label, param, selected = () => '', sync = () => {}) {
+  const key = version => command + ':' + version;
+  const invoke = (action, version) => inv(command + '_' + action, param ? { [param]: version } : undefined);
+  function change(action, inline, version) {
+    const id = key(version), busy = aiTransfers.get(label);
+    if (busy) {
+      if (busy.id === id && busy.action === action) return busy.done;
+      return busy.done.catch(() => {}).then(() => change(action, inline, version));
+    }
+    const transfer = { id, action, inline, p: action === 'download' ? 0 : null };
+    aiTransfers.set(label, transfer);
+    transfer.done = invoke(action, version).then(() => {
+      const ready = action === 'download';
+      aiReady.set(id, ready);
+      sync(ready);
+    }).finally(() => {
+      aiTransfers.delete(label);
+      paintAITools();
+    });
+    paintAITools();
+    return transfer.done;
+  }
+  return {
+    label, key: () => key(selected()),
+    ready: () => invoke('ready', selected()),
+    download: (inline = true, version = selected()) => change('download', inline, version),
+    remove: () => change('remove', true, selected()),
+  };
+}
+const depthModel = localAIModel('depth', 'depth_dl', null);
+const upscaleModel = localAIModel('upscale', 'upscale_dl', null);
+const sam2Model = localAIModel('sam2', 'sam2_dl', null);
+const miganModel = localAIModel('migan', 'migan_dl', null, undefined, installed => {
+  if (installed) for (const [key, state] of fillCaches) if (state.needsModel) fillCaches.delete(key);
+});
+const matteModels = Object.fromEntries(['person', 'object'].map(kind => [kind,
+  localAIModel('matte', 'matte_dl', 'kind', () => kind, v => { matteTool[kind] = v; })]));
+const rifeModel = localAIModel('rife', 'rife', null, undefined, v => { rifeTool = v; });
+const voiceCleanModel = localAIModel('voice_clean', 'voice_clean_dl', null, undefined, ready => {
+  if (ready) for (const [key, error] of voiceErrors) if (error === 'voice_clean_missing') voiceErrors.delete(key);
+});
+const scenesModel = localAIModel('scenes', 'scenes_dl', null);
+const stemsModel = localAIModel('stems', 'stems_dl', null, undefined, v => { stemsTool = v; });
+let translationModelDirection = LANG === 'ar' ? 'ar-en' : 'en-ar';
+const translationModel = localAIModel('translation', 'translation_dl', 'direction', () => translationModelDirection);
+const whisperModel = localAIModel('model', 'model', 'model', capModel, () => renderCapModels());
+const PIPER_VOICES = { 'ar_JO-kareem-medium': 'العربية · Kareem', 'en_US-lessac-medium': 'English · Lessac' };
+const piperPanel = $('#piperPanel'), piperText = $('#piperText'), piperVoice = $('#piperVoice');
+let piperSelectedVoice = Object.keys(PIPER_VOICES)[LANG === 'ar' ? 0 : 1];
+let piperCaptionSource, piperJob, piperPreview, piperError = '', piperCancelling = false;
+const piperModel = localAIModel('piper', 'piper_dl', 'voice', () => piperSelectedVoice);
+const piperVoiceOptions = () => Object.entries(PIPER_VOICES).map(([id, name]) =>
+  `<option value="${id}"${id === piperSelectedVoice ? ' selected' : ''}>${name}</option>`).join('');
+const piperErrorText = e => {
+  const code = cleanErr(e);
+  const key = { piper_busy: 'piperBusy', piper_missing: 'piperVoiceMissing',
+    piper_voice_unavailable: 'piperVoiceUnavailable', piper_engine_unavailable: 'piperEngineUnavailable' }[code];
+  return key ? tr(key) : code;
+};
+function selectPiperVoice(voice) {
+  piperSelectedVoice = piperVoice.value = voice;
+  piperAudio.pause();
+  piperError = '';
+  const select = aiToolPanel.querySelector('[data-piper-voice]');
+  if (select) select.value = voice;
+  refreshAITools();
+}
+function openPiper(clips = null) {
+  revealPanel('text');
+  if (!piperJob) {
+    if (clips) clips = [...clips].sort((a, b) => a.start - b.start);
+    piperCaptionSource = clips && { clips, project: P, group: openGrp, stamps: clips.map(captionStamp) };
+    piperError = '';
+    if (clips) {
+      const isArabic = S.captionDirection(clips.map(it => it.text)) === 'ar-en';
+      selectPiperVoice(Object.keys(PIPER_VOICES)[isArabic ? 0 : 1]);
+    }
+  }
+  piperPanel.open = true;
+  refreshAITools();
+  piperPanel.querySelector('summary').scrollIntoView({ block: 'nearest' });
+  (clips ? piperVoice : piperText).focus({ preventScroll: true });
+}
+async function cancelPiper() {
+  const job = piperJob;
+  if (piperCancelling || job?.cancelled) return;
+  if (job) job.cancelled = true;
+  else piperCancelling = true;
+  paintPiper();
+  try { await inv('piper_cancel', { job: job?.id || 'download' }); }
+  catch (e) { toast(piperErrorText(e)); }
+}
+function paintPiper() {
+  const source = piperCaptionSource, ready = aiReady.get(piperModel.key());
+  const transfer = aiTransfers.get(piperModel.label), downloading = transfer?.action === 'download';
+  const busy = !!(piperJob || transfer);
+  $('#piperCaptions').hidden = $('#piperBack').hidden = !source;
+  if (source) $('#piperCaptions').textContent = tr('piperCaptionCount', { n: source.clips.length });
+  $('#piperTextField').hidden = $('#piperPreview').hidden = !!source;
+  $('#piperHint').hidden = !piperSelectedVoice.startsWith('ar_');
+  for (const el of [piperVoice, piperText, $('#piperSpeed'), $('#piperPause'), $('#piperBack')]) el.disabled = busy;
+  $('#piperStatus').textContent = downloading ? tr('aiDownloading', { p: Math.round(transfer.p * 100) })
+    : piperJob?.progress ? tr('piperFitting', piperJob.progress) : piperJob ? tr('piperGenerating')
+    : piperError || (ready === undefined ? tr('aiChecking') : ready === null ? tr('aiUnavailable') : ready ? '' : tr('piperVoiceMissing'));
+  $('#piperDownload').hidden = ready !== false || busy;
+  $('#piperCancel').hidden = !(downloading || piperJob);
+  $('#piperCancel').disabled = piperCancelling || !!piperJob?.cancelled;
+  const valid = !busy && ready === true && (source || piperText.value.trim());
+  $('#piperAdd').disabled = !valid;
+  $('#piperPreview').disabled = busy || (!valid && piperAudio.paused);
+  $('#piperPreview').textContent = tr(piperAudio.paused ? 'piperPreview' : 'piperStopPreview');
+}
+function insertVoiceOver(result, starts) {
+  snapshot();
+  const mids = addToBin(result);
+  const occupied = openGrp ? timelineItems() : P.items;
+  const ids = mids.map((mid, i) => {
+    const { dur } = P.media[mid], start = starts[i];
+    let track = P.tracks.find(x => x.kind === 'audio' && !x.locked &&
+      !occupied.some(it => it.track === x.id && it.start < start + dur && start < it.start + it.dur));
+    if (!track) {
+      track = { id: 'a' + uid(), kind: 'audio' };
+      P.tracks.push(track);
+    }
+    const clip = { id: uid(), track: track.id, media: mid, start, dur, in: 0, speed: 1, volume: 1 };
+    addTimelineItem(clip);
+    if (openGrp) occupied.push(clip);
+    return clip.id;
+  });
+  setSelection(ids);
+  refresh();
+  return ids;
+}
+async function makeVoiceOver(lines, settings, starts, source, preview = false) {
+  if (piperJob || aiTransfers.has(piperModel.label)) throw new Error(tr('piperBusy'));
+  const job = piperJob = { id: uid() }, project = P, group = openGrp;
+  const verify = () => {
+    if (job.cancelled) throw new Error('cancelled');
+    if (P !== project || openGrp !== group || source && (source.project !== P || source.group !== openGrp ||
+        source.clips.some((it, i) => item(it.id) !== it || captionStamp(it) !== source.stamps[i]))) {
+      throw new Error(tr('piperChanged'));
+    }
+  };
+  const options = { ...settings, lines };
+  const key = JSON.stringify(options);
+  piperAudio.pause();
+  piperError = '';
+  paintAITools();
+  try {
+    verify();
+    const paths = !source && piperPreview?.project === P && piperPreview.key === key
+      ? piperPreview.paths : await inv('piper_synthesize', { ...options, job: job.id });
+    verify();
+    const result = await inv('probe', { paths });
+    verify();
+    if (result.ok.length !== lines.length || result.ok.some(m => m.kind !== 'audio' || !(m.dur > 0))) {
+      piperPreview = null;
+      throw new Error(tr('piperAudioError'));
+    }
+    if (preview) {
+      piperPreview = { project, key, paths };
+      piperAudio.src = urlOf(result.ok[0]);
+      setPlaying(false);
+      await piperAudio.play();
+      if (job.cancelled || !panelVisible('text') || !piperPanel.open) piperAudio.pause();
+      return [];
+    }
+    const ids = insertVoiceOver(result, starts);
+    toast(tr('piperAdded', { n: ids.length }));
+    return ids;
+  } finally {
+    piperJob = null;
+    paintAITools();
+  }
+}
+async function runPiperPanel(preview) {
+  if (preview && !piperAudio.paused) return piperAudio.pause();
+  const speed = $('#piperSpeed'), pause = $('#piperPause');
+  if (speed.value === '' || pause.value === '' || !speed.reportValidity() || !pause.reportValidity()) return;
+  const source = piperCaptionSource;
+  const lines = source ? source.clips.map(it => ({ text: it.text, slot: it.dur })) : [{ text: piperText.value }];
+  try {
+    await makeVoiceOver(lines, { voice: piperSelectedVoice, lengthScale: +speed.value, pause: +pause.value },
+      source ? source.clips.map(it => it.start) : [t], source, preview);
+  } catch (e) {
+    if (cleanErr(e) !== 'cancelled') {
+      piperError = piperErrorText(e);
+      paintPiper();
+    }
+  }
+}
+piperVoice.innerHTML = piperVoiceOptions();
+piperVoice.onchange = () => selectPiperVoice(piperVoice.value);
+piperText.oninput = paintPiper;
+piperAudio.onplay = piperAudio.onpause = piperAudio.onended = paintPiper;
+piperPanel.ontoggle = () => {
+  if (piperPanel.open) refreshAITools();
+  else piperAudio.pause();
+};
+$('#piperOpen').onclick = $('#piperBack').onclick = () => openPiper();
+$('#piperCancel').onclick = cancelPiper;
+$('#piperPreview').onclick = () => runPiperPanel(true);
+$('#piperAdd').onclick = () => runPiperPanel(false);
+$('#piperDownload').onclick = async () => {
+  piperError = '';
+  try { await piperModel.download(); }
+  catch (e) { if (cleanErr(e) !== 'cancelled') piperError = piperErrorText(e); }
+  finally { piperCancelling = false; refreshAITools(); }
+};
+TA.event.listen('piper-progress', ({ payload: { job, done, total } }) => {
+  if (piperJob?.id !== job || piperJob.cancelled) return;
+  piperJob.progress = { done, total };
+  paintPiper();
+});
+
+
+function openAIInspector(tab, selector) {
+  revealPanel('insp');
+  inspTab = tab;
+  inspector();
+  const control = $('#inspBody ' + selector);
+  control?.scrollIntoView({ block: 'center' });
+  control?.focus({ preventScroll: true });
+}
+function openAIMatte(kind, it) {
+  if (media(it)?.kind !== 'video' || media(it).angles) return toast(tr('aiPickVideo'));
+  if (!it.rmbg || mtKind(it) !== kind) {
+    snapshot();
+    Object.assign(it, { rmbg: true, rmbgKind: kind });
+    dirty = true;
+    refresh();
+  }
+  openAIInspector('tVideo', '[data-k="rmbgKind"]');
+}
+/* ---------- Scene detection (TransNetV2): cut positions live on the media as seconds of the source ---------- */
+const sceneQueue = [];
+let sceneRun = null;
+const sceneSens = () => Math.min(0.9, Math.max(0.1, Number(lsGet('kadr.sceneSens', 0.5)) || 0.5));
+const sceneCuts = m => m?.scenes && (!m.sourceKey || m.scenes.sourceKey === m.sourceKey) ? m.scenes.cuts : null;
+const sceneBusy = mid => sceneRun?.mid === mid || sceneQueue.some(q => q.mid === mid);
+function sceneTicks(it) {
+  const m = media(it), cuts = !it.compound && !m?.angles && sceneCuts(m);
+  return cuts ? S.sceneOffsets(it, cuts).map(o => `<i class="sct" style="left:calc(${o}px * var(--pps))"></i>`).join('') : '';
+}
+const binSceneTicks = m => m.dur && sceneCuts(m)?.length
+  ? `<span class="sc-ticks" title="${tr('scenesCuts')}">${sceneCuts(m).map(c => `<i style="inset-inline-start:${Math.min(100, c / m.dur * 100).toFixed(2)}%"></i>`).join('')}</span>` : '';
+function paintBinScenes() {
+  for (const el of $$('#binList .mi')) {
+    const badge = el.querySelector('.sc-st'), mid = el.dataset.mid;
+    if (!badge) continue;
+    badge.hidden = !sceneBusy(mid);
+    badge.textContent = sceneRun?.mid === mid ? tr('scenesProgress', { p: Math.round(sceneRun.p * 100) }) : '…';
+  }
+}
+function detectScenes(mid, quiet) {
+  const m = P.media[mid];
+  if (!m?.path || m.kind !== 'video' || m.angles) return quiet || toast(tr('aiPickVideo'));
+  if (sceneBusy(mid)) return;
+  sceneQueue.push({ mid, project: P, quiet });
+  paintBinScenes();
+  pumpScenes();
+}
+async function pumpScenes() {
+  if (sceneRun || !sceneQueue.length) return;
+  const { mid, project, quiet } = sceneQueue.shift(), m = project.media[mid];
+  if (!m) return pumpScenes();
+  const run = sceneRun = { mid, job: uid(), p: 0 };
+  paintBinScenes();
+  try {
+    if (!(await scenesModel.ready())) { if (!quiet) toast(tr('scenesMissing')); }
+    else {
+      const found = await inv('scenes_detect', { request: { path: m.path, threshold: +(1 - sceneSens()).toFixed(2) }, job: run.job });
+      if (found && project.media[mid] === m) {
+        m.scenes = found;
+        dirty = true;
+        if (!quiet) toast(tr('scenesDone', { n: found.cuts.length }));
+      }
+    }
+  } catch (e) { if (!run.cancelled && cleanErr(e) !== 'cancelled') toast(cleanErr(e)); }
+  sceneRun = null;
+  if (project === P) refresh();
+  pumpScenes();
+}
+function cancelScenes(mid) {
+  const i = sceneQueue.findIndex(q => q.mid === mid);
+  if (i >= 0) sceneQueue.splice(i, 1);
+  if (sceneRun?.mid === mid) { sceneRun.cancelled = true; inv('scenes_cancel', { job: sceneRun.job }).catch(() => {}); }
+  paintBinScenes();
+}
+TA.event.listen('scenesprog', ({ payload: { job, p } }) => {
+  if (sceneRun?.job !== job) return;
+  sceneRun.p = p;
+  paintBinScenes();
+});
+// One undo step: every selected clip is split at each detected cut inside its in..out.
+function splitAtScenes(its) {
+  const min = 1 / P.fps, work = its.filter(it => !isText(it) && sceneCuts(media(it))).map(it => [it, S.sceneOffsets(it, sceneCuts(media(it)), min)]).filter(([, o]) => o.length);
+  if (!work.length) return toast(tr('scenesNoCuts'));
+  snapshot();
+  for (const [it, offsets] of work) for (const o of offsets.reverse()) splitItems([it], it.start + o);
+  if (work.some(([it]) => it.track === 'v1')) pack();
+  refresh();
+  toast(tr('scenesDone', { n: work.reduce((n, [, o]) => n + o.length, 0) }));
+}
+/* ---------- Highlights → Shorts ---------- */
+// Each short is saved as its own 9:16 project (silences cut, reframed, captioned); the open project is never touched.
+const HL_LENGTHS = [15, 30, 45, 60];
+const highlightClips = () => speechTargets(false).filter(it => media(it)?.kind === 'video' && !media(it).angles && num(it.speed, 1) === 1 && !S.hasCurve(it));
+// One headless assistant turn whose text answer is wanted (not an edit). Resolves with the answer text.
+async function askAssistantText(prompt, run) {
+  const job = run.job = 'hl-' + uid();
+  let text = '', result = '';
+  const unlisten = await TA.event.listen('assistant-ev', ({ payload }) => {
+    if (payload.job !== job) return;
+    const ev = payload.ev;
+    if (ev.type === 'assistant') for (const c of ev.message?.content || []) if (c.type === 'text') text += c.text + '\n';
+    if (ev.type === 'result' && typeof ev.result === 'string') result = ev.result;
+  });
+  try { await inv('assistant_ask', { prompt, session: '', job }); }
+  finally { unlisten(); run.job = null; }
+  return result || text;
+}
+async function scoreHighlights(clips, { length, count }, status, run) {
+  const cands = [];
+  for (const it of clips) {
+    const words = S.transcriptWords(it).map(x => x.word);
+    for (const c of S.highlightCandidates(words, { min: 15, target: length })) cands.push({ ...c, id: cands.length, it: it.id, path: media(it).path });
+  }
+  if (!cands.length) return { picks: [], ai: false };
+  const speech = new Map();
+  for (const path of new Set(cands.map(c => c.path))) speech.set(path, await inv('speech_regions', { path }).catch(() => null));
+  for (const c of cands) {
+    const regions = speech.get(c.path);
+    if (regions) c.coverage = regions.reduce((n, [a, b]) => n + Math.max(0, Math.min(b, c.end) - Math.max(a, c.start)), 0) / c.dur;
+    const pk = peaks.get(c.path); // only when the waveform is already decoded: never worth a long decode here
+    if (pk) { const seg = pk.subarray(Math.floor(c.start * PK), Math.ceil(c.end * PK)); c.rawLoud = seg.reduce((a, v) => a + v, 0) / Math.max(1, seg.length); }
+  }
+  const loudest = Math.max(0, ...cands.map(c => c.rawLoud || 0));
+  for (const c of cands) {
+    if (loudest > 0 && c.rawLoud != null) c.loud = c.rawLoud / loudest;
+    c.heur = c.score = S.heuristicScore(c, c);
+    c.title = c.words.slice(0, 6).map(w => w.w).join(' ') + (c.words.length > 6 ? '…' : '');
+  }
+  // the assistant only sees the best few by the cheap score: fewer calls, same winners
+  const short = S.pickHighlights(cands, Math.min(24, Math.max(12, count * 3)));
+  let ai = false;
+  if (await inv('assistant_ready').catch(() => false)) {
+    const batches = Math.ceil(short.length / 8);
+    for (let i = 0; i < batches; i++) {
+      if (run.stopped) throw new Error('cancelled');
+      status(tr('hlRating', { i: i + 1, n: batches }));
+      const batch = short.slice(i * 8, i * 8 + 8);
+      let ratings;
+      try { ratings = S.parseHighlightRatings(await askAssistantText(S.highlightPrompt(batch), run)); }
+      catch { if (run.stopped) throw new Error('cancelled'); ratings = new Map(); }
+      if (!ratings.size && !i) break; // not logged in or no answer: the first miss ends the asking
+      for (const c of batch) {
+        const r = ratings.get(c.id);
+        if (!r) continue;
+        c.score = +(r.score * 0.75 + c.heur * 0.25).toFixed(2);
+        if (r.title) c.title = r.title;
+        ai = true;
+      }
+    }
+  }
+  return { picks: S.pickHighlights(short, count), ai };
+}
+let hlStop = 0;
+function previewHighlight(c) {
+  const it = item(c.it);
+  if (!it) return;
+  const from = it.start + c.start - num(it.in, 0), to = from + c.dur;
+  setPlaying(false);
+  seek(from);
+  setPlaying(true);
+  clearInterval(hlStop);
+  hlStop = setInterval(() => { if (!playing || t >= to) { clearInterval(hlStop); setPlaying(false); } }, 80);
+}
+async function openHighlights() {
+  if (transcribing || exporting || queueRunning) return;
+  let clips = highlightClips();
+  if (!clips.length) return toast(tr('hlNoClip'));
+  if (!clips.some(it => it.transcript?.length)) {
+    if (!(await TA.dialog.ask(tr('hlNeedTranscript'), { title: tr('hlTitle') }))) return;
+    await transcribeClips();
+    clips = highlightClips();
+    if (!clips.some(it => it.transcript?.length)) return;
+  }
+  const box = $('#mBox'), run = { stopped: false, job: null };
+  let picks = [], busy = false;
+  $('#modal').hidden = false;
+  box.onclick = null;
+  box.innerHTML = `<h3>${tr('hlTitle')}</h3>
+    <div class="hl-opts"><label class="xr"><span>${tr('hlLength')}</span><select id="hlLen" dir="ltr">${HL_LENGTHS.map(n => `<option value="${n}">${n}s</option>`).join('')}</select></label>
+      <label class="xr"><span>${tr('hlCount')}</span><input id="hlN" type="number" min="1" max="10" value="5" dir="ltr"></label></div>
+    <p class="hint" id="hlStatus" role="status"></p><div class="hl-list" id="hlList"></div>
+    <label class="sam-field" id="hlQ" hidden><input type="checkbox" id="hlQueue">${tr('hlQueue')}</label>
+    <div class="acts"><button id="hlClose">${tr('hlClose')}</button><span class="flex"></span><button id="hlGo">${tr('hlGo')}</button><button class="primary" id="hlCreate" hidden></button></div>`;
+  const len = $('#hlLen'), status = text => { if (box.isConnected) $('#hlStatus').textContent = text; };
+  len.value = HL_LENGTHS.includes(lsGet('kadr.hlLen', 30)) ? lsGet('kadr.hlLen', 30) : 30;
+  const live = () => box.isConnected && !$('#modal').hidden;
+  const syncCreate = () => {
+    const n = $$('#hlList [data-hl]:checked').length;
+    $('#hlCreate').textContent = tr('hlCreate', { n });
+    $('#hlCreate').disabled = busy || !n;
+  };
+  const stop = () => { run.stopped = true; clearInterval(hlStop); if (run.job) inv('assistant_stop', { job: run.job }).catch(() => {}); };
+  $('#hlClose').onclick = () => { stop(); setPlaying(false); hideModal(); };
+  $('#hlGo').onclick = async () => {
+    if (busy) return;
+    busy = true;
+    run.stopped = false;
+    lsSet('kadr.hlLen', +len.value);
+    $('#hlGo').disabled = true;
+    $('#hlCreate').hidden = $('#hlQ').hidden = true;
+    $('#hlList').innerHTML = '';
+    status(tr('hlWorking'));
+    try {
+      const { picks: found, ai } = await scoreHighlights(clips, { length: +len.value, count: clamp(Math.round($('#hlN').valueAsNumber) || 5, 1, 10) }, status, run);
+      if (!live()) return;
+      picks = found;
+      status(!picks.length ? tr('hlNone') : tr(ai ? 'hlUsedAI' : 'hlUsedHeur'));
+      $('#hlList').innerHTML = picks.map((c, i) => `<div class="hl-row"><label><input type="checkbox" data-hl="${i}" checked><bdi>${esc(c.title)}</bdi></label>
+        <span class="hl-meta"><bdi>${fmt(c.start).slice(0, 5)} · ${Math.round(c.dur)}s · ${tr('hlScore')} ${c.score.toFixed(1)}</bdi></span>
+        <button class="ib" data-hl-play="${i}" title="${tr('hlPlay')}" aria-label="${tr('hlPlay')}">${icon('play')}</button></div>`).join('');
+      $('#hlCreate').hidden = $('#hlQ').hidden = !picks.length;
+      syncCreate();
+    } catch (e) {
+      if (live() && cleanErr(e) !== 'cancelled') status(tr('error') + ': ' + cleanErr(e));
+    } finally {
+      busy = false;
+      if (live()) { $('#hlGo').disabled = false; $('#hlGo').textContent = tr('hlRerun'); syncCreate(); }
+    }
+  };
+  $('#hlList').onchange = syncCreate;
+  $('#hlList').onclick = e => { const b = e.target.closest('[data-hl-play]'); if (b) previewHighlight(picks[+b.dataset.hlPlay]); };
+  $('#hlCreate').onclick = async () => {
+    const chosen = $$('#hlList [data-hl]:checked').map(el => picks[+el.dataset.hl]);
+    if (!chosen.length) return toast(tr('hlPick'));
+    busy = true;
+    run.stopped = false;
+    setPlaying(false);
+    clearInterval(hlStop);
+    $('#hlGo').disabled = $('#hlCreate').disabled = true;
+    try {
+      const made = await createShorts(chosen, status, run);
+      if (made) {
+        if ($('#hlQueue').checked) await queueShorts(made);
+        $('#hlQ').hidden = $('#hlCreate').hidden = true;
+        status(tr('hlDone', { n: made.length }));
+        $('#hlList').innerHTML = made.map((s, i) => `<div class="hl-row"><span><bdi>${esc(s.name)}</bdi></span><span class="flex"></span>
+          <button data-short-open="${i}">${tr('open')}</button><button data-short-queue="${i}">${tr('hlQueueOne')}</button></div>`).join('');
+        $('#hlList').onclick = async e => {
+          const o = e.target.closest('[data-short-open]'), q = e.target.closest('[data-short-queue]');
+          if (o) { hideModal(); await openPath(made[+o.dataset.shortOpen].path); }
+          else if (q) queueShorts([made[+q.dataset.shortQueue]]);
+        };
+      }
+    } catch (e) {
+      if (live() && cleanErr(e) !== 'cancelled') status(tr('error') + ': ' + cleanErr(e));
+    } finally {
+      busy = false;
+      if (live()) { $('#hlGo').disabled = false; syncCreate(); }
+    }
+  };
+  $('#hlGo').focus();
+}
+// Each short is saved as a project of its own (9:16); the open project is never touched.
+async function shortsFolder() {
+  if (projectPath) return projectPath.replace(/[\\/][^\\/]*$/, '');
+  const saved = pref('hlDir', '');
+  if (saved) return saved;
+  const dir = await TA.dialog.open({ directory: true });
+  if (dir) setPref('hlDir', dir);
+  return dir || null;
+}
+async function createShorts(picks, status, run) {
+  const dir = await shortsFolder();
+  if (!dir) return null;
+  const project = P, [w, h] = ASPECTS['9:16'], made = [], sep = dir.includes('\\') ? '\\' : '/', style = textDefaults(true);
+  for (const [i, c] of picks.entries()) {
+    if (run.stopped) throw new Error('cancelled');
+    status(tr('hlMaking', { i: i + 1, n: picks.length, name: c.title }));
+    const src = item(c.it);
+    if (P !== project || !src) throw new Error(tr('hlChanged'));
+    const m = media(src), base = JSON.parse(JSON.stringify(src));
+    for (const k of ['kf', 'trk', 'rotate', 'trans', 'grp', 'curve', 'fadeIn', 'fadeOut', 'afIn', 'afOut']) delete base[k];
+    Object.assign(base, { id: uid(), start: 0, dur: c.dur, in: c.start, speed: 1,
+      transcript: src.transcript.filter(x => (x.s + x.e) / 2 >= c.start - 0.05 && (x.s + x.e) / 2 < c.end + 0.05) });
+    try {
+      const samples = await inv('reframe_analyze', { job: 'reframe-' + uid(), path: m.path, start: c.start, duration: c.dur });
+      const { keys } = reframeClip(base, m, samples, c.start, w, h);
+      base.fit = 'contain';
+      for (const k of ['x', 'y', 'scale']) base[k] = keys[k][0][1];
+      base.kf = keys;
+    } catch { Object.assign(base, { fit: 'cover', scale: 1, x: 0, y: 0 }); } // no analysis: a plain centred fill
+    const regions = await inv('speech_regions', { path: m.path, thresholdDb: -40, silences: true }).catch(() => []);
+    const cuts = S.silencesToCuts(S.speechTimelineRegions(base, regions), 0, c.dur, 0.5, 0.12).map(([a, b]) => [a, b, base.id]);
+    const seen = new Set(), pieces = S.cutRanges([base], cuts, 1 / P.fps, it => sourceBound(it)?.dur ?? Infinity, true)
+      .map(p => { const q = seen.has(p.id) ? { ...p, id: uid() } : p; seen.add(q.id); return q; });
+    const words = pieces.flatMap(p => S.transcriptWords(p).map(x => ({ w: x.word.w, s: x.start, e: x.end })));
+    const name = c.title || tr('untitled'), short = S.buildShortProject(P, src.media, { name, w, h, pieces, cues: S.captionCues(words), style });
+    const file = outputName(name);
+    let path, n = 2, tryName = file;
+    for (;; tryName = `${file} ${n++}`) {
+      path = dir.replace(/[\\/]$/, '') + sep + tryName + '.maqto';
+      if (!(await inv('path_exists', { path }))) break;
+    }
+    await inv('save_project', { path, json: JSON.stringify(short) });
+    made.push({ name, path, project: short });
+  }
+  return made;
+}
+// Each short in the render queue with the TikTok / Reels / Shorts preset.
+async function queueShorts(made) {
+  let dir = pref('dir', '');
+  if (!dir) try { dir = await TA.path.desktopDir(); } catch {}
+  if (!dir) return;
+  const sep = dir.includes('\\') ? '\\' : '/', { settings } = S.exportPresetSettings({ hw: pref('hw', '1') === '1', ...S.SOCIAL_EXPORT_PRESETS.shorts }, P, G.ENCODERS);
+  for (const { name, project } of made) {
+    const file = outputName(name);
+    let base = file, n = 2, paths;
+    for (;; base = `${file} ${n++}`) {
+      paths = { video: dir.replace(/[\\/]$/, '') + sep + base + '.' + settings.format, audio: false };
+      if (!queuePathInUse(paths) && !(await inv('path_exists', { path: paths.video }))) break;
+    }
+    renderQueue.push({ ...S.snapshotExport(project, settings, paths), name: base, preset: tr('xp_shorts'), status: 'waiting' });
+  }
+  updateQueueBadge();
+  toast(tr('hlQueued'), { label: tr('renderQueue'), run: openRenderQueue });
+}
+const aiText = key => ({ ar: I18N.ar[key], en: I18N.en[key] });
+const bundledAI = { license: null, size: null, ready: () => true };
+const AI_TOOLS = [
+  { id: 'scenes', icon: 'film', name: aiText('scenesTitle'), desc: aiText('scenesDesc'),
+    model: 'TransNetV2', license: 'MIT', size: '31 MB', ...scenesModel,
+    run: it => {
+      const mid = it && media(it)?.kind === 'video' ? it.media : picked().find(id => P.media[id].kind === 'video');
+      mid ? detectScenes(mid) : toast(tr('aiPickVideo'));
+    } },
+  { id: 'depth', icon: 'layers', name: aiText('depthTitle'), desc: aiText('depthDesc'),
+    model: 'Depth Anything V2 Small', license: 'Apache-2.0', size: '49 MB', ...depthModel,
+    run: it => upscaleMedia(it) ? openAIInspector('tVideo', '#depthControls input') : toast(tr('upscalePick')) },
+  { id: 'upscale', icon: 'maximize-2', name: aiText('upscaleTitle'), desc: aiText('upscaleDesc'),
+    model: 'Real-ESRGAN', license: 'BSD-3-Clause', size: '≈50 MB', ...upscaleModel,
+    run: it => upscaleMedia(it) ? openAIInspector('tVideo', '#upscaleScale') : toast(tr('upscalePick')) },
+  { id: 'select-object', icon: 'crosshair', name: aiText('samSelect'), desc: aiText('samDesc'),
+    model: 'SAM 2.1 tiny', license: 'Apache-2.0', size: '61 MB', ...sam2Model, run: openObjectSelect },
+  { id: 'remove-object', icon: 'wand-sparkles', name: aiText('sam_fill'), desc: aiText('fillDesc'),
+    model: 'MI-GAN', license: 'MIT', size: '28 MB', ...miganModel, run: it => {
+      if (!objectMedia(it)) return toast(tr('samPick'));
+      if (!it.objectMask?.key) return openBrush(it, true);
+      if (objectMode(it) !== 'fill') { snapshot(); it.objectMask.mode = 'fill'; dirty = true; refresh(); }
+      openAIInspector('tVideo', '[data-object-field="mode"]');
+    } },
+  { id: 'matte-person', icon: 'scan', name: aiText('aiMattePerson'), desc: aiText('aiMattePersonDesc'),
+    model: 'MODNet', license: 'Apache-2.0', size: '25 MB', ...matteModels.person, run: it => openAIMatte('person', it) },
+  { id: 'matte-object', icon: 'scan', name: aiText('aiMatteObject'), desc: aiText('aiMatteObjectDesc'),
+    model: 'BiRefNet-lite', license: 'MIT', size: '225 MB', ...matteModels.object, run: it => openAIMatte('object', it) },
+  { id: 'matte-mobile', icon: 'scan', name: aiText('aiMatteMobile'), desc: aiText('aiMatteMobileDesc'),
+    model: 'U²-Net-p', license: 'Apache-2.0', size: '4.6 MB', ready: () => null, run: () => toast(tr('aiUnavailable')) },
+  { id: 'rife', icon: 'film', name: aiText('aiSlowMotion'), desc: aiText('aiSlowMotionDesc'),
+    model: 'RIFE v4.6', license: 'MIT', size: '<20 MB', ...rifeModel,
+    ready: () => /Mac|Win/.test(navigator.platform) ? rifeModel.ready() : null,
+    run: it => media(it)?.kind === 'video' && !media(it).angles
+      ? openAIInspector('tSpeed', '[data-k="smooth"]') : toast(tr('aiPickVideo')) },
+  { id: 'stems', icon: 'layers', name: aiText('aiStems'), desc: aiText('aiStemsDesc'),
+    model: 'TIGER-DnR', license: 'Apache-2.0', size: '7.3 MB', ...stemsModel,
+    run: it => hasSound(media(it)) && !media(it).angles ? separateSounds() : toast(tr('capPick')) },
+  { id: 'caption-translation', icon: 'languages', name: aiText('aiTranslation'), desc: aiText('aiTranslationDesc'),
+    model: 'Helsinki-NLP opus-mt (Xenova ONNX)', license: 'CC-BY-4.0', size: aiText('translationSize'),
+    ...translationModel, run: () => openCaptionTranslation() },
+  { id: 'whisper', icon: 'captions', name: aiText('aiWhisper'), desc: aiText('aiWhisperDesc'),
+    model: () => 'Whisper ' + capModel(), license: 'MIT', size: () => CAP_MODELS[capModel()], ...whisperModel,
+    run: () => { revealPanel('captions'); $('#bCaps').focus(); } },
+  { id: 'assistant', icon: 'sparkles', name: aiText('asst'), desc: aiText('aiAssistantDesc'),
+    model: 'Claude (Claude Code)', license: aiText('aiProprietary'), size: aiText('aiExternal'),
+    ready: async () => (await inv('assistant_ready')) || null,
+    run: () => { asstPanel().hidden = false; $('#asIn').focus(); } },
+  { id: 'reframe', icon: 'crop', name: aiText('reframe'), desc: aiText('aiReframeDesc'), ...bundledAI,
+    run: () => {
+      if (!selectedItems().some(it => media(it)?.kind === 'video')) return toast(tr('aiPickVideo'));
+      revealPanel('player');
+      smartReframe();
+    } },
+  { id: 'highlights', icon: 'film', name: aiText('hlTitle'), desc: aiText('hlDesc'),
+    model: () => 'Whisper ' + capModel() + ' + ' + tr('asst'), license: 'MIT', size: () => CAP_MODELS[capModel()], ready: () => whisperModel.ready(),
+    run: () => openHighlights() },
+  { id: 'speech-cuts', icon: 'scissors', name: aiText('aiSpeechCuts'), desc: aiText('aiSpeechCutsDesc'), ...bundledAI,
+    run: () => {
+      revealPanel('transcript');
+      const details = $('#previewSilences').closest('details');
+      details.open = $('#fillerList').closest('details').open = true;
+      details.querySelector('summary').focus();
+    } },
+  { id: 'duck', icon: 'volume-2', name: aiText('duckSec'), desc: aiText('aiDuckDesc'), ...bundledAI,
+    run: it => media(it)?.kind === 'audio' ? openAIInspector('tAudio', '[data-k="duck.on"]') : toast(tr('aiPickAudio')) },
+  { id: 'tracking', icon: 'crosshair', name: aiText('tracking'), desc: aiText('aiTrackingDesc'), ...bundledAI,
+    run: it => {
+      if (!it || !(isText(it) || it.track !== 'v1' && ['video', 'image'].includes(media(it)?.kind))) return toast(tr('aiPickOverlay'));
+      revealPanel('player');
+      trackPick(it);
+    } },
+  { id: 'piper', icon: 'volume-2', name: aiText('piperTitle'), desc: aiText('piperDesc'),
+    model: 'Piper voices via sherpa-onnx', license: 'Apache-2.0 (sherpa-onnx) + MIT (Piper voices)', size: aiText('piperModelSize'), ...piperModel,
+    run: () => openPiper() },
+  { id: 'voice-clean', icon: 'volume-2', name: aiText('voiceClean'), desc: aiText('voiceDesc'),
+    model: 'DeepFilterNet3', license: 'MIT / Apache-2.0', size: '≈28 MB', ...voiceCleanModel,
+    run: it => hasSound(media(it)) && !media(it).angles ? openAIInspector('tAudio', '[data-voice="on"]') : toast(tr('capPick')) },
+  { id: 'denoise', icon: 'volume-2', name: aiText('denoise'), desc: aiText('aiDenoiseDesc'), ...bundledAI,
+    model: 'RNNoise', license: 'BSD-3-Clause', size: '300 KB',
+    run: it => hasSound(media(it)) && !media(it).angles ? openAIInspector('tAudio', '[data-k="denoise"]') : toast(tr('capPick')) },
+];
+function renderAITools() {
+  aiToolPanel.setAttribute('aria-label', tr('aiTools'));
+  const value = field => typeof field === 'function' ? field() : field?.[LANG] ?? field;
+  aiToolPanel.innerHTML = AI_TOOLS.map(tool => `<article class="ai-card" data-ai-tool="${tool.id}">
+    <h3>${icon(tool.icon)}<span>${esc(tool.name[LANG])}</span></h3><p>${esc(tool.desc[LANG])}</p>
+    <p class="ai-model">${tool.model ? `<bdi>${esc(value(tool.model))}</bdi> · <bdi>${esc(value(tool.license))}</bdi> · <bdi>${esc(value(tool.size))}</bdi>` : tr('aiBuiltIn')}</p>
+    ${tool.id === 'caption-translation' ? `<select data-translation-model aria-label="${tr('translationDirection')}">${translationDirectionOptions(translationModelDirection)}</select>` : ''}
+    ${tool.id === 'scenes' ? `<label class="sam-field"><input type="checkbox" data-scenes-auto${lsGet('kadr.sceneAuto', false) ? ' checked' : ''}>${tr('scenesAuto')}</label>
+      <label class="f"><span>${tr('scenesSens')}</span><input type="range" min="0.1" max="0.9" step="0.05" data-scenes-sens value="${sceneSens()}" aria-label="${tr('scenesSens')}"></label>` : ''}
+    ${tool.id === 'piper' ? `<select data-piper-voice aria-label="${tr('piperVoice')}">${piperVoiceOptions()}</select>` : ''}
+    <p class="ai-status"></p>
+    <div class="ai-actions"><button type="button" class="primary" data-ai-action="run">${tr('aiOpen')}</button>
+    ${tool.download ? '<button type="button" data-ai-action="model"></button>' : ''}</div></article>`).join('');
+  refreshAITools();
+}
+let aiRefresh = 0;
+function refreshAITools() {
+  paintAITools();
+  const revision = ++aiRefresh;
+  for (const tool of AI_TOOLS) {
+    const id = tool.key?.() ?? tool.id, before = aiReady.get(id);
+    if (aiTransfers.has(tool.label)) continue;
+    Promise.resolve().then(tool.ready).catch(() => null).then(ready => {
+      if (revision !== aiRefresh || aiTransfers.has(tool.label) || aiReady.get(id) !== before) return;
+      aiReady.set(id, ready);
+      paintAITools();
+    });
+  }
+}
+function paintAITools() {
+  for (const card of aiToolPanel.children) {
+    const tool = AI_TOOLS.find(t => t.id === card.dataset.aiTool);
+    const id = tool.key?.() ?? tool.id, ready = aiReady.get(id), transfer = aiTransfers.get(tool.label);
+    const active = transfer?.id === id ? transfer : null;
+    const label = active ? active.action === 'remove' ? 'aiRemoving' : 'aiDownloading'
+      : ready === undefined ? 'aiChecking' : ready === null ? 'aiUnavailable' : ready ? 'aiReady' : 'aiMissing';
+    card.querySelector('.ai-status').textContent = tr(label, { p: Math.round((active?.p || 0) * 100) });
+    card.querySelector('[data-ai-action="run"]').disabled = tool.id === 'caption-translation' ? ready == null : ready == null || !!transfer;
+    const direction = card.querySelector('[data-translation-model]');
+    if (direction) direction.disabled = !!transfer;
+    const piperPicker = card.querySelector('[data-piper-voice]');
+    if (piperPicker) piperPicker.disabled = !!(transfer || piperJob);
+    const button = card.querySelector('[data-ai-action="model"]');
+    if (button) {
+      const canStop = (tool.id === 'piper' || tool.id === 'voice-clean') && active?.action === 'download';
+      button.textContent = tr(canStop ? 'cancel' : ready ? 'aiRemove' : 'aiDownload');
+      button.disabled = (!canStop && (ready == null || !!transfer)) || (tool.id === 'piper' && !!(piperJob || piperCancelling));
+    }
+  }
+  paintVoiceClean();
+  paintPiper();
+}
+aiToolPanel.addEventListener('change', e => {
+  if (e.target.matches('[data-scenes-auto]')) return lsSet('kadr.sceneAuto', e.target.checked);
+  if (e.target.matches('[data-scenes-sens]')) return lsSet('kadr.sceneSens', +e.target.value);
+  if (e.target.matches('[data-piper-voice]')) return selectPiperVoice(e.target.value);
+  if (!e.target.matches('[data-translation-model]')) return;
+  translationModelDirection = e.target.value;
+  refreshAITools();
+});
+aiToolPanel.onclick = async e => {
+  const button = e.target.closest('[data-ai-action]');
+  if (!button) return;
+  const tool = AI_TOOLS.find(t => t.id === button.closest('[data-ai-tool]').dataset.aiTool);
+  try {
+    if (button.dataset.aiAction === 'run') return await tool.run(sel && item(sel));
+    if (tool.id === 'voice-clean' && aiTransfers.get(tool.label)?.action === 'download') return stopVoice('download');
+    if (tool.id === 'piper' && aiTransfers.get(tool.label)?.action === 'download') return cancelPiper();
+    if (tool.id === 'piper') piperError = '';
+    if (aiReady.get(tool.key())) await tool.remove();
+    else await tool.download();
+    refresh();
+  } catch (e) { if (cleanErr(e) !== 'cancelled') toast(tool.id === 'piper' ? piperErrorText(e) : cleanErr(e)); }
+  finally {
+    if (tool.id === 'piper' && !aiTransfers.has(tool.label)) piperCancelling = false;
+    if (button.dataset.aiAction === 'model') refreshAITools();
+  }
+};
+$('#bAITools').onclick = () => {
+  revealPanel('aiTools');
+  dock.querySelector('[data-dock-tab="aiTools"]')?.focus();
+};
+window.addEventListener('focus', () => { if (panelVisible('aiTools')) refreshAITools(); });
+
 paintIcons();
 applyLang();
 paintProxyToggle();
@@ -8018,6 +10539,29 @@ const MCP_TOOLS = [
   ['add_items', 'Add items to the timeline. Each needs type: "text" {text, start, dur, style_id?, style?{...fields}, x?, y? (0..1 of frame, default 0.5), anim?, out?, loop?} | "clip" {media (id), start?, dur?, track?, in?, speed?, x?, y? (px from centre), scale?} | "layer" {kind: solid|gradient|shadow|vignette, start, dur, fill?{c1,c2,a1,a2,...}} | "effect" {fx: id from catalog.fx OR preset: id from catalog.filters, start, dur}. Any extra field is set on the item as is. Returns the new item ids.', { items: { type: 'array', items: { type: 'object' } } }, ['items']],
   ['update_items', 'Change items. set: fields to assign (objects such as style, fill, fx are merged; null removes a field). Transition into a clip: set {trans: {id, dur, dir (0-3: turns a shader transition 90° each), ease (lin|smooth|hit|soft|bounce|short)}}. Timing: start, dur (seconds).', { updates: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, set: { type: 'object' } }, required: ['id', 'set'] } } }, ['updates']],
   ['set_keyframes', 'Animate x, y, scale, rotate, opacity or volume of an item: keys are [time from the item start in seconds, value]; replaces that prop\'s keys ([] clears). Values use the item\'s units (text x/y 0..1; clip x/y px from centre; scale 1 = 100%; rotate degrees; opacity 0..1; volume 0..2, 1 = 100%, for audio and video with sound).', { id: { type: 'string' }, props: { type: 'object', description: '{ "scale": [[0,0.8],[0.5,1]], "volume": [[0,1],[5,0.4]] }' } }, ['id', 'props']],
+  ['depth_effects', 'Prepare portrait blur, fog, or parallax on a video or image clip. Install Depth Anything V2 Small in AI Tools first. Amounts and focus range are 0 to 1. Set all amounts to zero to turn the effects off.', {
+    id: { type: 'string' }, blur: { type: 'number', minimum: 0, maximum: 1 }, range: { type: 'number', minimum: 0, maximum: 1 },
+    progressive: { type: 'boolean' }, fog: { type: 'number', minimum: 0, maximum: 1 }, color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' },
+    parallax: { type: 'number', minimum: 0, maximum: 1 }, motion: { type: 'string', enum: ['zoomIn', 'leftRight', 'circle'] },
+    focus: { type: ['object', 'null'], description: 'Normalized source coordinates x and y and source time in seconds. Null selects auto focus.',
+      properties: { x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 }, time: { type: 'number', minimum: 0 } }, required: ['x', 'y', 'time'] },
+  }, ['id']],
+  ['upscale_clip', 'Prepare an upscaled video or image clip. Install Real-ESRGAN in AI Tools first. Set scale to 0 to turn it off.', {
+    id: { type: 'string' }, scale: { type: 'integer', enum: [0, 2, 4] }, model: { type: 'string', enum: ['footage', 'animation'] },
+  }, ['id', 'scale']],
+  ['translate_captions', 'Translate text clips offline, preserving their timings. Install the model for the language direction in AI Tools first. Specify replace or track to add a second caption track.', {
+    ids: { type: 'array', items: { type: 'string' }, minItems: 1 },
+    direction: { type: 'string', enum: Object.keys(TRANSLATION_DIRECTIONS) },
+    output: { type: 'string', enum: ['replace', 'track'] },
+  }, ['ids', 'output']],
+  ['remove_object', 'Fill a clip’s existing SAM 2 or brush mask with MI-GAN. Download MI-GAN in AI Tools first.', { id: { type: 'string' }, smooth: { type: 'boolean' } }, ['id']],
+  ['voice_over', 'Generate offline speech from text and add a WAV clip to the timeline. Install the voice in AI Tools first.', {
+    text: { type: 'string' }, voice: { type: 'string', enum: Object.keys(PIPER_VOICES) },
+    start: { type: 'number', minimum: 0 }, length_scale: { type: 'number', minimum: 0.7, maximum: 1.4 },
+    pause: { type: 'number', minimum: 0, maximum: 3 },
+  }, ['text', 'voice']],
+  ['voice_clean', 'Set AI voice clean-up on a clip. Install DeepFilterNet3 in AI Tools first. Strength is the attenuation limit in dB and room is the percentage of original sound.', { id: { type: 'string' }, on: { type: 'boolean' }, strength: { type: 'integer', enum: [12, 24, 100] }, room: { type: 'integer', minimum: 0, maximum: 30 } }, ['id', 'on']],
+  ['get_object_mask', 'Get the tracked object mask bounds and centroid for a clip at a source time in seconds. Coordinates are in the mask grid.', { id: { type: 'string' }, time: { type: 'number' } }, ['id', 'time']],
   ['generate_ducking', 'Enable ducking on an audio clip and generate volume keyframes from other clips with sound. Uses the clip’s duck settings (amount in dB, attack and release in seconds, source track id or empty for all other clips).', { id: { type: 'string' } }, ['id']],
   ['remove_silences', 'Detect and ripple-cut silence in the selected clips or the main track. Minimum and padding are timeline seconds.', { thresholdDb: { type: 'number' }, minSilence: { type: 'number' }, padding: { type: 'number' } }],
   ['transcript_cut', 'Ripple-cut by zero-based word indices in the current transcript’s timeline order, or by a timeline range in seconds on the selected clips or main track.', { indices: { type: 'array', items: { type: 'integer', minimum: 0 } }, start: { type: 'number' }, end: { type: 'number' } }],
@@ -8106,6 +10650,67 @@ const MCP = {
     if (!S.hasKf(it)) delete it.kf;
     return it.id;
   },
+  voice_over: async ({ text, voice, start = t, length_scale = 1, pause = 0.2 }) => {
+    if (!text?.trim() || !Number.isFinite(start) || start < 0) throw new Error('Invalid voice-over text or start time');
+    try {
+      const [id] = await makeVoiceOver([{ text }], { voice, lengthScale: length_scale, pause }, [start]);
+      return { id };
+    } catch (e) { throw new Error(piperErrorText(e)); }
+  },
+  voice_clean: ({ id, on, strength, room }) => {
+    const it = item(id), m = media(it);
+    if (!hasSound(m) || m.angles) throw new Error(tr('capPick'));
+    it.voiceClean = S.voiceSettings({ ...it.voiceClean, on, ...(strength == null ? {} : { strength }), ...(room == null ? {} : { room }) });
+    if (on) tryVoiceClean(it);
+    return it.voiceClean;
+  },
+  depth_effects: async ({ id, ...settings }) => {
+    const it = item(id);
+    if (!upscaleMedia(it)) throw new Error(tr('upscalePick'));
+    const depth = depthSettings({ depth: { ...depthSettings(it), ...settings } });
+    return { id, ...await prepareDepth(it, depth, false) };
+  },
+  upscale_clip: async ({ id, scale, model }) => {
+    const it = item(id);
+    if (!upscaleMedia(it)) throw new Error(tr('upscalePick'));
+    const settings = { scale, model: model || upscaleType(it) };
+    if (!scale) { setUpscale(it, settings); return { id, scale }; }
+    const result = await prepareUpscale(it, settings, false);
+    return { id, scale, ...result };
+  },
+  remove_object: async ({ id, smooth }) => {
+    const it = item(id), m = objectMedia(it), project = P;
+    if (!m || !it.objectMask?.key) throw new Error(tr('samCacheMissing'));
+    const original = it.objectMask, range = [num(it.in, 0), S.srcLen(it)];
+    const objectMask = { ...original, mode: 'fill', smooth: smooth ?? original.smooth ?? true };
+    const state = fillState({ ...it, objectMask }, m, true);
+    if (!state) throw new Error(tr('fillRenderFailed'));
+    const current = state.cancelled ? fillState({ ...it, objectMask }, m, true, true) : state;
+    const rendered = await current.wait;
+    if (!rendered) throw new Error(fillError(current));
+    if (project !== P || item(id) !== it || media(it) !== m || it.objectMask !== original ||
+        num(it.in, 0) !== range[0] || S.srcLen(it) !== range[1]) throw new Error(tr('fillRenderFailed'));
+    snapshot(); it.objectMask = objectMask; dirty = true;
+    return { id, frames: rendered.times.length };
+  },
+  get_object_mask: async ({ id, time }) => {
+    const it = item(id);
+    if (!it) throw new Error('No clip with id ' + id);
+    if (!it.objectMask?.key) throw new Error(tr('samCacheMissing'));
+    const data = new Uint8Array(await inv('sam2_mask_for_frame', { key: it.objectMask.key, source: media(it)?.path, time }));
+    const width = data[0] + 256 * data[1], height = data[2] + 256 * data[3];
+    return { width, height, ...S.objectMaskGeometry(data.subarray(4), width, height) };
+  },
+  translate_captions: async a => {
+    const clips = [...new Set(a.ids)].map(item);
+    if (!clips.length || !clips.every(isTranslatable)) throw new Error(tr('translationPick'));
+    if (a.output !== 'replace' && a.output !== 'track') throw new Error('Choose replace or track');
+    if (a.output === 'replace' && clips.some(it => lockedTrack(it.track))) throw new Error(tr('translationLocked'));
+    const direction = a.direction ?? S.captionDirection(clips.map(it => it.text));
+    if (!await inv('translation_ready', { direction })) throw new Error(tr('translationMissing'));
+    const translated = await translateCaptionItems(clips, direction, { id: uid() });
+    return { ids: applyCaptionTranslation(clips, translated, direction, a.output) };
+  },
   generate_ducking: a => generateDucking(item(a.id)),
   remove_silences: async a => {
     const { ranges } = await scanSilences(speechTargets(), silenceOptions(a));
@@ -8143,12 +10748,12 @@ const MCP = {
   export: async a => { setPlaying(false); await doExport(P, { k: 1, fps: a.fps || P.fps, codec: 'h264', quality: 'rec' }, { video: a.path }); return { path: a.path, exists: await inv('path_exists', { path: a.path }) }; },
   export_timeline: a => writeTimeline(a.format, a.path),
 };
-const MCP_NO_SNAPSHOT = new Set(['get_project', 'catalog', 'preview', 'play', 'undo', 'export', 'export_timeline', 'generate_ducking', 'remove_silences', 'transcript_cut']);
+const MCP_NO_SNAPSHOT = new Set(['get_project', 'get_object_mask', 'remove_object', 'upscale_clip', 'depth_effects', 'catalog', 'preview', 'play', 'undo', 'export', 'export_timeline', 'generate_ducking', 'remove_silences', 'transcript_cut', 'translate_captions', 'voice_over']);
 async function mcpCall(method, p) {
   if (method === 'ping') return {};
   if (method === 'tools/list') return { tools: MCP_TOOLS };
   const name = p && p.name, a = (p && p.arguments) || {};
-  if (!transcribing) hideModal();
+  if (!transcribing && !captionTranslationJob) hideModal();
   if (name === 'preview') return { content: [{ type: 'image', data: await mcpPic(+a.time || 0), mimeType: 'image/jpeg' }, { type: 'text', text: `frame at ${fmt(t)}` }] };
   if (!MCP[name]) throw new Error('unknown tool ' + name);
   const n = undoStack.length;
