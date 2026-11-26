@@ -358,7 +358,6 @@ function closeFontPop() { const p = $('#fpop'); if (p) { p._off(); p.remove(); }
 const { ACCENT, TEXT_STYLES, TEXT_STYLE_FAMILIES, textDefaults } = window.MaqtoTextStyles;
 let CHROME_ACCENT = ACCENT;
 const PANEL_GAP = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap'));
-const ROW = 37;
 const IN_T = 0.35, OUT_T = 0.25;
 const MEDIA_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'];
 
@@ -1446,6 +1445,7 @@ function paintMediaProxies() {
 function proxyChanged() {
   paintMediaProxies();
   syncMedia();
+  scheduleFilmstrips();
   needsDraw = true;
 }
 function pumpMediaProxies() {
@@ -3456,6 +3456,7 @@ function setPlaying(v, rate = 1) {
     for (const el of els.values()) pauseMedia(el);
     for (const el of tailEls.values()) pauseMedia(el);
     if (panelVisible('scopes')) needsDraw = true;
+    queueFilmstripExtraction();
   }
   const b = $('#bPlay');
   b.dataset.i = playing ? 'pause' : 'play';
@@ -3520,6 +3521,19 @@ const shownTracks = (clips = timelineClips()) => {
     (!openGrp && x.id === 'v1' && !P.items.some(i => i.track === 'v1')));
 };
 const laneItems = id => P.items.filter(i => i.track === id && (!openGrp || inTimeline(i)));
+const filmstripKey = 'kadr.filmstrip';
+let filmstripOn = lsGet(filmstripKey, true);
+const filmstripButton = $('#bFilmstrip');
+filmstripButton.onclick = () => {
+  filmstripOn = !filmstripOn;
+  lsSet(filmstripKey, filmstripOn);
+  renderTimeline();
+};
+function hasFilmstrip(it) {
+  const m = media(it);
+  return !it.compound && !isText(it) && m && !m.adj && !m.fill &&
+    (m.kind === 'video' || m.kind === 'image') && (m.path || m.angles);
+}
 const groupCrumb = $('#tl').insertBefore(Object.assign(document.createElement('nav'), { className: 'groupCrumb', hidden: true }), $('#tl .tlbody'));
 groupCrumb.onclick = e => { if (e.target.closest('button')) showGroup(null); };
 function showGroup(id) {
@@ -3570,11 +3584,27 @@ $('#rows').addEventListener('pointerdown', e => {
 }, true);
 // The main lane sits in the middle of the timeline; new lanes stack above it until they reach the top, then it scrolls.
 function laneGap() {
-  const sc = $('#scroll'), above = Math.max(0, shownTracks().findIndex(x => x.id === 'v1')), mid = (sc.clientHeight - $('#ruler').offsetHeight) / 2;
-  const g = Math.max(0, Math.round(mid - ROW / 2 - above * ROW));
+  const sc = $('#scroll'), height = sc.clientHeight - $('#ruler').offsetHeight;
+  const main = $('#rows > .main') || $('#rows > .row');
+  const g = main ? Math.max(0, Math.round(height / 2 - main.offsetTop - main.offsetHeight / 2)) : 0;
   $('#rows').style.marginTop = $('#heads').style.marginTop = g + 'px';
+  $('.headScroll').style.height = Math.max(0, height) + 'px';
+  $('.headScroll').scrollTop = sc.scrollTop;
 }
-new ResizeObserver(() => requestAnimationFrame(laneGap)).observe($('#scroll'));
+// Use the same row boxes the user sees for header reordering and clip drops.
+function laneIndexAt(container, y) {
+  if (y < container.getBoundingClientRect().top) return -1;
+  const index = Array.from(container.children).findIndex(row => y < row.getBoundingClientRect().bottom);
+  return index < 0 ? container.childElementCount : index;
+}
+new ResizeObserver(() => requestAnimationFrame(() => {
+  laneGap();
+  scheduleFilmstrips();
+})).observe($('#scroll'));
+$('#scroll').addEventListener('scroll', () => {
+  $('.headScroll').scrollTop = $('#scroll').scrollTop;
+  scheduleFilmstrips();
+}, { passive: true });
 /* ---------- audio waveforms on the timeline ---------- */
 // Peaks (the loudest sample of each 1/50 s) of a sound, from the buffer Web Audio decodes for playback.
 const PK = 50, peaks = new Map(), pkWait = new Set();
@@ -3641,8 +3671,213 @@ function volDrag(e, it) {
   window.addEventListener('pointerup', () => { window.removeEventListener('pointermove', mv); if (changed) refresh(); }, { once: true });
 }
 
+/* ---------- timeline filmstrips ---------- */
+const filmstripCache = new Map(), filmstripFailures = new Map();
+const filmstripBudget = 96 * 1024 * 1024;
+let filmstripBytes = 0, filmstripClips = [], filmstripRequests = new Map();
+let filmstripRaf = 0, filmstripTimer = 0, filmstripBusy = false;
+const filmstripChanged = new Set();
+const filmstripVersion = m => JSON.stringify([m?.path, m?.sourceKey]);
+
+function resetFilmstripClips(clips) {
+  const byId = new Map(clips.map(it => [it.id, it]));
+  filmstripClips = Array.from($('#rows').querySelectorAll('.filmstrip-clip'), el => {
+    const it = byId.get(el.dataset.id), m = media(it);
+    return { el, it, m, pending: new Map() };
+  });
+  filmstripRequests.clear();
+  scheduleFilmstrips();
+}
+function scheduleFilmstrips() {
+  if (filmstripOn && !filmstripRaf) filmstripRaf = requestAnimationFrame(paintFilmstrips);
+}
+function filmstripSample(record, time) {
+  const { it, m } = record;
+  const sourceTime = S.filmstripSourceTime(it, time);
+  if (!m.angles) return [m, sourceTime];
+  const cuts = it.cuts || [], active = cuts[Math.max(0, S.cutIndex(cuts, sourceTime))];
+  const ref = m.angles[active?.angle ?? m.defaultAngle ?? 0], source = P.media[ref?.media];
+  if (source?.kind !== 'video') return [];
+  const at = sourceTime - ref.offset;
+  return at >= num(ref.in, 0) && at < Math.min(num(ref.out, source.dur), source.dur) ? [source, at] : [];
+}
+function drawFilmstrip({ record, width, height, left, right, aspect, pixelRatio }, changed) {
+  const { el, it, m } = record;
+  const { tileWidth, first, end } = S.filmstripTiles(width, height, aspect, left, right);
+  // Include the edges of visible tiles so a small scroll usually reuses the canvas.
+  const from = Math.floor(Math.max(first * tileWidth, left - 128));
+  const to = Math.ceil(Math.min(end * tileWidth, width, right + 128));
+  const version = m.angles ? m.angles.map(a => filmstripVersion(P.media[a.media])).join() : filmstripVersion(m);
+  const view = [from, to, first, end, width, height, it.dur, pps, pixelRatio, version].join('|');
+  const sameView = record.view === view;
+  if (sameView && !Array.from(changed).some(key => record.pending.has(key))) return;
+  record.view = view;
+  if (!record.canvas) {
+    record.canvas = document.createElement('canvas');
+    record.canvas.className = 'filmstrip-canvas';
+    record.canvas.setAttribute('aria-hidden', 'true');
+    el.prepend(record.canvas);
+  }
+  const { canvas } = record;
+  if (!sameView) {
+    Object.assign(canvas.style, { left: from + 'px', width: to - from + 'px', height: height + 'px' });
+    canvas.width = Math.ceil((to - from) * pixelRatio);
+    canvas.height = Math.ceil(height * pixelRatio);
+    record.pending.clear();
+  }
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(canvas.width / (to - from), 0, 0, canvas.height / height, 0, 0);
+  for (let i = first; i < end; i++) {
+    const x = i * tileWidth, visibleWidth = Math.min(tileWidth, width - x);
+    const [source, time] = filmstripSample(record, it.start + (x + visibleWidth / 2) / pps);
+    const key = source && JSON.stringify([filmstripVersion(source), pixelRatio]);
+    if (sameView && !changed.has(key)) continue;
+    if (sameView) ctx.clearRect(x - from, 0, visibleWidth, height);
+    const frame = filmstripCache.get(key);
+    if (frame) {
+      filmstripCache.delete(key);
+      filmstripCache.set(key, frame);
+      const bitmap = frame.bitmaps[S.filmstripFrameIndex(time, frame.step, frame.bitmaps.length)];
+      const { width: w, height: h } = bitmap;
+      const scale = Math.max(tileWidth / w, height / h);
+      const cropX = (w - tileWidth / scale) / 2, cropY = (h - height / scale) / 2;
+      // Use pixel bounds so WebKit's coordinate rounding cannot put the source rect out of bounds.
+      const sx = clamp(Math.floor(cropX), 0, w - 1), sy = clamp(Math.floor(cropY), 0, h - 1);
+      const ex = clamp(Math.ceil(cropX + visibleWidth / scale), sx + 1, w);
+      const ey = clamp(Math.ceil(cropY + height / scale), sy + 1, h);
+      ctx.drawImage(bitmap, sx, sy, ex - sx, ey - sy,
+        x - from, 0, visibleWidth, height);
+      record.pending.delete(key);
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,.04)';
+      ctx.fillRect(x - from, 0, visibleWidth, height);
+      if (source) record.pending.set(key, { key, source, pixelRatio });
+    }
+    if (i > 0) {
+      ctx.fillStyle = '#0005';
+      ctx.fillRect(x - from, 0, 1, height);
+    }
+  }
+}
+function paintFilmstrips() {
+  filmstripRaf = 0;
+  const changed = new Set(filmstripChanged);
+  filmstripChanged.clear();
+  if (!filmstripOn || !filmstripClips.length) return;
+  const sc = $('#scroll'), viewport = sc.getBoundingClientRect();
+  const rightEdge = viewport.left + sc.clientWidth, bottomEdge = viewport.top + sc.clientHeight;
+  const topEdge = viewport.top + $('#ruler').offsetHeight;
+  const pixelRatio = clamp(window.devicePixelRatio || 1, 1, 2);
+  // Measure the visible clips together before writing any canvas sizes.
+  const visible = [];
+  for (const record of filmstripClips) {
+    const { el, m } = record, box = el.getBoundingClientRect();
+    const width = box.width - 2, height = box.height - 2;
+    const left = Math.max(0, viewport.left - box.left - 1), right = Math.min(width, rightEdge - box.left - 1);
+    if (right > left && height > 0 && box.bottom > topEdge && box.top < bottomEdge) {
+      visible.push({ record, width, height, left, right, aspect: m.w > 0 && m.h > 0 ? m.w / m.h : 16 / 9, pixelRatio });
+    } else if (record.canvas) {
+      record.canvas.remove();
+      record.canvas = record.view = null;
+      record.pending.clear();
+    }
+  }
+  filmstripRequests = new Map();
+  for (const view of visible) {
+    drawFilmstrip(view, changed);
+    for (const [key, request] of view.record.pending) filmstripRequests.set(key, request);
+  }
+  queueFilmstripExtraction();
+}
+async function extractFilmstrip({ source, pixelRatio }, proxy) {
+  const still = source.kind === 'image';
+  const duration = Number.isFinite(source.dur) && source.dur > 0 ? source.dur : 0;
+  const step = S.filmstripSampleStep(duration);
+  const aspect = source.w > 0 && source.h > 0 ? source.w / source.h : 16 / 9;
+  const h = Math.max(1, Math.round(Math.min(54 * pixelRatio, 256 / aspect)));
+  const w = clamp(Math.round(h * aspect), 1, 256);
+  const count = still ? 1 : duration ? Math.min(400, Math.ceil(duration / step)) : 400;
+  const lastTime = Math.max(0, duration - 0.05);
+  // Shift timestamps to sample each interval's midpoint. Clone the last eligible
+  // frame through the final midpoint when it lies beyond duration minus 50 ms.
+  const trim = duration ? `trim=end_pts=${Math.round(lastTime * 1e6) + 1},` : '';
+  const sample = still ? '' : `settb=AVTB,setpts=PTS-STARTPTS,${trim}tpad=stop_mode=clone:stop_duration=${step},` +
+    `setpts=PTS-${step / 2}/TB,fps=1/${step}:start_time=0:round=up,`;
+  const args = path => ['-v', 'error', '-threads', '1', '-i', path, '-map', '0:V:0', '-an', '-sn', '-dn',
+    '-filter_threads', '1', '-vf', `${sample}scale=${w}:${h}:flags=fast_bilinear,setsar=1`,
+    '-threads', '1', '-frames:v', String(count), '-pix_fmt', 'rgba', '-f', 'rawvideo', 'pipe:1'];
+  const frameBytes = w * h * 4;
+  const read = async path => {
+    const bytes = new Uint8ClampedArray(await inv('gray_frames', { args: args(path), background: true }));
+    if (!bytes.byteLength || bytes.byteLength % frameBytes) throw new Error('Invalid filmstrip frames');
+    return bytes;
+  };
+  const bytes = await (proxy ? read(proxy).catch(() => read(source.path)) : read(source.path));
+  let end = bytes.byteLength;
+  const minLuma = 3 * 10000 * w * h;
+  while (end > frameBytes) {
+    let luma = 0;
+    for (let i = end - frameBytes; i < end; i += 4) {
+      luma += 2126 * bytes[i] + 7152 * bytes[i + 1] + 722 * bytes[i + 2];
+    }
+    if (luma >= minLuma) break;
+    end -= frameBytes;
+  }
+  const bitmaps = [];
+  try {
+    for (let i = 0; i < end; i += frameBytes) {
+      bitmaps.push(await createImageBitmap(new ImageData(bytes.subarray(i, i + frameBytes), w, h)));
+    }
+  } catch (error) {
+    for (const bitmap of bitmaps) bitmap.close();
+    throw error;
+  }
+  return { bitmaps, step, byteLength: end };
+}
+function queueFilmstripExtraction() {
+  if (!filmstripOn || playing || filmstripBusy || filmstripTimer || !filmstripRequests.size) return;
+  filmstripTimer = setTimeout(async () => {
+    filmstripTimer = 0;
+    if (filmstripBusy || !filmstripOn || playing) return;
+    const request = Array.from(filmstripRequests.values()).find(({ key, source }) =>
+      !filmstripCache.has(key) && filmstripFailures.get(key) !== (mediaProxy(source) || source.path));
+    if (!request) return;
+    const { key, source } = request, proxy = mediaProxy(source);
+    filmstripBusy = true;
+    try {
+      const frame = await extractFilmstrip(request, proxy);
+      while (filmstripBytes + frame.byteLength > filmstripBudget && filmstripCache.size) {
+        const [old, data] = filmstripCache.entries().next().value;
+        filmstripCache.delete(old);
+        filmstripBytes -= data.byteLength;
+        for (const bitmap of data.bitmaps) bitmap.close();
+      }
+      filmstripCache.set(key, frame);
+      filmstripBytes += frame.byteLength;
+      filmstripChanged.add(key);
+      scheduleFilmstrips();
+    } catch {
+      filmstripFailures.delete(key);
+      filmstripFailures.set(key, proxy || source.path);
+      if (filmstripFailures.size > 256) filmstripFailures.delete(filmstripFailures.keys().next().value);
+    } finally {
+      filmstripRequests.delete(key);
+      filmstripBusy = false;
+      queueFilmstripExtraction();
+    }
+  }, 100);
+}
+
 function renderTimeline() {
   const width = (Math.max(total(), t) + 30) * pps, clips = timelineClips(), TS = shownTracks(clips);
+  const rows = TS.map(track => {
+    const clipsOnLane = clips.filter(it => it.track === track.id);
+    const tall = filmstripOn && track.kind === 'video' && clipsOnLane.some(hasFilmstrip);
+    return { track, clipsOnLane, tall: tall ? ' filmstrip-lane' : '' };
+  });
+  filmstripButton.classList.toggle('on', filmstripOn);
+  filmstripButton.setAttribute('aria-pressed', String(filmstripOn));
+  filmstripButton.setAttribute('aria-label', tr('filmstrip'));
   groupCrumb.hidden = !openGrp;
   $('#tl').classList.toggle('inside-group', !!openGrp);
   if (openGrp) {
@@ -3651,20 +3886,21 @@ function renderTimeline() {
   }
   ppsVar();
   $('#rows').style.width = $('#ruler').style.width = `calc(${width / pps}px * var(--pps))`;
-  $('#heads').innerHTML = TS.map(x => `<div class="head${x.locked ? ' locked' : ''}" data-track="${x.id}" title="${tr('dragTrack')}"><i style="background:${TRACK_COLOR[x.kind]}"></i><em>${esc(trackLabel(x))}</em>${laneBtns(x)}</div>`).join('');
-  $('#rows').innerHTML = TS.map(x => {
-    const row = clips.filter(i => i.track === x.id);
-    const blocks = row.map(it => {
+  $('#heads').innerHTML = rows.map(({ track: x, tall }) => `<div class="head${tall}${x.locked ? ' locked' : ''}" data-track="${x.id}" title="${tr('dragTrack')}"><i style="background:${TRACK_COLOR[x.kind]}"></i><em>${esc(trackLabel(x))}</em>${laneBtns(x)}</div>`).join('');
+  $('#rows').innerHTML = rows.map(({ track: x, clipsOnLane, tall }) => {
+    const blocks = clipsOnLane.map(it => {
       const kind = it.compound ? 'group' : kindOf(it);
+      const strip = tall && hasFilmstrip(it);
       const body = it.compound ? `<span>${icon('layers')}${esc(it.name)}</span>` :
         `<div class="h l"></div>${S.transIn(P, it) && !S.GLT.includes(it.trans.id) ? `<b class="trn" data-trn="${it.id}" title="${tr('tr_' + it.trans.id)}">${icon('arrow-right-left')}</b>` : ''}
-        ${!media(it)?.angles && (kind === 'audio' || (it.kf?.volume?.length && hasSound(media(it)))) ? waveHtml(it) : ''}<span>${clipLabel(it)}</span>${multicamBoundaries(it)}${sceneTicks(it)}
+        ${!media(it)?.angles && (kind === 'audio' || (it.kf?.volume?.length && hasSound(media(it)))) ? waveHtml(it) : ''}<span${strip ? ` class="filmstrip-label" dir="${LANG === 'ar' ? 'rtl' : 'ltr'}"` : ''}>${clipLabel(it)}</span>${multicamBoundaries(it)}${sceneTicks(it)}
         ${kfTimes(it).filter(x => x >= 0 && x <= it.dur).map(x => `<i class="kfd" data-kt="${x}" style="left:calc(${x}px * var(--pps))"></i>`).join('')}${pxBar(it, 'tl')}<div class="h r"></div>`;
-      return `<div class="clip k-${kind}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))">${body}</div>`;
+      return `<div class="clip k-${kind}${strip ? ' filmstrip-clip' : ''}${isSel(it.id) ? ' sel' : ''}${it.hidden ? ' off' : ''}" data-id="${it.id}" style="left:calc(${it.start}px * var(--pps));width:max(4px, calc(${it.dur}px * var(--pps)))">${body}</div>`;
     }).join('');
-    return `<div class="row${x.id === 'v1' ? ' main' : ''}${x.locked ? ' locked' : ''}" data-track="${x.id}">${blocks}${trBoxes(row)}</div>`;
+    return `<div class="row${tall}${x.id === 'v1' ? ' main' : ''}${x.locked ? ' locked' : ''}" data-track="${x.id}">${blocks}${trBoxes(clipsOnLane)}</div>`;
   }).join('');
   laneGap();
+  resetFilmstripClips(clips);
   renderSilencePreview();
   renderRuler(width);
   $('#tdur').textContent = fmt(total());
@@ -3698,7 +3934,7 @@ $('#heads').addEventListener('pointerdown', e => {
   let moved = false;
   const mv = ev => {
     if (!moved) { if (Math.abs(ev.clientY - y0) < 4) return; snapshot(); moved = true; }
-    const TS = shownTracks(), r = $('#heads').getBoundingClientRect(), to = clamp(Math.floor((ev.clientY - r.top) / ROW), 0, TS.length - 1);
+    const TS = shownTracks(), to = clamp(laneIndexAt($('#heads'), ev.clientY), 0, TS.length - 1);
     const from = TS.findIndex(x => x.id === id);
     if (to === from) return;
     const tk = P.tracks.splice(P.tracks.indexOf(TS[from]), 1)[0], at = P.tracks.indexOf(TS[to]);
@@ -3869,6 +4105,7 @@ $('#rows').addEventListener('pointerdown', e => {
   const onMove = ev => {
     const d = (ev.clientX - x0) / pps;
     if (!changed) { if (Math.abs(ev.clientX - x0) < 3) return; snapshot(); changed = true; }
+    scheduleFilmstrips();
     if (mode === 'move') {
       it.start = Math.max(0, snapMove(Math.max(0, o.start + d), o.dur, pts));
       const tk = it.track;
@@ -3909,7 +4146,7 @@ $('#rows').addEventListener('pointerdown', e => {
 const laneKind = it => isText(it) ? 'text' : media(it).kind === 'audio' ? 'audio' : 'video';
 function dropLane(it, clientY, lane) {
   if (it.track === 'c1' && !lane.nt) return;
-  const TS = shownTracks(), r = $('#rows').getBoundingClientRect(), i = Math.floor((clientY - r.top) / ROW), x = TS[i], kind = laneKind(it);
+  const TS = shownTracks(), i = laneIndexAt($('#rows'), clientY), x = TS[i], kind = laneKind(it);
   if (x && x === lane.nt) return;
   const free = x && x.id !== 'c1' && !x.locked && compatible(it, x.id) && (magLane(x.id) || x.id === it.track ||
     ![...P.items, ...(!openGrp ? groupBlocks() : [])].some(q => q !== it && q.track === x.id && q.start < it.start + it.dur - 1e-6 && it.start < q.start + q.dur - 1e-6));
@@ -4013,6 +4250,9 @@ function groupMove(e, lead) {
   const others = [...P.items, ...(!openGrp ? groupBlocks() : [])].filter(i => !ids.has(i.id));
   const spts = [0, t, ...markerTimes(), ...others.flatMap(i => [i.start, i.start + i.dur])];
   const TS = shownTracks(), row0 = new Map(group.map(i => [i.id, TS.findIndex(x => x.id === i.track)]));
+  const centers = Array.from($('#rows').children, row => row.offsetTop + row.offsetHeight / 2);
+  const leadRow = row0.get(lead.id);
+  const sc = $('#scroll'), scroll0 = sc.scrollTop;
   const pinned = TS.filter(x => !laneKeep.has(x.id)).map(x => x.id); // lanes keep their rows while dragging
   pinned.forEach(id => laneKeep.add(id));
   let changed = false, dr = 0;
@@ -4027,13 +4267,16 @@ function groupMove(e, lead) {
     const start = o.get(lead.id), s = snapMove(start + (ev.clientX - x0) / pps, lead.dur, spts);
     const d = Math.max(s - start, -minStart);
     for (const i of group) i.start = o.get(i.id) + d;
-    const k = Math.round((ev.clientY - y0) / ROW);
+    const center = centers[leadRow] + ev.clientY - y0 + sc.scrollTop - scroll0;
+    const next = centers.findIndex((y, i) => i === centers.length - 1 || center < (y + centers[i + 1]) / 2);
+    const k = next - leadRow;
     if (k !== dr && fits(k)) dr = k;
     else if (!fits(dr)) dr = fits(0) ? 0 : dr;
     let moved = false;
     for (const i of group) { const id = TS[row0.get(i.id) + dr].id; if (i.track !== id) { i.track = id; moved = true; } }
     if (moved) renderTimeline();
     else for (const i of group) { const el = $(`.clip[data-id="${i.id}"]`); if (el) el.style.left = i.start * pps + 'px'; }
+    scheduleFilmstrips();
     needsDraw = true;
   };
   window.addEventListener('pointermove', mv);
@@ -4095,6 +4338,7 @@ function setZoom(v) {
   zoom.value = pps;
   paintRange(zoom);
   ppsVar();
+  scheduleFilmstrips();
   if (rulerStep() !== renderRuler.step) renderRuler((Math.max(total(), t) + 30) * pps);
   updatePlayhead();
 }
@@ -7257,7 +7501,12 @@ const updMode = {
   set(v) { try { localStorage.setItem('kadr.updMode', v); } catch {} },
 };
 let updReady = null; // downloaded, waiting to be installed
+let updTransfer = null;
 const updLog = e => inv('dev_log', { msg: 'update: ' + e });
+const updNotes = u => {
+  const body = u.body?.trim();
+  return body && !body.startsWith('Download Maqto for') ? body : '';
+};
 async function autoUpdate() {
   if (!TA.updater || updMode.get() !== 'auto') return;
   try {
@@ -7272,9 +7521,10 @@ async function autoUpdate() {
 // Auto mode: once the new version is downloaded, ask in a small centred window (after any open dialog closes)
 function updPrompt(u) {
   if (!$('#modal').hidden) return setTimeout(() => updPrompt(u), 2000);
+  const notes = updNotes(u);
   $('#modal').hidden = false;
-  $('#mBox').innerHTML = `<div class="upd unew"><div class="uic">${icon('sparkles')}</div><h3>${tr('updPromptT')}</h3>
-    <p>${tr('updPromptB', { v: `<bdi>v${esc(u.version)}</bdi>` })}</p>${u.body ? `<p class="hint unotes">${esc(u.body)}</p>` : ''}
+  $('#mBox').innerHTML = `<div class="upd-prompt"><div class="uic">${icon('sparkles')}</div><h3>${tr('updPromptT')}</h3>
+    <p>${tr('updPromptB', { v: `<bdi>v${esc(u.version)}</bdi>` })}</p>${notes ? `<p class="hint unotes">${esc(notes)}</p>` : ''}
     <div class="acts"><button id="uLater">${tr('updLater')}</button><span class="flex"></span><button class="primary" id="uNow">${icon('refresh-cw')}${tr('updNow')}</button></div></div>`;
   paintIcons($('#mBox'));
   $('#uLater').onclick = hideModal; // still installs when the app quits
@@ -7294,54 +7544,181 @@ async function quitNow() {
 }
 async function updateDialog() {
   const cur = TA.app ? await TA.app.getVersion().catch(() => '') : '';
-  $('#modal').hidden = false;
-  $('#mBox').innerHTML = `<div class="upd"><h3>${tr('updates')}</h3><p class="hint">${tr('curVer')} <bdi>v${esc(cur)}</bdi></p>
-    <div id="uState" class="ustate"></div>
-    <div class="umode"><div class="gh">${tr('updHow')}</div>
-      ${['auto', 'manual'].map(m => `<label class="uopt"><input type="radio" name="um" value="${m}"${updMode.get() === m ? ' checked' : ''}><span><b>${tr('upd_' + m)}</b><small>${tr('upd_' + m + 'Hint')}</small></span></label>`).join('')}</div>
-    <div class="acts"><button id="uCheck">${icon('refresh-cw')}${tr('updCheck')}</button><button id="uWhats">${icon('sparkles')}${tr('wnTitle')}</button><span class="flex"></span><button id="uClose">${tr('close')}</button><button class="primary" id="uGo" hidden></button></div></div>`;
-  paintIcons($('#mBox'));
-  $('#mBox').querySelectorAll('[name="um"]').forEach(r => (r.onchange = () => updMode.set(r.value)));
-  $('#uClose').onclick = hideModal;
+  const mode = updMode.get() === 'manual' ? 'manual' : 'auto';
+  const modal = $('#modal');
+  $('#mBox').innerHTML = `<div class="upd-dialog" role="dialog" aria-modal="true" aria-labelledby="uTitle">
+    <header class="upd-head"><span class="upd-mark" aria-hidden="true"></span><h3 id="uTitle">${tr('updates')}</h3>
+      ${cur ? `<bdi class="upd-pill">v${esc(cur)}</bdi>` : ''}</header>
+    <div id="uState" class="upd-hero">
+      <div class="upd-summary"><span class="upd-icon" aria-hidden="true"></span><div role="status"></div></div>
+      <div class="upd-extras"></div>
+    </div>
+    <div class="upd-mode">
+      <div class="upd-segments" role="radiogroup" aria-label="${tr('updHow')}" aria-describedby="uModeHint">
+        ${['auto', 'manual'].map(m => `<button role="radio" aria-checked="${m === mode}" tabindex="${m === mode ? 0 : -1}" data-mode="${m}">${tr('upd_' + m)}</button>`).join('')}
+      </div>
+      <p id="uModeHint" class="upd-detail">${tr('upd_' + mode + 'Hint')}</p>
+    </div>
+    <footer class="upd-footer"><div class="upd-links">
+      <button class="upd-ghost" id="uCheck"><span aria-hidden="true">${icon('refresh-cw')}</span>${tr('updCheck')}</button>
+      <button class="upd-text" id="uWhats">${tr('wnTitle')}</button>
+    </div><button id="uClose">${tr('close')}</button></footer></div>`;
+  const dialog = $('.upd-dialog'), st = $('#uState'), chk = $('#uCheck'), close = $('#uClose');
+  const glyphSlot = st.querySelector('.upd-icon'), status = st.querySelector('[role="status"]'), extras = st.querySelector('.upd-extras');
+  const live = () => dialog.isConnected && !modal.hidden;
+  const radios = [...dialog.querySelectorAll('[role="radio"]')], hint = $('#uModeHint');
+  for (const radio of radios) {
+    radio.onclick = () => {
+      for (const option of radios) {
+        option.setAttribute('aria-checked', option === radio);
+        option.tabIndex = option === radio ? 0 : -1;
+      }
+      updMode.set(radio.dataset.mode);
+      hint.textContent = tr('upd_' + radio.dataset.mode + 'Hint');
+    };
+    radio.onkeydown = e => {
+      // Both arrow directions switch to the other option in a two-item group.
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+      e.preventDefault();
+      const next = radios.find(option => option !== radio);
+      next.click();
+      next.focus();
+    };
+  }
+  close.onclick = () => { hideModal(); $('#bUpd').focus(); };
+  dialog.onkeydown = e => {
+    if (e.key === 'Escape') { e.preventDefault(); close.click(); }
+    if (e.key !== 'Tab') return;
+    const stops = [...dialog.querySelectorAll('button:not(:disabled):not([tabindex="-1"]), .upd-notes-copy[tabindex="0"]')];
+    const edge = e.shiftKey ? stops[0] : stops.at(-1);
+    if (document.activeElement === edge || (e.shiftKey && document.activeElement === st.querySelector('h4'))) {
+      e.preventDefault();
+      (e.shiftKey ? stops.at(-1) : stops[0]).focus();
+    }
+  };
   $('#uWhats').onclick = () => {
     const entries = whatsNewEntries(cur);
-    hideModal();
-    $('#bUpd').focus();
+    close.click();
     showWhatsNew(MaqtoWhatsNew.replaySteps(entries, cur), entries.at(-1)?.version, cur);
   };
-  const st = $('#uState'), go = $('#uGo');
-  const show = (html, btn, run) => { st.innerHTML = html; go.hidden = !btn; if (btn) { go.textContent = btn; go.disabled = false; go.onclick = run; } };
-  const chk = $('#uCheck');
-  chk.onclick = () => check();
-  if (updReady) return show(`<p>${tr('updReady', { v: esc(updReady.version) })}</p>`, tr('updRestart'), installNow);
-  check();
-  // "Check for updates" button: asks the update server now, every time it is pressed
-  async function check() {
-  chk.disabled = true; chk.classList.add('busy');
-  show(`<p class="hint">${tr('updChecking')}</p>`);
-  if (!TA.updater) { chk.disabled = false; chk.classList.remove('busy'); return show(`<p class="hint">${tr('updNoUpdater')}</p>`); }
-  let u;
-  try { u = await TA.updater.check(); } catch (e) { updLog(e); u = false; }
-  if (!$('#uCheck')) return; // dialog closed meanwhile
-  chk.disabled = false; chk.classList.remove('busy');
-  const when = `<small class="uwhen">${tr('updLast')} ${new Date().toLocaleTimeString(LANG === 'ar' ? 'ar-EG' : 'en-US', { hour: 'numeric', minute: '2-digit' })}</small>`;
-  if (u === false) return show(`<p>${tr('updOffline')}</p>${when}`);
-  if (!u) return show(`<p class="ok">${icon('check')} ${tr('updLatest')}</p>${when}`);
-  const notes = u.body ? `<p class="hint unotes">${esc(u.body)}</p>` : '';
-  show(`<p><b>${tr('updNew', { v: esc(u.version) })}</b></p>${notes}`, tr('updGet'), async () => {
-    go.disabled = true;
-    let total = 0, got = 0;
-    st.insertAdjacentHTML('beforeend', `<div class="pbar"><i id="uBar"></i></div>`);
-    try {
-      await u.download(ev => {
-        if (ev.event === 'Started') total = ev.data.contentLength || 0;
-        else if (ev.event === 'Progress') { got += ev.data.chunkLength; if (total) $('#uBar').style.width = Math.round(got / total * 100) + '%'; }
-      });
-      updReady = u;
-      $('#bUpd').classList.add('dot');
-      installNow();
-    } catch (e) { updLog(e); show(`<p>${tr('updFailed')}</p>`, tr('retry'), updateDialog); }
+  const libraryIcon = name => `<svg class="ic" viewBox="0 0 24 24"><path d="${ICLIB[name][0]}"/></svg>`;
+  const show = (state, glyph, title, { detail = '', extra = '', label, run } = {}) => {
+    const moveFocus = st.contains(document.activeElement) || (state === 'checking' && document.activeElement === chk);
+    st.dataset.state = state;
+    glyphSlot.innerHTML = ICONS[glyph] ? icon(glyph) : libraryIcon(glyph);
+    status.innerHTML = `<h4 tabindex="-1">${title}</h4>${detail}`;
+    extras.innerHTML = extra + (label ? `<button class="upd-action${state === 'warning' ? '' : ' upd-primary'}"${run ? '' : ' disabled'}>${tr(label)}</button>` : '');
+    const action = st.querySelector('.upd-action');
+    if (run) action.onclick = run;
+    if (moveFocus) st.querySelector('h4').focus();
+  };
+  const ready = () => show('ready', 'check', tr('updReady', { v: `<bdi>${esc(updReady.version)}</bdi>` }), {
+    label: 'updRestart', run: install,
   });
+  async function install() {
+    const button = st.querySelector('.upd-action');
+    button.disabled = true;
+    try { await installNow(); } finally { button.disabled = false; }
+  }
+  const warning = key => show('warning', 'triangle-alert', tr(key), { label: 'retry', run: TA.updater ? check : undefined });
+
+  chk.onclick = check;
+  modal.hidden = false;
+  close.focus();
+  if (updTransfer) showDownload(updTransfer);
+  else if (updReady) ready();
+  else check();
+
+  async function check() {
+    if (!TA.updater) return warning('updNoUpdater');
+    show('checking', 'refresh-cw', tr('updChecking'));
+    chk.disabled = true;
+    chk.classList.add('upd-spinning');
+    let u;
+    try {
+      u = await TA.updater.check();
+    } catch (e) {
+      updLog(e);
+      if (live()) warning('updOffline');
+      return;
+    } finally {
+      if (live()) { chk.disabled = false; chk.classList.remove('upd-spinning'); }
+    }
+    if (!live()) return; // dialog closed or replaced meanwhile
+    if (updReady && (!u || updReady.version === u.version)) return ready();
+    if (!u) {
+      const time = new Date().toLocaleTimeString(LANG === 'ar' ? 'ar-EG' : 'en-US', {
+        hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+      });
+      return show('latest', 'check', tr('updLatest'), { detail: `<p class="upd-detail">${tr('updLast', { time: `<bdi>${time}</bdi>` })}</p>` });
+    }
+    const notes = updNotes(u);
+    show('new', 'download', tr('updNew'), {
+      detail: `<p class="upd-version">${cur ? `<bdi>${esc(cur)}</bdi><span class="upd-arrow" aria-hidden="true">${libraryIcon('arrow-right')}</span>` : ''}<strong><bdi>${esc(u.version)}</bdi></strong></p>`,
+      extra: notes ? `<div class="upd-notes"><p id="uNotes" dir="auto" class="upd-notes-copy">${esc(notes)}</p>
+        <button class="upd-text" aria-expanded="false" aria-controls="uNotes">${tr('showMore')}</button></div>` : '',
+      label: 'updGet', run: () => download(u),
+    });
+    const toggle = st.querySelector('.upd-notes button');
+    if (toggle) toggle.onclick = () => {
+      const expanded = toggle.getAttribute('aria-expanded') === 'false';
+      const copy = st.querySelector('.upd-notes-copy');
+      toggle.setAttribute('aria-expanded', expanded);
+      copy.classList.toggle('upd-expanded', expanded);
+      if (expanded && copy.scrollHeight > copy.clientHeight) copy.tabIndex = 0;
+      else copy.removeAttribute('tabindex');
+      toggle.textContent = tr(expanded ? 'showLess' : 'showMore');
+    };
+  }
+
+  async function download(u) {
+    const transfer = updTransfer = { total: 0, received: 0 };
+    transfer.done = Promise.resolve().then(async () => {
+      try {
+        await u.download(ev => {
+          if (ev.event === 'Started') transfer.total = ev.data.contentLength || 0;
+          if (ev.event === 'Progress') transfer.received += ev.data.chunkLength;
+          transfer.paint?.();
+        });
+        updReady = u;
+        $('#bUpd').classList.add('dot');
+        return true;
+      } catch (e) {
+        updLog(e);
+        return false;
+      } finally {
+        updTransfer = null;
+      }
+    });
+    await showDownload(transfer);
+    // The download can finish after closing. Leave it ready without reopening the dialog.
+    if (live() && updReady === u) await install();
+  }
+
+  async function showDownload(transfer) {
+    chk.disabled = true;
+    show('downloading', 'download', `${tr('updDownloading')} <bdi class="upd-detail" aria-hidden="true"></bdi>`, {
+      extra: `<div class="upd-track" role="progressbar" aria-label="${tr('updDownloading')}"><i></i></div>`,
+      label: 'updGet',
+    });
+    const track = st.querySelector('.upd-track'), meter = track.firstElementChild, readout = st.querySelector('h4 bdi');
+    const percent = new Intl.NumberFormat(LANG, { style: 'percent' });
+    const mb = new Intl.NumberFormat(LANG, { maximumFractionDigits: 0 });
+    transfer.paint = () => {
+      if (!live() || !transfer.total) return;
+      const ratio = Math.min(transfer.received / transfer.total, 1);
+      const size = tr('updDownloadSize', { got: mb.format(transfer.received / 1e6), total: mb.format(transfer.total / 1e6) });
+      readout.textContent = `${percent.format(ratio)} · ${size}`;
+      track.setAttribute('aria-valuenow', Math.round(ratio * 100));
+      track.setAttribute('aria-valuetext', readout.textContent);
+      meter.style.width = `${ratio * 100}%`;
+    };
+    transfer.paint();
+    const finished = await transfer.done;
+    if (!live()) return;
+    chk.disabled = false;
+    if (finished) ready();
+    else warning('updFailed');
   }
 }
 $('#bUpd').onclick = updateDialog;

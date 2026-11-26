@@ -14,6 +14,37 @@ const vm = require('node:vm');
 const { buildArgs, concatText, chapterMetadata, atempo, loudnormFilter, LOUDNESS_TARGETS, ENCODERS } = require('../src/graph');
 const writeConcat = (d, list, fps) => { const f = path.join(d, 'text.ffconcat'); fs.writeFileSync(f, concatText(list, fps)); return f; };
 
+// Filmstrip geometry and the fixed source-media sampling grid.
+{
+  const layout = S.filmstripTiles(245, 54, 16 / 9);
+  assert.deepStrictEqual(layout, { tileWidth: 96, count: 3, first: 0, end: 3 });
+  assert.deepStrictEqual(Array.from({ length: layout.count }, (_, i) => i * layout.tileWidth), [0, 96, 192]);
+  assert.deepStrictEqual(S.filmstripTiles(245, 54, 16 / 9, 96, 192), { ...layout, first: 1, end: 2 });
+  assert.deepStrictEqual(S.filmstripTiles(0, 54, 1), { tileWidth: 54, count: 0, first: 0, end: 0 });
+  assert.strictEqual(S.filmstripTiles(70, 54, 0.5).tileWidth, 27);
+  const clip = { start: 10, in: 3, speed: 2, dur: 4 };
+  assert.strictEqual(S.filmstripSourceTime(clip, 11.5), 6);
+  assert.strictEqual(S.filmstripSourceTime(clip, 9), 3);
+  assert.strictEqual(S.filmstripSourceTime(clip, 20), 11);
+  const curved = { ...clip, curve: { src: 5, pts: [[0, 0.5], [1, 2]] } };
+  assert.ok(S.filmstripSourceTime(curved, 12) < 5.5, 'The slower first half covers less than half the source');
+  assert.strictEqual(S.filmstripSourceTime(curved, 14), 8);
+  assert.strictEqual(S.filmstripFrameIndex(2.9, 2, 5), 1);
+  assert.strictEqual(S.filmstripFrameIndex(3.1, 2, 5), 1);
+  assert.strictEqual(S.filmstripFrameIndex(3.99, 2, 5), 1);
+  assert.strictEqual(S.filmstripFrameIndex(4, 2, 5), 2);
+  assert.strictEqual(S.filmstripFrameIndex(8.02, 1, 9), 8);
+  assert.strictEqual(S.filmstripFrameIndex(8.02, 1, 8), 7);
+  assert.strictEqual(S.filmstripFrameIndex(99, 2, 5), 4);
+  assert.strictEqual(S.filmstripFrameIndex(-1, 2, 5), 0);
+  assert.strictEqual(S.filmstripFrameIndex(0, 2, 0), -1);
+  assert.strictEqual(S.filmstripSampleStep(0.25), 1);
+  assert.strictEqual(S.filmstripSampleStep(400), 1);
+  assert.strictEqual(S.filmstripSampleStep(401), 2);
+  assert.strictEqual(S.filmstripSampleStep(3600), 9);
+}
+console.log('Filmstrip tile layout, source timing, and frame sampling passed');
+
 // Text style presets: the original catalog order is stable, and styles use the renderer's schema.
 {
   const originalIds = ['plain', 'outline', 'outlineW', 'shadow', 'softGlow', 'yellowOut', 'redOut', 'orange', 'blue', 'green',

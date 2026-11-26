@@ -737,11 +737,25 @@ fn cancel_media_proxy(state: State<AppState>, job: String) {
     }
 }
 
-/// Raw frames for motion tracking: ffmpeg's stdout handed to JS as bytes.
+/// FFmpeg's raw stdout for motion tracking and timeline thumbnails.
 #[tauri::command]
-async fn gray_frames(args: Vec<String>) -> R<tauri::ipc::Response> {
+async fn gray_frames(args: Vec<String>, background: Option<bool>) -> R<tauri::ipc::Response> {
     tauri::async_runtime::spawn_blocking(move || {
-        let out = command(&sidecar("ffmpeg")).args(&args).stdin(Stdio::null()).output().map_err(err)?;
+        let ffmpeg = sidecar("ffmpeg");
+        let mut cmd = command(&ffmpeg);
+        if background == Some(true) {
+            #[cfg(unix)]
+            if Path::new("/usr/bin/nice").is_file() {
+                cmd = command(Path::new("/usr/bin/nice"));
+                cmd.args(["-n", "10"]).arg(&ffmpeg);
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x0800_4000); // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+            }
+        }
+        let out = cmd.args(&args).stdin(Stdio::null()).output().map_err(err)?;
         if !out.status.success() { return Err(tail(&String::from_utf8_lossy(&out.stderr))); }
         Ok(tauri::ipc::Response::new(out.stdout))
     }).await.map_err(err)?

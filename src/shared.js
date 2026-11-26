@@ -1284,6 +1284,16 @@
   const srcLen = it => hasCurve(it) ? it.curve.src : it.dur * num(it.speed, 1);
   // Seconds into the source (from it.in) at local time lt, and back.
   const srcAt = (it, lt) => hasCurve(it) ? it.curve.src * uAtF(it.curve, lt / it.dur) : lt * num(it.speed, 1);
+  function filmstripTiles(width, height, aspect, left = 0, right = width) {
+    const tileWidth = Math.max(1, height * aspect);
+    const count = Math.ceil(width / tileWidth);
+    const first = Math.floor(clamp(left, 0, width) / tileWidth);
+    const end = Math.min(count, Math.ceil(clamp(right, 0, width) / tileWidth));
+    return { tileWidth, count, first, end };
+  }
+  const filmstripSourceTime = (clip, time) => num(clip.in, 0) + srcAt(clip, clamp(time - clip.start, 0, clip.dur));
+  const filmstripFrameIndex = (time, step, count) => count ? clamp(Math.floor(time / step), 0, count - 1) : -1;
+  const filmstripSampleStep = duration => Math.max(1, Math.ceil(duration / 400));
   const ltAt = (it, so) => hasCurve(it) ? it.dur * fAtU(it.curve, so / it.curve.src) : so / num(it.speed, 1);
   function speechTimelineRegions(it, regions) {
     const from = num(it.in, 0), to = from + srcLen(it);
@@ -2286,7 +2296,7 @@
       meta.bitrate > 50_000_000);
   }
 
-  const api = { rgb2hsl, curveLut, curvesFilter, qualWeight, rgb2lab, lab2rgb, labStats, reinhardGainOffset, multicamTime, cutIndex, recordCut, switchSegment, cutsToSegments, multicamAngle, multicamClips, expandMulticam, needsProxy, FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, voiceSettings, fxKey, projectDur, markerTitle, normalizeMarkers, youtubeChapters, groupSpan, SOCIAL_EXPORT_PRESETS, exportPresetSettings, upscaleEstimate, upscale4k, snapshotExport, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, DUCK_DEFAULTS, duckGainKeys, writeDuckKeys, speechTimelineRegions, hasKf, animAt, shiftTimes };
+  const api = { rgb2hsl, curveLut, curvesFilter, qualWeight, rgb2lab, lab2rgb, labStats, reinhardGainOffset, multicamTime, cutIndex, recordCut, switchSegment, cutsToSegments, multicamAngle, multicamClips, expandMulticam, needsProxy, FX, FX_CAT, FXG, FXG0, fxgGLSL, fxOf, fxVals, fxChain, TR_MOVE, trSub, trVal, BLEND_FF, TRANS, GLT, TR_SLIDE, TR_DIP, TR_GEQ, ease3, easeExpr, transClip, transIn, transOut, hasKey, keyUV, MASKS, MASK_DEF, hasMask, drawMask, num, clamp, CURVES, curveSpeed, curveDur, uAtF, fAtU, hasCurve, srcLen, srcAt, filmstripTiles, filmstripSourceTime, filmstripFrameIndex, filmstripSampleStep, ltAt, rateAt, subCurve, EASE, VA_IN, VA_OUT, VA_LOOP, RICH, vaFx, richSegs, segFrames, hasVa, vaDelta, withVa, bakeVa, PRESETS, grade, HSL_BANDS, LOOKS, LUT_N, hasColor, colorFn, curveFn, parseCube, sampleLut, bakeLut, cubeText, colorKey, srcCrop, logoBox, layout, fadeAlpha, audioFade, voiceSettings, fxKey, projectDur, markerTitle, normalizeMarkers, youtubeChapters, groupSpan, SOCIAL_EXPORT_PRESETS, exportPresetSettings, upscaleEstimate, upscale4k, snapshotExport, scaleProject, parseWhisper, groupWords, trkAt, trkExpr, pwExpr, VIS_KF, KF, kfVal, volumeAt, DUCK_DEFAULTS, duckGainKeys, writeDuckKeys, speechTimelineRegions, hasKf, animAt, shiftTimes };
   const KEY_CODES = {
     Space: 'Space', Backspace: 'Delete', Delete: 'Delete', Escape: 'Escape', Home: 'Home', End: 'End',
     ArrowLeft: 'ArrowLeft', ArrowRight: 'ArrowRight', ArrowUp: 'ArrowUp', ArrowDown: 'ArrowDown',

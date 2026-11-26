@@ -8,6 +8,9 @@
   const path = (d, attr = '') => `<path d="${d}" ${attr}/>`;
   const bars = (heights, x, y, gap, attr = '') => heights.map((h, i) => path(`M${x + i * gap} ${y - h}v${2 * h}`, attr)).join('');
   const scenes = {
+    filmstrip: () => rect(45, 53, 270, 74, accent) +
+      [50, 138, 226].map((x, i) => path(`M${x + 4} 113l22-${18 + i * 6} 14 11 14-20 23 ${27 + i * 6}`)).join('') +
+      path('M135 53v74m90-74v74M45 146h270', accent) + bars([4, 8, 5, 10, 7, 4, 9, 5], 65, 146, 12),
     textPresets: () => rect(46, 46, 268, 108) +
       [62, 146, 230].map((x, i) => rect(x, 67, 68, 66, i === 1 ? accent : '') +
         path(`M${x + 17} 115l17-32 17 32m-29-10h24`, i === 1 ? accent : '')).join(''),
@@ -189,6 +192,14 @@
         where: { ar: 'تصدير ← الترميز (كوديك)', en: 'Export → Format' },
         ar: { title: 'تصدير بخلفية شفافة وGIF وصور', body: 'اختار ProRes 4444 أو WebM بخلفية شفافة، أو GIF، أو سلسلة صور PNG/JPG. وتقدر تصدّر الفريم الحالي كصورة PNG من الاختصارات.' },
         en: { title: 'Transparent, GIF and image export', body: 'Pick ProRes 4444 or WebM with a transparent background, a GIF, or a PNG/JPG sequence. You can also export the current frame as a PNG from the shortcuts list.' } },
+    ],
+  }, {
+    version: '1.0.43',
+    steps: [
+      { id: 'filmstrip', icon: 'film', art: art('filmstrip'), target: '#bFilmstrip',
+        where: { ar: 'التايملاين ← شريط إطارات الفيديو', en: 'Timeline → Filmstrip' },
+        ar: { title: 'إطارات الفيديو على التايملاين', body: 'شوف اللقطات جوّه كليبات الفيديو والصور وهي على التايملاين. اضغط على زر شريط إطارات الفيديو عشان ترجع للمسارات المدمجة.' },
+        en: { title: 'Timeline filmstrips', body: 'See frames directly on video and image clips. Use the Filmstrip button to switch back to compact lanes.' } },
     ],
   }];
 
